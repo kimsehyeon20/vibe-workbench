@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>새 앱</title>
+<meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111113" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <a class="icon-btn" href="../../" aria-label="갤러리로">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+  </a>
+  <h1>새 앱</h1>
+</header>
+
+<main class="wrap">
+  <section class="card">
+    <p class="eyebrow">시작 템플릿</p>
+    <h2>여기서부터 만들어요</h2>
+    <p class="muted">이 파일들을 고쳐서 앱을 완성하세요. 버튼을 누른 횟수는 이 기기에 저장돼요.</p>
+  </section>
+</main>
+
+<div class="bottom">
+  <button class="btn" id="count-btn">눌러보기 <b id="count">0</b></button>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

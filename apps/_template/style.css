@@ -1,0 +1,52 @@
+/* 색·여백은 변수로. --h(색상)만 바꾸면 앱 전체 포인트 색이 바뀜 */
+:root {
+  --h: 205;
+  --bg: #f6f5f2; --surface: #fff; --text: #1b1b1f; --text-2: #5f5f68; --text-3: #9a9aa3;
+  --line: rgba(20, 20, 30, .08);
+  --accent: hsl(var(--h) 70% 42%); --on-accent: #fff; --tint: hsl(var(--h) 80% 94%);
+  --radius: 18px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111113; --surface: #1b1b1e; --text: #f2f2f4; --text-2: #a8a8b2; --text-3: #6c6c76;
+    --line: rgba(255, 255, 255, .07);
+    --accent: hsl(var(--h) 80% 70%); --on-accent: #111113; --tint: hsl(var(--h) 28% 16%);
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body {
+  font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, "Apple SD Gothic Neo", sans-serif;
+  font-size: 16px; line-height: 1.5; letter-spacing: -.01em; -webkit-font-smoothing: antialiased; min-height: 100dvh;
+}
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+
+.top {
+  position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 4px;
+  padding: env(safe-area-inset-top) 8px 0; min-height: 56px; background: var(--bg);
+}
+.top h1 { font-size: 18px; font-weight: 750; margin: 0; }
+.icon-btn { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; color: var(--text); }
+.icon-btn svg { width: 22px; height: 22px; }
+.icon-btn:active { background: var(--line); }
+
+.wrap { max-width: 640px; margin: 0 auto; padding: 8px 16px calc(110px + env(safe-area-inset-bottom)); }
+.card { background: var(--tint); border-radius: var(--radius); padding: 20px; }
+.card h2 { font-size: 24px; font-weight: 800; letter-spacing: -.03em; margin: 2px 0 6px; }
+.eyebrow { font-size: 13px; font-weight: 650; color: var(--accent); margin: 0; }
+.muted { color: var(--text-2); margin: 0; }
+
+/* 엄지가 닿는 아래쪽 고정 버튼 */
+.bottom {
+  position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, var(--bg) 35%);
+}
+.btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; max-width: 608px; margin: 0 auto;
+  height: 54px; border-radius: 16px; background: var(--accent); color: var(--on-accent); font-size: 16px; font-weight: 700;
+  transition: transform .12s;
+}
+.btn:active { transform: scale(.98); }
