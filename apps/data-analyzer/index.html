@@ -84,6 +84,8 @@
     <section class="panel">
       <div class="step-head"><span class="step-no">3</span><h3>한눈에 보기</h3></div>
       <ul class="summary" id="summary"></ul>
+      <button class="chip-btn model-btn" id="model-btn" type="button">예측용 모델 파일 받기 (.json)</button>
+      <p class="hint">나중에 예측 앱에서 불러와 쓰는 파일이에요. 식·정확도·예측 범위 계산에 필요한 값이 모두 들어 있어요.</p>
     </section>
 
     <section class="panel">
@@ -132,6 +134,7 @@
 <div class="tip" id="tip" hidden></div>
 <div class="toast" id="toast" role="status" hidden></div>
 
+<script src="regression.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
