@@ -8,10 +8,11 @@
 | 파일 | 역할 |
 |---|---|
 | `reader.js` | 표 읽기: 가로·세로 자동 판별, 제목·메모 줄 건너뛰기, 단위 줄 합치기, 시각·날짜 해석 |
+| `control.js` | 운전 조작 판단 학습: 운전자 기록 → 판단 규칙(회귀 나무) · 선형 식 · 검증 · 조작 추천 |
 | `regression.js` | 회귀 엔진. 화면과 무관한 순수 계산이라 브라우저와 Node에서 모두 돈다 |
 | `app.js` | 화면: 입력 읽기, 그래프, 엑셀/모델 파일 만들기 |
 | `vendor/exceljs.min.js` | 엑셀 읽기·쓰기 (ExcelJS 4.4.0, MIT) |
-| `tests/*.test.js` | 검사: `node apps/data-analyzer/tests/regression.test.js`, `node apps/data-analyzer/tests/reader.test.js` |
+| `tests/*.test.js` | 검사: `for f in apps/data-analyzer/tests/*.test.js; do node $f; done` |
 
 ## 표 읽기 (`reader.js`)
 
@@ -37,6 +38,30 @@
   지수·로그·거듭제곱은 직선으로 바꾼 공간(ln y 등)에서 검정한다.
 - 다중 회귀는 함께 쓸 항목을 고를 수 있고, 시간(t)도 설명변수로 넣을 수 있다.
 - 계산 안정성: 설명변수를 `u = (g − center) / scale`로 표준화해서 푼다. 3차 계수는 numpy와 1e-12 수준까지 일치한다.
+
+## 운전 조작 판단 (`control.js`)
+
+운전자가 감으로 하던 조작을 기록에서 배워 **규칙과 식으로 형식화**한다. 가스 운전 자동화의 출발점이 될 수 있다.
+
+- **설정**: 조작 항목(MV: 밸브 개도·설정값 등), 판단 근거 항목, 추세 창(예: 5분), 배울 대상(조작량 Δ / 조작 값)을 고른다.
+- **시점 가정**: 상태(t−1)를 보고 조작(t)을 했다고 본다. 조작 결과가 상태에 섞이는 것(누수)을 막기 위해서다.
+- **특징**: 각 근거 항목의 직전 값과 최근 추세(창만큼 전과의 차이), 현재 조작값을 쓴다.
+- **판단 규칙**: 회귀 나무(깊이 3, 잎마다 최소 5건 또는 5%, 전체 오차를 2% 이상 줄일 때만 나눔).
+  각 잎은 "만약 ~이면 → 올림 몇 %·내림 몇 %·평균 조작량"으로 표시한다.
+- **선형 식**: 다중 회귀에서 p > 0.05인 항을 하나씩 뺀다(단계적 제거).
+- **검증**: 시간 순서로 앞 75%를 학습하고 뒤 25%를 맞힌다. 비교 기준은 "조작 안 함"이다.
+  - 오차(RMSE)
+  - 방향(올림·내림·유지) 맞힘
+  - 실제로 조작한 순간의 방향 맞힘
+  - 기준보다 오차가 5% 이상 작아야 `learned = true`
+- **추천**: `Control.recommend(L, { inputs: { 이름: { now, before } }, mvNow }, { min, max, maxStep })`.
+  한계를 넘으면 잘라내고 `clipped`로 알린다.
+- **한계와 주의**
+  - 운전자의 실수와 습관도 그대로 배운다.
+  - 기록에 없는 운전 영역에서는 믿을 수 없다.
+  - 운전자가 표에 없는 정보(경보, 지시 등)로 판단했으면 배우지 못한다.
+  - 피드백 때문에 상관관계가 실제 공정의 반응과 다를 수 있다.
+  - 실제 제어에 연결하기 전에 운전 보조(추천)로 충분히 검증해야 한다.
 
 ## 엔진 사용법
 
@@ -79,6 +104,10 @@ m.predict({ 외기온도: 31, 습도: 60 });
       "validation": { "mode": "tail", "nTrain": 20, "nTest": 5, "rmse": 0.2, "trainRmse": 0.1, "coverage": 1 },
       "core": { "center": 60, "scale": 36, "deg": 2, "coef": [], "cov": [[]], "sigma": 0.1, "df": 22 }
     },
+    { "kind": "control", "role": "control", "mv": "밸브개도(%)", "target": "delta", "window": 5, "timing": "state(t-1) -> action(t)",
+      "features": [{ "key": "L1", "var": "공급압력(bar)", "kind": "level" }, { "key": "T1", "kind": "trend" }],
+      "tree": { "j": 2, "thr": 4.92, "left": { "value": 0.64, "up": 0.54, "down": 0, "n": 28 }, "right": {} },
+      "linear": { "use": [1, 2], "model": {} }, "deadband": 0.5, "pick": "tree", "evaluation": {} },
     { "kind": "multi", "role": "multi", "y": "…", "b0": 0, "terms": [{ "name": "…", "coef": 0, "beta": 0, "mean": 0, "sd": 1 }], "stats": {}, "core": {} }
   ]
 }

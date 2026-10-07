@@ -287,7 +287,7 @@
     const rows = [];
     y.forEach((v, i) => { if (Number.isFinite(v) && preds.every(p => Number.isFinite(p.values[i]))) rows.push(i); });
     const k = preds.length, n = rows.length;
-    if (k < 2) return null;
+    if (k < 1) return null;
     if (n < k + 3) return { error: `여러 항목을 함께 쓰려면 값이 ${k + 3}줄 이상 필요해요 (지금 ${n}줄)` };
     const ys = rows.map(i => y[i]);
     const ms = preds.map(p => mean(rows.map(i => p.values[i])));

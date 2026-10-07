@@ -41,7 +41,8 @@
         <input type="file" id="file" accept=".csv,.tsv,.txt,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
         파일 열기
       </label>
-      <button class="chip-btn" id="sample-btn" type="button">예시 데이터</button>
+      <button class="chip-btn" id="sample-btn" type="button">예시: 냉방</button>
+      <button class="chip-btn" id="gas-btn" type="button">예시: 가스 운전</button>
       <button class="chip-btn ghost" id="clear-btn" type="button">지우기</button>
     </div>
     <p class="msg" id="parse-msg" role="status"></p>
@@ -124,6 +125,19 @@
       <div id="multi"></div>
     </section>
 
+    <section class="panel" id="ctrl-panel" hidden>
+      <h3 class="sec-title">운전 조작 판단 (운전자의 감 → 규칙·식)</h3>
+      <p class="hint">운전자가 어떤 상태를 보고 조작 항목을 얼마나 바꿨는지 배워요. "직전 상태를 보고 다음 조작을 했다"고 가정해요.</p>
+      <label class="field"><span>조작 항목 <small class="hint">(운전자가 바꾼 값: 밸브 개도, 설정값 등)</small></span><select id="ctrl-mv"></select></label>
+      <div class="field"><span>판단 근거 항목 <small class="hint">(운전자가 보고 판단한 값)</small></span><div class="chips" id="ctrl-inputs"></div></div>
+      <label class="field"><span>추세를 볼 시간 <small class="hint">(이만큼 전과 비교해 오르는지 내리는지)</small></span><select id="ctrl-window"></select></label>
+      <label class="field"><span>배울 대상</span><select id="ctrl-target">
+        <option value="delta">조작량: 얼마나 바꿨나 (추천)</option>
+        <option value="level">조작 값: 얼마로 맞췄나</option>
+      </select></label>
+      <div id="ctrl-out"></div>
+    </section>
+
     <section class="panel">
       <details class="glossary">
         <summary>용어가 어려우면 눌러보세요</summary>
@@ -133,6 +147,9 @@
           <dt>정확도 (R²)</dt><dd>식이 실제 값을 얼마나 잘 설명하는지예요. 1이면 완벽, 0이면 전혀 못 맞혀요. 0.9 이상이면 매우 좋아요.</dd>
           <dt>상관계수 (r)</dt><dd>두 항목이 같이 움직이는 정도예요. −1 ~ 1 사이. 같이 움직인다고 해서 한쪽이 원인이라는 뜻은 아니에요.</dd>
           <dt>오차 (RMSE)</dt><dd>식으로 계산한 값이 실제와 평균적으로 얼마나 차이 나는지예요. 작을수록 좋아요.</dd>
+          <dt>조작량</dt><dd>운전자가 한 번에 바꾼 양이에요. 예: 밸브 개도 50% → 52%면 조작량 +2.</dd>
+          <dt>판단 규칙 (회귀 나무)</dt><dd>"압력이 4.92보다 낮으면 올림"처럼 조건을 나눠 운전자의 판단을 정리한 것이에요.</dd>
+          <dt>방향 맞힘</dt><dd>올림·내림·그대로 중 무엇을 할지 맞힌 비율이에요. "조작 안 함" 기준보다 높아야 의미가 있어요.</dd>
           <dt>ln, e</dt><dd>로그·지수 함수에 쓰는 수학 기호예요. 엑셀에서는 LN(), EXP()로 계산해요.</dd>
         </dl>
       </details>
@@ -149,6 +166,7 @@
 
 <script src="reader.js"></script>
 <script src="regression.js"></script>
+<script src="control.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

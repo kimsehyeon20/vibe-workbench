@@ -194,7 +194,8 @@ function drawChart(canvas, spec, opt = {}) {
   const band = [];
   if (spec.band) for (const [xv] of curve) { const [lo, hi] = spec.band(xv); if (Number.isFinite(lo) && Number.isFinite(hi)) band.push([xv, lo, hi]); }
   const inView = v => v > Math.min(...ys) - yr * 0.5 && v < Math.max(...ys) + yr * 0.5;
-  const cys = [...curve.map(p => p[1]), ...band.flatMap(b => [b[1], b[2]])].filter(inView);
+  const ov = spec.overlay ? spec.overlay.x.map((xv, i) => [xv, spec.overlay.y[i]]).filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b)) : [];
+  const cys = [...curve.map(p => p[1]), ...band.flatMap(b => [b[1], b[2]]), ...ov.map(p => p[1])].filter(inView);
   const xt = niceTicks(xmin, xmax, opt.xTicks || 5);
   const yt = niceTicks(Math.min(...ys, ...cys), Math.max(...ys, ...cys), opt.yTicks || 4);
 
@@ -258,11 +259,15 @@ function drawChart(canvas, spec, opt = {}) {
     ctx.strokeStyle = th.fit; ctx.lineWidth = 2 * (opt.markScale || 1); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
     ctx.beginPath(); curve.forEach(([a, b], i) => i ? ctx.lineTo(px(a), py(b)) : ctx.moveTo(px(a), py(b))); ctx.stroke();
   }
+  if (ov.length) {
+    ctx.strokeStyle = th.fit; ctx.lineWidth = 2 * (opt.markScale || 1); ctx.lineJoin = 'round';
+    ctx.beginPath(); ov.forEach(([a, b], i) => i ? ctx.lineTo(px(a), py(b)) : ctx.moveTo(px(a), py(b))); ctx.stroke();
+  }
   ctx.restore();
 
   if (opt.legend) {
     ctx.font = font(400); ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-    const items = [['측정값', th.point, 'dot'], ...(spec.fn ? [[spec.fitLabel || '회귀 함수', th.fit, 'line']] : []), ...(band.length ? [['95% 예측 범위', th.fit, 'band']] : [])];
+    const items = [[spec.pointLabel || '측정값', th.point, 'dot'], ...(spec.fn ? [[spec.fitLabel || '회귀 함수', th.fit, 'line']] : []), ...(ov.length ? [[spec.overlayLabel || '예측', th.fit, 'line']] : []), ...(band.length ? [['95% 예측 범위', th.fit, 'band']] : [])];
     let lx = L + pw - sum(items.map(([t]) => ctx.measureText(t).width + 34)), ly = spec.title ? 10 + fs / 2 : top + 8;
     for (const [t, c, k] of items) {
       ctx.fillStyle = c;
@@ -780,6 +785,180 @@ function renderResults() {
     });
     mu.append(dm);
   }
+  renderControlSetup();
+}
+
+/* ---------------- 7-2. 운전 조작 판단 (control.js) ---------------- */
+
+const MV_NAME_RE = /개도|밸브|valve|설정|SP\b|조작|출력|대수|rpm|댐퍼|damper|베인|vane|스트로크|열림|부하율/i;
+
+function ctrlCfg() {
+  const R = state.result, vars = R.ds.vars;
+  const c = state.cfg.ctrl = { ...(state.cfg.ctrl || {}) };
+  if (!vars.some(v => v.col === c.mv)) {
+    const byName = vars.find(v => MV_NAME_RE.test(v.name));
+    c.mv = (byName || R.target).col;
+  }
+  c.exclude = (c.exclude || []).filter(col => vars.some(v => v.col === col));
+  c.window = c.window || 0; // 0 = 자동
+  c.target = c.target || 'delta';
+  return c;
+}
+
+function stepInfo(ds) {
+  const d = ds.t.slice(1).map((v, i) => v - ds.t[i]).filter(v => v > 0).sort((a, b) => a - b);
+  const dt = d.length ? d[d.length >> 1] : 1;
+  const unit = ds.unit ? UNITS[ds.unit].label : ds.kind === 'index' ? '칸' : '';
+  return { dt, unit, label: k => (ds.kind === 'index' ? `${k}칸` : `${fmt(k * dt, 3)}${unit}`) };
+}
+
+function renderControlSetup() {
+  const R = state.result, ds = R.ds;
+  const panel = $('ctrl-panel');
+  panel.hidden = ds.vars.length < 2;
+  if (panel.hidden) return;
+  const c = ctrlCfg();
+  const ms = $('ctrl-mv'); ms.innerHTML = '';
+  ds.vars.forEach(v => ms.append(el('option', { value: String(v.col), text: v.name })));
+  ms.value = String(c.mv);
+  const chips = $('ctrl-inputs'); chips.innerHTML = '';
+  ds.vars.filter(v => v.col !== c.mv).forEach(v => {
+    const on = !c.exclude.includes(v.col);
+    const b = el('button', { class: 'chip', type: 'button', 'aria-pressed': String(on), text: v.name });
+    b.onclick = () => { c.exclude = on ? [...c.exclude, v.col] : c.exclude.filter(x => x !== v.col); saveCfg(); renderControlSetup(); };
+    chips.append(b);
+  });
+  const si = stepInfo(ds), n = ds.t.length;
+  const ws = $('ctrl-window'); ws.innerHTML = '';
+  const steps = [1, 2, 3, 5, 10, 15, 30, 60].filter(k => k <= Math.max(1, Math.floor(n / 6)));
+  const auto = steps.includes(5) ? 5 : steps[steps.length - 1];
+  ws.append(el('option', { value: '0', text: `자동 (${si.label(auto)})` }));
+  steps.forEach(k => ws.append(el('option', { value: String(k), text: si.label(k) })));
+  ws.value = String(steps.includes(c.window) ? c.window : 0);
+  $('ctrl-target').value = c.target;
+  renderControl(steps.includes(c.window) ? c.window : auto, si);
+}
+
+$('ctrl-mv').onchange = e => { state.cfg.ctrl.mv = +e.target.value; saveCfg(); renderControlSetup(); };
+$('ctrl-window').onchange = e => { state.cfg.ctrl.window = +e.target.value; saveCfg(); renderControlSetup(); };
+$('ctrl-target').onchange = e => { state.cfg.ctrl.target = e.target.value; saveCfg(); renderControlSetup(); };
+
+const dirWord = d => (d > 0 ? '올림' : d < 0 ? '내림' : '유지');
+const signed = (v, sig = 3) => (v > 0 ? '+' : v < 0 ? '−' : '') + fmt(Math.abs(v), sig);
+const pct = v => (Number.isFinite(v) ? `${Math.round(v * 100)}%` : '-');
+
+function condText(F, c) {
+  const name = F.defs[c.j].label;
+  if (Number.isFinite(c.lo) && Number.isFinite(c.hi)) return `${fmt(c.lo, 4)} ≤ ${name} < ${fmt(c.hi, 4)}`;
+  if (Number.isFinite(c.hi)) return `${name} < ${fmt(c.hi, 4)}`;
+  return `${name} ≥ ${fmt(c.lo, 4)}`;
+}
+
+function ruleText(L, r) {
+  const F = L.F, mv = F.mvName;
+  const when = r.conds.length ? r.conds.map(c => condText(F, c)).join(' 이고 ') : '항상';
+  const d = F.target === 'delta' ? r.value : NaN;
+  const act = r.up >= 0.5 ? `${mv} 올림 (${pct(r.up)}의 경우)` : r.down >= 0.5 ? `${mv} 내림 (${pct(r.down)}의 경우)`
+    : r.up + r.down < 0.3 ? `대체로 그대로 둠 (조작한 경우 ${pct(r.up + r.down)})` : `올림 ${pct(r.up)} · 내림 ${pct(r.down)} (판단이 엇갈림)`;
+  return { when, act, avg: F.target === 'delta' ? `평균 ${signed(d)}` : `평균 ${fmt(r.value, 4)}로 맞춤`, n: r.n };
+}
+
+function renderControl(window, si) {
+  const R = state.result, ds = R.ds, c = state.cfg.ctrl;
+  const out = $('ctrl-out'); out.innerHTML = '';
+  const series = ds.vars.map(v => ({ name: v.name, values: v.values }));
+  const mvIdx = ds.vars.findIndex(v => v.col === c.mv);
+  const inputs = ds.vars.map((v, i) => i).filter(i => i !== mvIdx && !c.exclude.includes(ds.vars[i].col));
+  if (!inputs.length) { out.append(el('p', { class: 'says', text: '판단 근거 항목을 1개 이상 골라주세요.' })); R.control = null; return; }
+  const L = Control.learn(series, { mv: mvIdx, inputs, window, target: c.target, windowLabel: si.label(window) });
+  R.control = L; R.controlWindow = window;
+  if (L.error) { out.append(el('p', { class: 'says', text: L.error })); return; }
+  const F = L.F, mv = F.mvName, ev = L.evaluation, st = L.stats;
+
+  out.append(el('div', { class: 'warn-card', html: '<b>운전 보조(추천)용이에요.</b> 운전자가 과거에 한 판단을 따라 하는 것이라 실수와 습관도 같이 배워요. 안전 인터록과 한계값은 별도로 두고, 자동 제어에 연결하기 전에 운전자 검토와 시운전 검증을 거쳐야 해요.' }));
+
+  // 운전자 조작 통계
+  out.append(el('p', { class: 'mini-title', text: '운전자는 어떻게 조작했나' }));
+  out.append(el('p', { class: 'says', text: `${st.n}번의 시점 중 올림 ${st.up}번 · 내림 ${st.down}번 · 그대로 ${st.hold}번. 한 번에 보통 ${fmt(st.stepMedian, 3)}만큼, 가장 크게는 ${fmt(st.stepMax, 3)}만큼 바꿨어요. (${fmt(L.deadband, 3)}보다 작은 변화는 "그대로"로 봤어요)` }));
+
+  // 검증
+  if (ev) {
+    const t = el('table', { class: 'stat-table' }, el('tr', {}, ...['방법', '오차', '방향 맞힘', '실제 조작 때 방향'].map(h => el('th', { text: h }))));
+    [['조작 안 함 (기준)', 'base'], ['판단 규칙', 'tree'], ['선형 식', 'linear']].forEach(([name, k]) => t.append(el('tr', {},
+      el('td', { text: name + (L.pick === k ? ' ✓' : '') }), el('td', { text: fmt(ev.rmse[k], 3) }), el('td', { text: pct(ev.direction[k]) }), el('td', { text: pct(ev.actedDirection[k]) }))));
+    out.append(el('p', { class: 'mini-title', text: `검증: 앞 75%로 배우고 뒤 25%(${ev.nTest}개, 실제 조작 ${ev.acted}번)를 맞혀봄` }), el('div', { class: 'table-scroll' }, t));
+    const best = Math.min(ev.rmse.tree, Number.isFinite(ev.rmse.linear) ? ev.rmse.linear : Infinity);
+    const gain = 1 - best / ev.rmse.base;
+    out.append(el('p', { class: `valid ${L.learned ? '' : 'bad'}`, text: L.learned
+      ? `"조작 안 함"보다 오차가 ${pct(gain)} 작아요 → 운전자의 판단 기준을 어느 정도 배웠어요. 추천에는 ${L.pick === 'tree' ? '판단 규칙' : '선형 식'}을 써요.`
+      : '"조작 안 함"과 비교해 나아진 게 거의 없어요. 판단 근거 항목이 부족하거나, 운전자가 표에 없는 정보(경보, 지시, 계획, 소리·냄새 등)를 보고 조작했을 수 있어요.' }));
+    if (ev.acted < 5) out.append(el('p', { class: 'hint', text: `⚠ 검증 구간에서 실제 조작이 ${ev.acted}번뿐이라 "실제 조작 때 방향" 값은 믿기 어려워요. 더 긴 기간의 기록이 필요해요.` }));
+    const wrap = el('div', { class: 'chart' });
+    out.append(el('p', { class: 'says', text: `검증 구간: 실제 ${F.target === 'delta' ? '조작량' : mv}(점)과 ${L.pick === 'tree' ? '규칙' : '식'}이 판단한 값(선)` }), wrap);
+    const xs = ev.series.at.map(i => ds.t[i]);
+    requestAnimationFrame(() => mountChart(wrap, { x: xs, y: ev.series.truth, overlay: { x: xs, y: ev.series[L.pick] || ev.series.tree }, overlayLabel: '판단 결과', pointLabel: '실제', xLabel: ds.tLabel, yLabel: F.target === 'delta' ? `${mv} 조작량` : mv, line: false }));
+  }
+
+  // 판단 규칙
+  out.append(el('p', { class: 'mini-title', text: '찾아낸 판단 규칙 (운전자의 감 → 만약 ~이면)' }));
+  const ul = el('ul', { class: 'rules' });
+  L.rules.forEach(r => {
+    const t = ruleText(L, r);
+    ul.append(el('li', { html: `<span class="if">만약 ${esc(t.when)}</span><span class="then">→ ${esc(t.act)} · ${esc(t.avg)}</span><span class="n">근거 ${t.n}건${t.n < 10 ? ' · ⚠ 근거 적음' : ''}</span>` }));
+  });
+  out.append(ul);
+  const imp = L.tree.importance.map((v, j) => [F.defs[j].label, v]).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  if (imp.length) out.append(el('p', { class: 'hint', text: `판단에 가장 많이 쓰인 항목: ${imp.map(([n, v]) => `${n} ${pct(v)}`).join(', ')}. 규칙의 기준값(예: 압력 4.92)은 운전자에게 맞는지 꼭 확인하세요. 우연히 생긴 조건이 섞일 수 있어요.` }));
+
+  // 선형 식
+  if (L.linear) {
+    const M = L.linear.model;
+    const y = F.target === 'delta' ? `${mv} 조작량` : mv;
+    out.append(el('p', { class: 'mini-title', text: '선형 식 (의미 있는 항만 남김)' }));
+    out.append(el('div', { class: 'formula wrap', html: `${esc(y)} = ${esc(joinTerms([[M.b0, ''], ...M.terms.map(t => [t.coef, t.name])], fmt))}<small>R² ${fmtR2(M.r2)} · p값 0.05 넘는 항은 하나씩 뺐어요. 상태는 직전 값, ${esc(F.windowLabel)} 변화는 그 사이 바뀐 양이에요.</small>` }));
+  }
+
+  // 추천
+  out.append(el('p', { class: 'mini-title', text: '지금 상태를 넣으면 조작 추천' }));
+  const form = el('div', { class: 'predict ctrl' });
+  const used = [...new Set(F.defs.filter(d => d.key !== 'MV').map(d => d.var))];
+  const last = ds.t.length - 1, back = Math.max(0, last - F.window);
+  const inp = (val, label) => el('input', { type: 'number', inputmode: 'decimal', step: 'any', value: Number.isFinite(val) ? String(+val.toPrecision(6)) : '', 'aria-label': label });
+  const fields = {};
+  used.forEach(name => {
+    const v = ds.vars.find(x => x.name === name).values;
+    fields[name] = { now: inp(v[last], `${name} 지금`), before: inp(v[back], `${name} ${F.windowLabel} 전`) };
+    form.append(el('div', { class: 'pair-row' }, el('span', { text: name }), el('label', {}, el('small', { text: '지금' }), fields[name].now), el('label', {}, el('small', { text: `${F.windowLabel} 전` }), fields[name].before)));
+  });
+  const mvNow = inp(ds.vars[mvIdx].values[last], `현재 ${mv}`);
+  form.append(el('div', { class: 'pair-row' }, el('span', { text: `현재 ${mv}` }), el('label', {}, el('small', { text: '지금' }), mvNow), el('span')));
+  // 기본 한계: %면 0~100, 아니면 기록 범위에서 위아래로 20% 넓힌 값. 실제 설비 한계로 바꿔 넣어야 한다
+  const span = st.mvMax - st.mvMin || Math.abs(st.mvMax) || 1;
+  const isPct = /%/.test(mv);
+  const lim = {
+    min: inp(isPct ? Math.max(0, st.mvMin - span * 0.2) : st.mvMin - span * 0.2, '최소'),
+    max: inp(isPct ? Math.min(100, st.mvMax + span * 0.2) : st.mvMax + span * 0.2, '최대'),
+    maxStep: inp(st.stepMax, '한 번 최대'),
+  };
+  form.append(el('div', { class: 'pair-row limits' }, el('span', { text: '안전 한계' }),
+    el('label', {}, el('small', { text: '최소' }), lim.min), el('label', {}, el('small', { text: '최대' }), lim.max), el('label', {}, el('small', { text: '한 번 최대' }), lim.maxStep)));
+  const res = el('div', { class: 'rec' });
+  form.append(res);
+  const upd = () => {
+    const stIn = { inputs: {}, mvNow: toNumber(mvNow.value) };
+    used.forEach(n => { stIn.inputs[n] = { now: toNumber(fields[n].now.value), before: toNumber(fields[n].before.value) }; });
+    const r = Control.recommend(L, stIn, { min: toNumber(lim.min.value), max: toNumber(lim.max.value), maxStep: toNumber(lim.maxStep.value) });
+    if (r.error) { res.textContent = r.error; return; }
+    const cond = r.tree.conds.map(cc => condText(F, cc)).join(' 이고 ') || '모든 경우';
+    res.innerHTML = `<p class="rec-main ${r.dir > 0 ? 'up' : r.dir < 0 ? 'down' : ''}">추천: <b>${dirWord(r.dir)}</b> ${r.dir ? `${signed(r.delta)} → ${fmt(r.next, 5)}` : `(${fmt(stIn.mvNow, 5)} 유지)`}</p>` +
+      `<p class="rec-why">근거 규칙: 만약 ${esc(cond)} → 이 경우 운전자는 올림 ${pct(r.tree.leaf.up)} · 내림 ${pct(r.tree.leaf.down)} (근거 ${r.tree.leaf.n}건)</p>` +
+      (r.linear ? `<p class="rec-why">선형 식으로는 ${signed(r.linear.delta)} (95% 범위 ${signed(r.linear.range[0])} ~ ${signed(r.linear.range[1])})</p>` : '') +
+      (r.clipped.length ? `<p class="rec-why warn">⚠ ${r.clipped.join(', ')} 한계에 걸려서 줄였어요 (원래 ${signed(r.raw)})</p>` : '');
+  };
+  form.querySelectorAll('input').forEach(i => i.addEventListener('input', upd));
+  form.append(el('p', { class: 'hint', text: '안전 한계의 처음 값은 기록에서 정한 임시값이에요. 실제 설비의 운전 한계로 바꿔 넣으세요.' }));
+  upd();
+  out.append(form);
 }
 
 /* ---------------- 8. 엑셀 만들기 ---------------- */
@@ -869,6 +1048,14 @@ async function exportExcel() {
       x: R.multi.yh, y: R.multi.ys, fn: x => x, xLabel: '식으로 계산한 값', yLabel: `실제 ${R.target.name}`,
       title: `여러 항목으로 계산한 ${R.target.name} vs 실제`, subtitle: `R² = ${fmtR2(R.multi.r2)}`, fitLabel: '완전히 일치하는 선',
     });
+    if (R.control && !R.control.error && R.control.evaluation) {
+      const L = R.control, ev = L.evaluation, xs = ev.series.at.map(i => ds.t[i]);
+      charts.push({
+        x: xs, y: ev.series.truth, overlay: { x: xs, y: ev.series[L.pick] || ev.series.tree }, overlayLabel: '판단 결과', pointLabel: '실제 조작',
+        xLabel: ds.tLabel, yLabel: L.F.target === 'delta' ? `${L.F.mvName} 조작량` : L.F.mvName,
+        title: `조작 판단 검증: ${L.F.mvName}`, subtitle: `뒤 25% 구간, ${L.pick === 'tree' ? '판단 규칙' : '선형 식'}`,
+      });
+    }
     charts.forEach((spec, k) => {
       const id = wb.addImage({ base64: chartPNG(spec), extension: 'png' });
       ws2.addImage(id, { tl: { col: (k % 2) * 10 + 0.2, row: 3 + Math.floor(k / 2) * 20 }, ext: { width: 620, height: 349 } });
@@ -1043,6 +1230,39 @@ async function exportExcel() {
     R.pairFits.forEach(({ v, fr }) => { if (fr.best) detail(`■ ${R.target.name} = f(${v.name}) · ${fr.best.name}`, fr.best, Regression.details(fr.best, 'x'), { orderWord: `${v.name} 순서`, xLabel: v.name }); });
     if (R.multi && !R.multi.error) detail(`■ ${R.target.name} = 다중 선형 회귀 (${R.multi.terms.map(t => t.name).join(', ')})`, R.multi, Regression.details(R.multi), { orderWord: '시간 순서', isMulti: true });
 
+    const L = R.control;
+    if (L && !L.error) {
+      r++;
+      title(`9. 운전 조작 판단: ${L.F.mvName} (운전자의 감 → 규칙·식)`);
+      note('운전 보조(추천)용. 운전자의 과거 판단을 따라 하므로 실수·습관도 함께 배움. 안전 인터록·한계값은 별도로 두고, 자동 제어 연결 전 운전자 검토와 시운전 검증 필요.');
+      note(`가정: 직전 상태(t−1)를 보고 다음 조작(t)을 함. 배운 대상: ${L.F.target === 'delta' ? '조작량(바꾼 양)' : '조작 값'}. 추세 = 최근 ${L.F.windowLabel} 변화.`);
+      const st = L.stats;
+      note(`운전자 조작: ${st.n}번 중 올림 ${st.up} · 내림 ${st.down} · 그대로 ${st.hold}. 보통 한 번에 ${fmtX(st.stepMedian)}, 최대 ${fmtX(st.stepMax)}. ${fmtX(L.deadband)} 미만 변화는 "그대로".`);
+      const ev = L.evaluation;
+      if (ev) {
+        put(['검증 (앞 75% 학습 → 뒤 25%)', '오차 RMSE', '방향 맞힘', '실제 조작 때 방향'], XL.head);
+        [['조작 안 함 (기준)', 'base'], ['판단 규칙', 'tree'], ['선형 식', 'linear']].forEach(([name, k]) => {
+          const row = put([name + (L.pick === k ? ' (추천에 사용)' : ''), Number.isFinite(ev.rmse[k]) ? +ev.rmse[k].toPrecision(4) : '-', Number.isFinite(ev.direction[k]) ? ev.direction[k] : '-', Number.isFinite(ev.actedDirection[k]) ? ev.actedDirection[k] : '-'], null, { border: true });
+          row.getCell(3).numFmt = '0%'; row.getCell(4).numFmt = '0%';
+        });
+        note(L.learned ? '→ "조작 안 함"보다 오차가 작음: 판단 기준을 어느 정도 배웠음.' : '→ "조작 안 함"보다 나아지지 않음: 표에 없는 정보로 판단했을 가능성.');
+      }
+      r++;
+      put(['만약 (조건)', '', '', '그러면 (운전자 판단)', '올림 비율', '내림 비율', '평균', '근거 수'], XL.head);
+      L.rules.forEach(rule => {
+        const t = ruleText(L, rule);
+        const row = put([t.when, undefined, undefined, t.act, rule.up, rule.down, +rule.value.toPrecision(4), rule.n], null, { border: true, wrap: true });
+        ws3.mergeCells(r - 1, 1, r - 1, 3);
+        row.getCell(5).numFmt = '0%'; row.getCell(6).numFmt = '0%';
+        row.height = 32;
+      });
+      if (L.linear) {
+        const M = L.linear.model;
+        r++;
+        note(`선형 식: ${L.F.target === 'delta' ? `${L.F.mvName} 조작량` : L.F.mvName} = ` + joinTerms([[M.b0, ''], ...M.terms.map(t2 => [t2.coef, t2.name])], fmtX).replace(/−/g, '-') + `   (R² ${fmtR2(M.r2)})`);
+      }
+    }
+
     ws3.views = [{ showGridLines: false }];
 
     const buf = await wb.xlsx.writeBuffer();
@@ -1079,6 +1299,7 @@ function buildModelBundle(R) {
     ...R.pairFits.map(({ v, fr }) => single(fr, 'pair', R.target.name, v.name, 'x')),
   ].filter(Boolean);
   if (R.multi && !R.multi.error) models.push(Regression.serialize(R.multi, { role: 'multi' }));
+  if (R.control && !R.control.error) models.push(Control.serialize(R.control, { role: 'control', windowTime: R.controlWindow }));
   return {
     format: 'data-analyzer/model', version: Regression.VERSION,
     createdAt: R.at.toISOString(),
@@ -1183,7 +1404,34 @@ function sampleData() {
   return lines.join('\n');
 }
 
-$('sample-btn').onclick = () => { input.value = sampleData(); state.table = null; state.sheets = null; state.layout = 'auto'; onInput(); toast('예시: 냉방 중인 방을 2시간 동안 5분마다 잰 값이에요'); };
+function gasSampleData() {
+  // 가스 공급: 수요가 바뀌면 압력이 흔들리고, 운전자가 압력·수요 추세를 보고 밸브를 조절 (고정 난수)
+  let seed = 11;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647 - 0.5; };
+  let P = 5.0, V = 50;
+  const Ds = [], lines = ['시각\t수요유량(Nm³/h)\t공급압력(bar)\t외기온도(°C)\t밸브개도(%)'];
+  for (let i = 0; i <= 180; i++) {
+    const D = 1000 + 250 * Math.sin(i / 180 * Math.PI * 1.6 - 0.3) + 50 * Math.sin(i / 13) + rnd() * 25;
+    const T = 8 + 4 * Math.sin(i / 180 * Math.PI) + rnd() * 0.3;
+    Ds.push(D);
+    if (i > 0) {
+      const dD = i >= 5 ? Ds[i - 1] - Ds[i - 6] : 0;
+      let dv = 0;
+      if (P < 4.92) dv += P < 4.85 ? 2 : 1; else if (P > 5.08) dv -= P > 5.15 ? 2 : 1;
+      if (dD > 45) dv += 1; else if (dD < -45) dv -= 1;
+      if (rnd() > 0) dv = 0;
+      V = Math.min(90, Math.max(20, V + dv));
+    }
+    P = P + 0.00025 * (V * 20 - D) + rnd() * 0.008;
+    const m = 8 * 60 + i;
+    lines.push([`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`, D.toFixed(0), P.toFixed(3), T.toFixed(1), V].join('\t'));
+  }
+  return lines.join('\n');
+}
+
+const loadSample = (text, msg) => { input.value = text; state.table = null; state.sheets = null; state.layout = 'auto'; onInput(); toast(msg, 3500); };
+$('sample-btn').onclick = () => loadSample(sampleData(), '예시: 냉방 중인 방을 2시간 동안 5분마다 잰 값이에요');
+$('gas-btn').onclick = () => loadSample(gasSampleData(), '예시: 가스 공급 3시간, 1분마다. 운전자가 압력·수요를 보고 밸브를 조절했어요');
 $('clear-btn').onclick = () => { input.value = ''; state.table = null; state.sheets = null; state.layout = 'auto'; store.set('layout', 'auto'); store.set('cfg', null); onInput(); input.focus(); };
 
 let inputTimer;
