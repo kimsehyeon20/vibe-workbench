@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>데이터 분석기</title>
+<meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111113" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <a class="icon-btn" href="../../" aria-label="갤러리로">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+  </a>
+  <h1>데이터 분석기</h1>
+</header>
+
+<main class="wrap">
+  <!-- 1. 데이터 넣기 -->
+  <section class="card intro">
+    <p class="eyebrow">시간별 측정값 → 함수 · 그래프 · 엑셀</p>
+    <h2>표를 붙여넣기만 하세요</h2>
+    <p class="muted">엑셀에서 표를 복사해 아래 칸에 붙여넣거나 파일을 여세요. <b>첫 줄은 항목 이름</b>, <b>첫 칸은 시간</b>이면 가장 좋아요.</p>
+  </section>
+
+  <section class="panel">
+    <div class="step-head"><span class="step-no">1</span><h3>데이터 넣기</h3></div>
+    <textarea id="input" spellcheck="false" autocomplete="off" placeholder="시간	온도	전력
+09:00	21.5	3.2
+09:05	21.9	3.4
+09:10	22.4	3.5
+…"></textarea>
+    <div class="row-btns">
+      <label class="chip-btn">
+        <input type="file" id="file" accept=".csv,.tsv,.txt,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+        파일 열기
+      </label>
+      <button class="chip-btn" id="sample-btn" type="button">예시 데이터</button>
+      <button class="chip-btn ghost" id="clear-btn" type="button">지우기</button>
+    </div>
+    <p class="msg" id="parse-msg" role="status"></p>
+  </section>
+
+  <!-- 2. 설정 -->
+  <section class="panel" id="setup" hidden>
+    <div class="step-head"><span class="step-no">2</span><h3>확인하기</h3></div>
+    <div class="table-scroll"><table class="preview" id="preview"></table></div>
+    <p class="hint" id="preview-note"></p>
+
+    <label class="field">
+      <span>시간이 적힌 칸</span>
+      <select id="time-col"></select>
+    </label>
+    <label class="field" id="unit-field">
+      <span>시간 단위</span>
+      <select id="time-unit">
+        <option value="auto">자동</option>
+        <option value="s">초</option>
+        <option value="min">분</option>
+        <option value="h">시간</option>
+        <option value="d">일</option>
+      </select>
+    </label>
+
+    <div class="field">
+      <span>분석할 항목 <small class="hint">(누르면 빼거나 넣어요)</small></span>
+      <div class="chips" id="var-chips"></div>
+    </div>
+
+    <label class="field">
+      <span>가장 궁금한 값 <small class="hint">(다른 항목이 이 값에 어떤 영향을 주는지 봐요)</small></span>
+      <select id="target"></select>
+    </label>
+  </section>
+
+  <!-- 3. 결과 -->
+  <div id="results" hidden>
+    <section class="panel">
+      <div class="step-head"><span class="step-no">3</span><h3>한눈에 보기</h3></div>
+      <ul class="summary" id="summary"></ul>
+    </section>
+
+    <section class="panel">
+      <h3 class="sec-title">시간에 따른 변화</h3>
+      <p class="hint">점은 측정값, 주황 선은 계산된 함수예요. 그래프를 누르면 값을 볼 수 있어요.</p>
+      <div id="time-fits"></div>
+    </section>
+
+    <section class="panel" id="corr-panel">
+      <h3 class="sec-title">항목끼리의 관계</h3>
+      <p class="hint">숫자가 1에 가까우면 같이 오르내리고, −1에 가까우면 반대로 움직여요. 0 근처는 관계가 거의 없어요.</p>
+      <div class="table-scroll"><table class="heat" id="heat"></table></div>
+      <ul class="pair-list" id="pair-list"></ul>
+    </section>
+
+    <section class="panel" id="pair-panel">
+      <h3 class="sec-title" id="pair-title"></h3>
+      <div id="pair-fits"></div>
+    </section>
+
+    <section class="panel" id="multi-panel">
+      <h3 class="sec-title" id="multi-title"></h3>
+      <div id="multi"></div>
+    </section>
+
+    <section class="panel">
+      <details class="glossary">
+        <summary>용어가 어려우면 눌러보세요</summary>
+        <dl>
+          <dt>순시값</dt><dd>어느 한 순간에 잰 값이에요. 예: 9시 5분의 온도.</dd>
+          <dt>회귀(함수 찾기)</dt><dd>점들 사이를 가장 잘 지나가는 선(식)을 찾는 일이에요. 그 식으로 재지 않은 시점의 값도 짐작할 수 있어요.</dd>
+          <dt>정확도 (R²)</dt><dd>식이 실제 값을 얼마나 잘 설명하는지예요. 1이면 완벽, 0이면 전혀 못 맞혀요. 0.9 이상이면 매우 좋아요.</dd>
+          <dt>상관계수 (r)</dt><dd>두 항목이 같이 움직이는 정도예요. −1 ~ 1 사이. 같이 움직인다고 해서 한쪽이 원인이라는 뜻은 아니에요.</dd>
+          <dt>오차 (RMSE)</dt><dd>식으로 계산한 값이 실제와 평균적으로 얼마나 차이 나는지예요. 작을수록 좋아요.</dd>
+          <dt>ln, e</dt><dd>로그·지수 함수에 쓰는 수학 기호예요. 엑셀에서는 LN(), EXP()로 계산해요.</dd>
+        </dl>
+      </details>
+    </section>
+  </div>
+</main>
+
+<div class="bottom">
+  <button class="btn" id="main-btn" type="button" disabled>데이터를 넣어주세요</button>
+</div>
+
+<div class="tip" id="tip" hidden></div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
