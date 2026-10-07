@@ -20,17 +20,17 @@ const TYPES = {
 };
 
 const HOTKEYS = {
-  copy:  { label: '복사 (Ctrl+C)',    ahk: '^c',      py: ['ctrl', 'c'] },
-  paste: { label: '붙여넣기 (Ctrl+V)', ahk: '^v',      py: ['ctrl', 'v'] },
-  cut:   { label: '잘라내기 (Ctrl+X)', ahk: '^x',      py: ['ctrl', 'x'] },
-  all:   { label: '전체선택 (Ctrl+A)', ahk: '^a',      py: ['ctrl', 'a'] },
-  save:  { label: '저장 (Ctrl+S)',    ahk: '^s',      py: ['ctrl', 's'] },
-  undo:  { label: '실행취소 (Ctrl+Z)', ahk: '^z',      py: ['ctrl', 'z'] },
-  find:  { label: '찾기 (Ctrl+F)',    ahk: '^f',      py: ['ctrl', 'f'] },
-  enter: { label: '엔터 (Enter)',     ahk: '{Enter}', py: ['enter'] },
-  tab:   { label: '탭 (Tab)',         ahk: '{Tab}',   py: ['tab'] },
-  esc:   { label: 'ESC',             ahk: '{Esc}',   py: ['esc'] },
-  custom:{ label: '직접 입력',         ahk: '',        py: [] },
+  copy:  { label: '복사 (Ctrl+C)',    ahk: '^c',      py: ['ctrl', 'c'], sk: '^c' },
+  paste: { label: '붙여넣기 (Ctrl+V)', ahk: '^v',      py: ['ctrl', 'v'], sk: '^v' },
+  cut:   { label: '잘라내기 (Ctrl+X)', ahk: '^x',      py: ['ctrl', 'x'], sk: '^x' },
+  all:   { label: '전체선택 (Ctrl+A)', ahk: '^a',      py: ['ctrl', 'a'], sk: '^a' },
+  save:  { label: '저장 (Ctrl+S)',    ahk: '^s',      py: ['ctrl', 's'], sk: '^s' },
+  undo:  { label: '실행취소 (Ctrl+Z)', ahk: '^z',      py: ['ctrl', 'z'], sk: '^z' },
+  find:  { label: '찾기 (Ctrl+F)',    ahk: '^f',      py: ['ctrl', 'f'], sk: '^f' },
+  enter: { label: '엔터 (Enter)',     ahk: '{Enter}', py: ['enter'],     sk: '{ENTER}' },
+  tab:   { label: '탭 (Tab)',         ahk: '{Tab}',   py: ['tab'],       sk: '{TAB}' },
+  esc:   { label: 'ESC',             ahk: '{Esc}',   py: ['esc'],       sk: '{ESC}' },
+  custom:{ label: '직접 입력',         ahk: '',        py: [],            sk: '' },
 };
 
 /* ===== 상태 ===== */
@@ -346,17 +346,18 @@ function ahkStr(s) {
 function buildHotkey(s) {
   if (s.preset && s.preset !== 'custom') {
     const h = HOTKEYS[s.preset];
-    const singlePy = h.py.length === 1;
-    return { ahk: h.ahk, py: h.py, singlePy };
+    return { ahk: h.ahk, py: h.py, sk: h.sk, singlePy: h.py.length === 1 };
   }
-  const sym = { ctrl: '^', alt: '!', shift: '+', win: '#' };
+  const ahkSym = { ctrl: '^', alt: '!', shift: '+', win: '#' };
+  const skSym = { ctrl: '^', alt: '%', shift: '+', win: '' };   // SendKeys엔 Win키 코드가 없음
   const mods = (s.mods || []);
   let key = (s.key || '').trim();
-  let ahkKey = key;
-  if (key.length > 1) ahkKey = `{${key}}`;      // enter, f5 같은 특수키
-  const ahk = mods.map(m => sym[m]).join('') + ahkKey;
+  let ahkKey = key.length > 1 ? `{${key}}` : key;               // enter, f5 같은 특수키
+  let skKey = key.length > 1 ? `{${key.toUpperCase()}}` : key.toLowerCase();
+  const ahk = mods.map(m => ahkSym[m]).join('') + ahkKey;
+  const sk = mods.map(m => skSym[m]).join('') + (key ? skKey : '');
   const py = [...mods.map(m => m === 'win' ? 'win' : m), key.toLowerCase()].filter(Boolean);
-  return { ahk, py, singlePy: py.length === 1 };
+  return { ahk, py, sk, singlePy: py.length === 1 };
 }
 
 /* --- AutoHotkey v2 --- */
@@ -418,6 +419,83 @@ function genBAT(l, ahkName) {
     ')',
     '',
   ].join('\r\n');
+}
+
+/* --- 무설치 윈도우: PowerShell .ps1 + 실행용 .bat --- */
+function psStr(s) { return "'" + String(s == null ? '' : s).replace(/'/g, "''") + "'"; }
+function sendKeysText(s) { return String(s == null ? '' : s).replace(/[+^%~(){}\[\]]/g, m => '{' + m + '}'); }
+
+function genPSBat(l, ps1Name) {
+  return [
+    '@echo off',
+    'chcp 65001 >nul',
+    `echo [${(l.name || '매크로').replace(/[\r\n]/g, ' ')}] 를 시작합니다. (설치 필요 없음)`,
+    'echo 급할 때는 이 검은 창을 닫으면 멈춥니다.',
+    `powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0${ps1Name}"`,
+    'echo.',
+    'pause',
+    '',
+  ].join('\r\n');
+}
+
+function genPS1(l) {
+  const P = [];
+  P.push('# -*- 매크로: ' + (l.name || '').replace(/[\r\n]/g, ' ') + ' -*-');
+  P.push('# 설치가 필요 없습니다. 함께 받은 "...-무설치.bat" 파일을 더블클릭하세요.');
+  P.push('# ★ 급할 때: 실행 중 나타난 검은 창을 닫으면 멈춥니다. ★');
+  P.push('Add-Type @"');
+  P.push('using System; using System.Runtime.InteropServices;');
+  P.push('public class U {');
+  P.push('  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x,int y);');
+  P.push('  [DllImport("user32.dll")] public static extern void mouse_event(uint f,uint dx,uint dy,int d,int e);');
+  P.push('  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);');
+  P.push('}');
+  P.push('"@');
+  P.push('Add-Type -AssemblyName System.Windows.Forms');
+  P.push('');
+  P.push('function Move($x,$y){ [U]::SetCursorPos($x,$y) | Out-Null; Start-Sleep -Milliseconds 60 }');
+  P.push('function ClickAt($x,$y,$btn,$double){');
+  P.push('  [U]::SetCursorPos($x,$y) | Out-Null; Start-Sleep -Milliseconds 70');
+  P.push("  $d = if($btn -eq 'right'){0x08}elseif($btn -eq 'middle'){0x20}else{0x02}");
+  P.push("  $u = if($btn -eq 'right'){0x10}elseif($btn -eq 'middle'){0x40}else{0x04}");
+  P.push('  $n = if($double){2}else{1}');
+  P.push('  for($i=0;$i -lt $n;$i++){ [U]::mouse_event($d,0,0,0,0); [U]::mouse_event($u,0,0,0,0); Start-Sleep -Milliseconds 70 }');
+  P.push('}');
+  P.push('function Drag($x1,$y1,$x2,$y2){');
+  P.push('  [U]::SetCursorPos($x1,$y1) | Out-Null; Start-Sleep -Milliseconds 70');
+  P.push('  [U]::mouse_event(0x02,0,0,0,0); Start-Sleep -Milliseconds 80');
+  P.push('  [U]::SetCursorPos($x2,$y2) | Out-Null; Start-Sleep -Milliseconds 150');
+  P.push('  [U]::mouse_event(0x04,0,0,0,0)');
+  P.push('}');
+  P.push('function Keys($s){ [System.Windows.Forms.SendKeys]::SendWait($s); Start-Sleep -Milliseconds 90 }');
+  P.push('function ActivateWin($title){');
+  P.push('  $p = Get-Process | Where-Object { $_.MainWindowTitle -like "*$title*" } | Select-Object -First 1');
+  P.push('  if($p){ [U]::SetForegroundWindow($p.MainWindowHandle) | Out-Null; Start-Sleep -Milliseconds 400 }');
+  P.push('}');
+  P.push('function Scroll($dir,$amt){ for($i=0;$i -lt $amt;$i++){ [U]::mouse_event(0x800,0,0,$(if($dir -eq \'up\'){120}else{-120}),0); Start-Sleep -Milliseconds 50 } }');
+  P.push('');
+  P.push(`Start-Sleep -Seconds ${Number(l.delay) || 0}`);
+  P.push(`$reps = ${l.repeat && l.repeat > 0 ? l.repeat : 0}   # 0 = 무한 반복`);
+  P.push('$i = 0');
+  P.push('while($reps -eq 0 -or $i -lt $reps){');
+  for (const s of l.steps) P.push(...genPSStep(s).map(x => '  ' + x));
+  P.push('  $i++');
+  P.push('}');
+  P.push('Write-Host "매크로가 끝났어요."');
+  return P.join('\r\n') + '\r\n';
+}
+function genPSStep(s) {
+  switch (s.type) {
+    case 'move': return [`Move ${num(s.x)} ${num(s.y)}`];
+    case 'click': return [`ClickAt ${num(s.x)} ${num(s.y)} '${s.button || 'left'}' $${s.double ? 'true' : 'false'}`];
+    case 'drag': return [`Drag ${num(s.x1)} ${num(s.y1)} ${num(s.x2)} ${num(s.y2)}`];
+    case 'hotkey': return [`Keys ${psStr(buildHotkey(s).sk)}`];
+    case 'text': return [`Keys ${psStr(sendKeysText(s.text))}`];
+    case 'win': return [`ActivateWin ${psStr(s.title)}`];
+    case 'scroll': return [`Scroll '${s.dir === 'up' ? 'up' : 'down'}' ${num(s.amount) || 1}`];
+    case 'wait': return [`Start-Sleep -Milliseconds ${Math.round((Number(s.sec) || 0) * 1000)}`];
+    default: return [];
+  }
 }
 
 /* --- 파이썬 (pyautogui) --- */
@@ -514,6 +592,11 @@ function doExport(kind) {
     download(ahkName, genAHK(l));
     download(fileName(l.name + '-실행', 'bat'), genBAT(l, ahkName), 'application/bat');
     toast('.ahk 와 .bat 를 받았어요');
+  } else if (kind === 'ps') {
+    const ps1Name = fileName(l.name, 'ps1');
+    download(ps1Name, genPS1(l), 'text/plain;charset=utf-8');
+    download(fileName(l.name + '-무설치', 'bat'), genPSBat(l, ps1Name), 'application/bat');
+    toast('무설치 실행 파일을 받았어요');
   } else if (kind === 'py') {
     download(fileName(l.name, 'py'), genPY(l), 'text/x-python;charset=utf-8');
     toast('파이썬 파일을 받았어요');
@@ -594,10 +677,16 @@ const HELP = `
 <ol>
 <li><b>좌표 찾기 도우미</b>를 받아 PC에서 실행 → 클릭할 위치에 마우스를 올려 <code>X</code>, <code>Y</code> 숫자를 적어둬요.</li>
 <li>이 화면에서 <b>+ 동작 추가</b>로 이동·클릭·붙여넣기 같은 순서를 만들어요.</li>
-<li><b>.ahk + .bat</b>를 받아요. (윈도우 추천)</li>
-<li>PC에 <b>AutoHotkey v2</b>를 한 번 설치해요 → <code>autohotkey.com</code></li>
-<li>받은 <b>.ahk 파일을 더블클릭</b>하면 시작! 시작 전 몇 초 대기 동안 원하는 창을 켜 두세요.</li>
+<li>아래 내보내기에서 내 PC에 맞는 걸 받아요(아래 설명 참고).</li>
+<li>받은 <b>실행 파일(.bat 또는 .ahk)을 더블클릭</b>하면 시작! 시작 전 몇 초 대기 동안 원하는 창을 켜 두세요.</li>
 </ol>
+
+<h4>어떤 걸 받아야 하나요?</h4>
+<ul>
+<li><b>무설치 (윈도우)</b> — 설치·관리자 권한이 필요 없어요. 회사 PC가 설치가 막혀 있거나 잘 모르면 <b>이걸 먼저</b> 쓰세요. 받은 <code>...-무설치.bat</code>를 더블클릭.</li>
+<li><b>.ahk + .bat</b> — <code>autohotkey.com</code>에서 <b>AutoHotkey v2</b>를 한 번 설치할 수 있다면 가장 안정적이고, 특히 <b>한글 글자 입력</b>이 잘 돼요.</li>
+<li><b>.py (파이썬)</b> — 맥이거나 파이썬을 쓰는 경우. <code>pip install pyautogui pygetwindow</code> 필요.</li>
+</ul>
 
 <h4>비상 정지</h4>
 <p>동작 중 <b>Esc 키</b>를 누르면 즉시 멈춰요. (파이썬은 마우스를 화면 왼쪽 맨 위 구석으로)</p>

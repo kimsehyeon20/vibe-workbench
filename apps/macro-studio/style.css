@@ -106,7 +106,6 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 /* 내보내기 */
 .export h3 { margin-bottom: 2px; }
 .export-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 10px; }
-.export-grid:has(.ghost) { grid-template-columns: 1fr 1fr; }
 .out {
   display: flex; flex-direction: column; gap: 2px; padding: 12px 10px; border-radius: 13px;
   background: var(--tint); text-align: center; align-items: center; transition: transform .12s;
@@ -190,7 +189,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 }
 @keyframes pop { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 
-@media (max-width: 420px) {
-  .export-grid { grid-template-columns: 1fr 1fr; }
-  .export-grid:first-of-type { grid-template-columns: 1fr 1fr 1fr; }
+@media (max-width: 360px) {
+  .out b { font-size: 13px; }
+  .out span { font-size: 10px; }
 }
