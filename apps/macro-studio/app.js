@@ -234,8 +234,13 @@ function stepAction(act, i) {
   const steps = activeLoop().steps;
   if (act === 'del') {
     const removed = steps[i];
+    const loopId = activeId;
     steps.splice(i, 1); save(); renderSteps();
-    toastAction('동작을 지웠어요', '되돌리기', () => { steps.splice(i, 0, removed); save(); renderSteps(); });
+    toastAction('동작을 지웠어요', '되돌리기', () => {
+      steps.splice(i, 0, removed);
+      if (activeId !== loopId && state.loops.some(l => l.id === loopId)) activeId = loopId;
+      save(); renderAll();
+    });
     return;
   }
   if (act === 'up' && i > 0) { [steps[i - 1], steps[i]] = [steps[i], steps[i - 1]]; }
@@ -664,6 +669,7 @@ function download(name, text, mime = 'text/plain;charset=utf-8') {
   setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
 }
 function gapMs(l) { return Math.round((Number(l.gap) || 0) * 1000); }
+function numConst(v) { return Number(String(v == null ? '' : v).replace(/,/g, '')) || 0; }
 function hhmm(startAt) { return startAt ? Number(startAt.replace(':', '')) : null; }
 function hhmmParts(startAt) { if (!startAt) return null; const [hh, mm] = startAt.split(':'); return { hh: String(Number(hh)), mm: String(Number(mm)), pad: `${hh}${mm}00` }; }
 
@@ -781,8 +787,8 @@ function genPS1(l) {
   P.push('  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);');
   P.push('  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int k);');
   P.push('  [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);');
-  P.push('  public struct POINT { public int X; public int Y; }');
   P.push('}');
+  P.push('public struct POINT { public int X; public int Y; }');
   P.push('"@');
   P.push('Add-Type -AssemblyName System.Windows.Forms');
   P.push('Add-Type -AssemblyName System.Drawing');
@@ -891,7 +897,7 @@ function psOcrFuncs() {
     '}',
     "function ReadNumber($txt){ $m=[regex]::Match($txt,'-?\\d[\\d,]*(\\.\\d+)?'); if($m.Success){ return [double]($m.Value -replace ',','') } else { return $null } }",
     'function TextCmp($a,$b,$op){ $x="$a".Trim(); $y="$b".Trim(); if($op -eq "has"){ return $x.Contains($y) } elseif($op -eq "ne"){ return ($x -ne $y) } else { return ($x -eq $y) } }',
-    'function CursorXY(){ $pt=New-Object U+POINT; [U]::GetCursorPos([ref]$pt)|Out-Null; return @($pt.X,$pt.Y) }',
+    'function CursorXY(){ $pt=New-Object POINT; [U]::GetCursorPos([ref]$pt)|Out-Null; return @($pt.X,$pt.Y) }',
   ];
 }
 function genPSStep(s) {
@@ -927,7 +933,7 @@ function genPSCond(s) {
     const op = { gt: '-gt', lt: '-lt', ge: '-ge', le: '-le', eq: '-eq', ne: '-ne' }[s.op] || '-ge';
     L.push('$v = ReadNumber $txt');
     if (two) { L.push('$v2 = ReadNumber $txt2'); L.push(`$cond = ($null -ne $v) -and ($null -ne $v2) -and ($v ${op} $v2)`); }
-    else L.push(`$cond = ($null -ne $v) -and ($v ${op} ${Number(s.value) || 0})`);
+    else L.push(`$cond = ($null -ne $v) -and ($v ${op} ${numConst(s.value)})`);
   }
   L.push(`if($cond){ ${psAct(s.onTrue, s.skip)} } else { ${psAct(s.onFalse, s.skipElse)} }`);
   return L;
@@ -1079,7 +1085,7 @@ function genPYCond(s) {
     const op = { gt: '>', lt: '<', ge: '>=', le: '<=', eq: '==', ne: '!=' }[s.op] || '>=';
     L.push('_v = read_number(_t)');
     if (two) { L.push('_v2 = read_number(_t2)'); L.push(`_cond = (_v is not None and _v2 is not None and _v ${op} _v2)`); }
-    else L.push(`_cond = (_v is not None and _v ${op} ${Number(s.value) || 0})`);
+    else L.push(`_cond = (_v is not None and _v ${op} ${numConst(s.value)})`);
   }
   L.push('if _cond:');
   L.push('    ' + pyAct(s.onTrue, s.skip));
