@@ -102,9 +102,12 @@
     <div class="export-grid">
       <button class="out ghost" data-export="finder"><b>좌표 찾기 도우미</b><span>X·Y 숫자 알아내기</span></button>
       <button class="out ghost" data-export="region"><b>영역 선택 도우미</b><span>조건 네모 좌표</span></button>
-      <button class="out ghost" data-export="backup"><b>전체 백업 저장</b><span>모든 루프를 파일로</span></button>
+      <button class="out ghost" data-export="imgcap"><b>이미지 캡처 도우미</b><span>찾을 그림 PNG 저장</span></button>
     </div>
-    <button class="out ghost wide-out" id="import-btn"><b>백업 불러오기</b><span>파일에서 되돌리기</span></button>
+    <div class="export-grid two-col">
+      <button class="out ghost" data-export="backup"><b>전체 백업 저장</b><span>모든 루프를 파일로</span></button>
+      <button class="out ghost" id="import-btn"><b>백업 불러오기</b><span>파일에서 되돌리기</span></button>
+    </div>
     <input type="file" id="import-file" accept=".json,application/json" hidden>
   </section>
 

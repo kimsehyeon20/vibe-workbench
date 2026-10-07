@@ -18,9 +18,13 @@ const TYPES = {
   win:    { ico: '🪟', label: '창 활성화 (제목으로 찾기)' },
   scroll: { ico: '🖲️', label: '스크롤' },
   wait:   { ico: '⏱️', label: '대기 (초)' },
+  imgclick:{ ico: '🖼️', label: '이미지 찾아 클릭' },
   readput:{ ico: '📋', label: '영역 값 읽어 입력' },
   if:     { ico: '❓', label: '조건 (영역을 읽어 분기)' },
 };
+
+/* 이미지 찾기: 관대함(색 허용오차) 단계 */
+const TOLS = { 15: '엄격', 25: '보통', 40: '느슨' };
 
 /* 읽어 입력 후 누를 키 */
 const AFTERS = { none: '(없음)', enter: '엔터(다음 줄)', tab: '탭(다음 칸)' };
@@ -147,6 +151,7 @@ function stepDesc(s) {
     case 'win': return `제목에 "${s.title}" 있는 창 앞으로`;
     case 'scroll': return `${s.dir === 'up' ? '위' : '아래'}로 ${s.amount}칸 스크롤`;
     case 'wait': return `${s.sec}초 기다리기`;
+    case 'imgclick': { const nf = s.notfound === 'skip' ? `${s.skipN || 1}개 건너뜀` : s.notfound === 'continue' ? '계속' : '멈춤'; const btn = s.button === 'right' ? '우' : s.button === 'middle' ? '가운데' : ''; return `이미지 ${s.slot} 찾아 ${s.double ? '더블' : ''}${btn}클릭 (못 찾으면 ${nf})`; }
     case 'readput': return `영역의 ${s.read === 'number' ? '숫자' : '글자'}를 읽어 붙여넣기${s.after && s.after !== 'none' ? ` → ${s.after === 'enter' ? '엔터' : '탭'}` : ''}`;
     case 'if': return condDesc(s);
     default: return '';
@@ -176,6 +181,7 @@ function stepIssue(s) {
     case 'win': return (s.title || '').trim() === '' ? '창 제목을 입력하세요' : null;
     case 'scroll': return (bad(s.amount) || Number(s.amount) < 1) ? '스크롤 칸 수를 입력하세요' : null;
     case 'wait': return (bad(s.sec) || Number(s.sec) < 0) ? '대기 시간을 입력하세요' : null;
+    case 'imgclick': return (bad(s.slot) || Number(s.slot) < 1) ? '이미지 슬롯 번호를 정하세요' : null;
     case 'readput': { const r = s.region || {}; return (bad(r.x1) || bad(r.y1) || bad(r.x2) || bad(r.y2)) ? '읽을 영역을 정하세요' : null; }
     case 'if': {
       const r = s.region || {};
@@ -291,6 +297,7 @@ function setType(type) {
     win:    { type, title: '' },
     scroll: { type, dir: 'down', amount: 3 },
     wait:   { type, sec: 1 },
+    imgclick:{ type, slot: 1, tol: 25, retries: 8, every: 0.7, notfound: 'stop', skipN: 1, button: 'left', double: false },
     readput:{ type, read: 'text', mode: 'screen', region: { x1: 100, y1: 100, x2: 300, y2: 150 }, after: 'tab' },
     if:     { type, read: 'number', mode: 'screen', region: { x1: 100, y1: 100, x2: 300, y2: 150 }, src: 'const', op: 'ge', value: '', mode2: 'screen', region2: { x1: 100, y1: 300, x2: 300, y2: 350 }, onTrue: 'continue', onFalse: 'stop', skip: 1, skipElse: 1 },
   };
@@ -349,6 +356,29 @@ function fieldsFor(type) {
         <label class="field"><span>몇 칸</span><input type="number" data-k="amount" value="${draft.amount}" min="1" inputmode="numeric"></label>`;
     case 'wait':
       return `<label class="field"><span>기다릴 시간(초)</span><input type="number" data-k="sec" value="${draft.sec}" min="0" step="0.5" inputmode="decimal"></label>`;
+    case 'imgclick': {
+      const nfSel = () => { let h = `<select data-k="notfound">`; for (const [v, lab] of Object.entries(ACTS)) h += `<option value="${v}"${draft.notfound === v ? ' selected' : ''}>${lab}</option>`; return h + '</select>'; };
+      return `
+        <p class="hint" style="margin-top:0">화면에서 <b>저장해 둔 그림</b>을 찾아 그 자리를 클릭해요. 위치가 바뀌어도 그림으로 찾아갑니다. <b>.ahk</b>가 가장 정확하고 <b>무설치(윈도우)</b>도 돼요(베타). 글자·숫자는 "조건(OCR)"이 더 안정적이에요.</p>
+        <div class="field"><span>이미지 슬롯 번호</span><input type="number" data-k="slot" value="${draft.slot}" min="1" inputmode="numeric"></div>
+        <p class="hint">PC에서 "이미지 캡처 도우미"를 받아 찾을 버튼/아이콘을 긁으면 <code>template_${draft.slot || 'N'}.png</code> 로 저장돼요. 그 번호를 여기 적어요.</p>
+        <div class="field"><span>얼마나 똑같아야 하나(관대함)</span><div class="chk-row" data-group="tol">
+          ${chk('tol', 40, '느슨')}${chk('tol', 25, '보통')}${chk('tol', 15, '엄격')}
+        </div></div>
+        <div class="field"><span>버튼</span><div class="chk-row" data-group="button">
+          ${chk('button', 'left', '왼쪽')}${chk('button', 'right', '오른쪽')}${chk('button', 'middle', '가운데')}
+        </div></div>
+        <div class="field"><div class="chk-row" data-group="double">
+          ${chk('double', true, '더블클릭', draft.double === true)}
+        </div></div>
+        <div class="two">
+          <label class="field"><span>몇 초마다 다시 찾기</span><input type="number" data-k="every" value="${draft.every}" min="0.1" step="0.1" inputmode="decimal"></label>
+          <label class="field"><span>몇 번까지</span><input type="number" data-k="retries" value="${draft.retries}" min="1" inputmode="numeric"></label>
+        </div>
+        <div class="field"><span>끝내 못 찾으면</span>${nfSel()}</div>
+        ${draft.notfound === 'skip' ? `<label class="field"><span>건너뛸 동작 수</span><input type="number" data-k="skipN" value="${draft.skipN || 1}" min="1" inputmode="numeric"></label>` : ''}
+        <p class="hint">캡처한 때와 실행할 때의 <b>화면 해상도·배율(100/125/150%)이 같아야</b> 찾아요. 다르면 다시 캡처하세요.</p>`;
+    }
     case 'readput': {
       const r = draft.region || (draft.region = { x1: 100, y1: 100, x2: 300, y2: 150 });
       const cur = draft.mode === 'cursor';
@@ -425,7 +455,7 @@ function bindFields() {
       const v = el.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value;
       if (k.includes('.')) { const [a, b] = k.split('.'); (draft[a] = draft[a] || {})[b] = v; }
       else draft[k] = v;
-      if (['preset', 'onTrue', 'onFalse'].includes(k)) renderSheetBody();
+      if (['preset', 'onTrue', 'onFalse', 'notfound'].includes(k)) renderSheetBody();
     };
   });
   body.querySelectorAll('.chk').forEach(btn => {
@@ -620,6 +650,11 @@ async function doStepPreview(s, fast) {
     case 'win': badge(`🪟 ${s.title}`); setCap(`창 앞으로: "${s.title}"`); return wait(c(900));
     case 'scroll': badge(`${s.dir === 'up' ? '↑' : '↓'} 스크롤`); setCap(`${s.dir === 'up' ? '위' : '아래'}로 ${s.amount}칸`); return wait(c(800));
     case 'wait': setCap(`${s.sec}초 대기${fast && s.sec * 1000 > 1400 ? ' (빠르게 보는 중)' : ''}`); return wait(c((Number(s.sec) || 0) * 1000));
+    case 'imgclick': {
+      hideRegions(); badge(`🖼️ 이미지 ${s.slot} 찾기`); setCap(stepDesc(s));
+      moveCursor(state.screen.w * 0.5, state.screen.h * 0.45, 400); let r = await wait(c(600)); if (r === 'cancel') return r;
+      pulse(s.button, s.double); return wait(c(500));
+    }
     case 'readput': { drawRegion('prev-region', s.mode, s.region || {}, 'r1'); hideOne('prev-region2'); badge('📋 읽어 입력'); setCap(stepDesc(s)); const r = await wait(c(1300)); hideRegions(); return r; }
     case 'if': { showRegions(s); badge(s.src === 'region2' ? '❓ 두 영역 비교' : '❓ 영역을 읽어 분기'); setCap(condDesc(s)); const r = await wait(c(1600)); hideRegions(); return r; }
     default: return wait(200);
@@ -722,7 +757,7 @@ function buildHotkey(s) {
 function genAHK(l) {
   const L = [];
   L.push('#Requires AutoHotkey v2.0', '#SingleInstance Force', 'CoordMode "Mouse", "Screen"',
-    'SetTitleMatchMode 2', 'SetKeyDelay 30', 'SetMouseDelay 30', '');
+    'CoordMode "Pixel", "Screen"', 'SetTitleMatchMode 2', 'SetKeyDelay 30', 'SetMouseDelay 30', '');
   L.push(`; ===== 매크로: ${(l.name || '').replace(/[\r\n]/g, ' ')} =====`);
   L.push('; 이 파일을 더블클릭하면 시작합니다. (AutoHotkey v2 설치 필요)');
   L.push(`; 단축키:  ${CTRL_KEYS.pauseLabel} = 일시정지/재생    ${CTRL_KEYS.stopLabel} = 종료 (Esc 도 종료)    ${CTRL_KEYS.startNowLabel} = 예약 기다리지 않고 즉시 시작`);
@@ -769,10 +804,51 @@ function genAHKStep(s) {
     case 'win': return [`WinActivate "${ahkStr(s.title)}"`, `WinWaitActive "${ahkStr(s.title)}", , 5`];
     case 'scroll': return [`Loop ${num(s.amount) || 1} {`, `    Send "{Wheel${s.dir === 'up' ? 'Up' : 'Down'}}"`, '    Sleep 40', '}'];
     case 'wait': return [`Sleep ${Math.round((Number(s.sec) || 0) * 1000)}`];
+    case 'imgclick': return genAHKImg(s);
     case 'readput': return ['; [영역 값 읽어 입력] 은 .ahk 에서 지원되지 않아 건너뜁니다 — "무설치(윈도우)" 또는 파이썬으로 내보내세요.'];
     case 'if': return ['; [조건] 동작은 .ahk 에서 지원되지 않아 건너뜁니다 — "무설치(윈도우)" 또는 파이썬으로 내보내세요.'];
     default: return [];
   }
+}
+
+function genAHKImg(s) {
+  const slot = num(s.slot) || 1, tol = num(s.tol) || 25;
+  const retries = Math.max(1, num(s.retries) || 8), everyMs = Math.round((Number(s.every) || 0.7) * 1000);
+  const btn = s.button === 'right' ? 'Right' : s.button === 'middle' ? 'Middle' : '';
+  const clickOpt = [btn, s.double ? 2 : ''].filter(v => v !== '').join(' ');
+  const L = [];
+  L.push(`img := A_ScriptDir "\\images\\template_${slot}.png"`);
+  L.push('vx := SysGet(76), vy := SysGet(77), vw := SysGet(78), vh := SysGet(79)');
+  L.push('iw := 0, ih := 0, hbm := LoadPicture(img, "", &pt)');
+  L.push('if hbm {');
+  L.push('    oi := Buffer(32, 0)');
+  L.push('    if DllCall("GetObject", "ptr", hbm, "int", 32, "ptr", oi)');
+  L.push('        iw := NumGet(oi, 4, "int"), ih := NumGet(oi, 8, "int")');
+  L.push('    DllCall("DeleteObject", "ptr", hbm)');
+  L.push('}');
+  L.push('fx := 0, fy := 0, found := false');
+  L.push(`deadline := A_TickCount + ${retries * everyMs}`);
+  L.push('Loop {');
+  L.push(`    try hit := ImageSearch(&fx, &fy, vx, vy, vx + vw, vy + vh, "*${tol} " img)`);
+  L.push('    catch {');
+  L.push('        MsgBox "이미지 파일을 못 읽었어요:`n" img, "매크로 설계소"');
+  L.push('        break');
+  L.push('    }');
+  L.push('    if hit {');
+  L.push('        found := true');
+  L.push('        break');
+  L.push('    }');
+  L.push('    if (A_TickCount > deadline)');
+  L.push('        break');
+  L.push(`    Sleep ${everyMs}`);
+  L.push('}');
+  L.push('if found {');
+  L.push('    cx := fx + (iw // 2), cy := fy + (ih // 2)');
+  L.push(clickOpt ? `    Click cx " " cy " ${clickOpt}"` : '    Click cx " " cy');
+  L.push('}');
+  if (s.notfound === 'stop') { L.push('else'); L.push('    ExitApp   ; 못 찾으면 멈춤'); }
+  else L.push('; 못 찾으면 다음 동작으로 진행 (.ahk 는 "건너뛰기 N"을 계속 진행으로 처리해요)');
+  return L;
 }
 
 /* --- 실행용 .bat (.ahk 실행) --- */
@@ -860,6 +936,8 @@ function genPS1(l) {
   P.push('function OpenUrl($u){ Start-Process $u }');
   const hasOcr = l.steps.some(s => s.type === 'if' || s.type === 'readput');
   if (hasOcr) P.push(...psOcrFuncs());
+  const hasImg = l.steps.some(s => s.type === 'imgclick');
+  if (hasImg) P.push(...psImgFuncs());
   P.push('');
   P.push(`Write-Host "단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료"`);
   const p = hhmmParts(l.startAt);
@@ -939,10 +1017,78 @@ function genPSStep(s) {
     case 'win': return [`ActivateWin ${psStr(s.title)}`];
     case 'scroll': return [`Scroll '${s.dir === 'up' ? 'up' : 'down'}' ${num(s.amount) || 1}`];
     case 'wait': return [`WaitMs ${Math.round((Number(s.sec) || 0) * 1000)}`];
+    case 'imgclick': return genPSImg(s);
     case 'readput': return genPSReadPut(s);
     case 'if': return genPSCond(s);
     default: return [];
   }
+}
+function genPSImg(s) {
+  const slot = num(s.slot) || 1, tol = num(s.tol) || 25;
+  const retries = Math.max(1, num(s.retries) || 8), everyMs = Math.round((Number(s.every) || 0.7) * 1000);
+  const btn = s.button || 'left', dbl = s.double ? '$true' : '$false';
+  const L = [`$ok = FindClick ${slot} ${tol} ${retries} ${everyMs} '${btn}' ${dbl}`];
+  if (s.notfound === 'stop') L.push('if(-not $ok){ exit }');
+  else if (s.notfound === 'skip') L.push(`if(-not $ok){ $skip = ${Math.max(1, num(s.skipN) || 1)} }`);
+  return L;
+}
+function psImgFuncs() {
+  return [
+    '# ===== 이미지 찾아 클릭: 화면에서 PNG 템플릿 찾기 (베타) =====',
+    'try {',
+    '  Add-Type -ReferencedAssemblies System.Drawing, System.Windows.Forms -TypeDefinition @"',
+    'using System; using System.Drawing; using System.Drawing.Imaging; using System.Windows.Forms; using System.Runtime.InteropServices;',
+    'public class Img {',
+    '  public static int[] Find(string path, int tol, int step) {',
+    '    int[] res = new int[] { -1, -1 };',
+    '    Bitmap tpl = new Bitmap(path);',
+    '    Rectangle vs = SystemInformation.VirtualScreen;',
+    '    Bitmap scr = new Bitmap(vs.Width, vs.Height, PixelFormat.Format32bppArgb);',
+    '    using (Graphics g = Graphics.FromImage(scr)) { g.CopyFromScreen(vs.Left, vs.Top, 0, 0, scr.Size); }',
+    '    int tw = tpl.Width, th = tpl.Height, sw = scr.Width, sh = scr.Height;',
+    '    if (tw > sw || th > sh) { scr.Dispose(); tpl.Dispose(); return res; }',
+    '    BitmapData sd = scr.LockBits(new Rectangle(0,0,sw,sh), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);',
+    '    BitmapData dd = tpl.LockBits(new Rectangle(0,0,tw,th), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);',
+    '    int ss = sd.Stride, ts = dd.Stride;',
+    '    byte[] sb = new byte[ss*sh]; byte[] tb = new byte[ts*th];',
+    '    Marshal.Copy(sd.Scan0, sb, 0, sb.Length); Marshal.Copy(dd.Scan0, tb, 0, tb.Length);',
+    '    scr.UnlockBits(sd); tpl.UnlockBits(dd);',
+    '    int fx = -1, fy = -1;',
+    '    for (int y = 0; y <= sh - th && fx < 0; y++) {',
+    '      for (int x = 0; x <= sw - tw; x++) {',
+    '        bool ok = true;',
+    '        for (int ty = 0; ty < th && ok; ty += step) {',
+    '          int sr = (y+ty)*ss, tr = ty*ts;',
+    '          for (int tx = 0; tx < tw; tx += step) {',
+    '            int si = sr + (x+tx)*4, ti = tr + tx*4;',
+    '            if (Math.Abs(sb[si]-tb[ti]) > tol || Math.Abs(sb[si+1]-tb[ti+1]) > tol || Math.Abs(sb[si+2]-tb[ti+2]) > tol) { ok = false; break; }',
+    '          }',
+    '        }',
+    '        if (ok) { fx = x; fy = y; break; }',
+    '      }',
+    '    }',
+    '    scr.Dispose(); tpl.Dispose();',
+    '    if (fx >= 0) { res[0] = vs.Left + fx + tw/2; res[1] = vs.Top + fy + th/2; }',
+    '    return res;',
+    '  }',
+    '}',
+    '"@',
+    '  $script:imgReady = $true',
+    '} catch { $script:imgReady = $false; Write-Host "[주의] 이미지 찾기 기능을 쓸 수 없어요(이 PC에서 지원 안 됨)." }',
+    'function FindClick($slot, $tol, $retries, $everyMs, $btn, $double) {',
+    '  $path = Join-Path $PSScriptRoot ("images\\template_" + $slot + ".png")',
+    '  if(-not (Test-Path $path)){ Write-Host "[주의] 이미지 파일이 없어요: $path"; return $false }',
+    '  if(-not $script:imgReady){ return $false }',
+    '  for($k = 0; $k -lt $retries; $k++){',
+    '    Pump',
+    '    $r = [Img]::Find($path, $tol, 2)',
+    '    if($r[0] -ge 0){ ClickAt $r[0] $r[1] $btn $double; return $true }',
+    '    WaitMs $everyMs',
+    '  }',
+    '  Write-Host "[주의] 화면에서 이미지를 못 찾았어요: $path"',
+    '  return $false',
+    '}',
+  ];
 }
 function genPSReadPut(s) {
   const L = psReadRegion('$txt', s.mode, s.region || {});
@@ -984,7 +1130,7 @@ function genPY(l) {
   P.push('# -*- coding: utf-8 -*-');
   P.push(`# 매크로: ${(l.name || '').replace(/[\r\n]/g, ' ')}`);
   P.push('# 실행: 1) 파이썬 설치  2) pip install pyautogui pygetwindow keyboard  3) python "이파일.py"');
-  P.push('#  (조건·읽어입력 기능을 쓰면 추가로:  pip install winocr pillow pyperclip )');
+  P.push('#  (조건·읽어입력:  pip install winocr pillow pyperclip  / 이미지 찾기:  pip install opencv-python )');
   P.push(`#  단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.startNowLabel} 예약 즉시시작 (keyboard 설치 시)`);
   P.push('#  급할 때: 마우스를 화면 왼쪽 맨 위 구석으로 휙 옮기면 멈춥니다.');
   P.push('import time, webbrowser, datetime');
@@ -1022,6 +1168,8 @@ function genPY(l) {
   P.push('    except Exception: pass');
   const hasOcr = l.steps.some(s => s.type === 'if' || s.type === 'readput');
   if (hasOcr) P.push(...pyOcrFuncs());
+  const hasImg = l.steps.some(s => s.type === 'imgclick');
+  if (hasImg) P.push(...pyImgFuncs());
   P.push('');
   P.push('def run():');
   const p = hhmmParts(l.startAt);
@@ -1109,10 +1257,49 @@ function genPYStep(s) {
     case 'win': return [`activate_window(${J(s.title)})`];
     case 'scroll': return [`pyautogui.scroll(${(s.dir === 'up' ? 1 : -1) * (num(s.amount) || 1) * 300})`];
     case 'wait': return [`time.sleep(${Number(s.sec) || 0})`];
+    case 'imgclick': return genPYImg(s);
     case 'readput': return genPYReadPut(s);
     case 'if': return genPYCond(s);
     default: return [];
   }
+}
+function genPYImg(s) {
+  const slot = num(s.slot) || 1, retries = Math.max(1, num(s.retries) || 8), every = Number(s.every) || 0.7;
+  const conf = { 40: 0.7, 25: 0.8, 15: 0.9 }[num(s.tol)] || 0.8;
+  const btn = JSON.stringify(s.button || 'left'), dbl = s.double ? 'True' : 'False';
+  const L = [`_ok = find_click(${slot}, ${conf}, ${retries}, ${every}, button=${btn}, double=${dbl})`];
+  if (s.notfound === 'stop') L.push('if not _ok: raise SystemExit("이미지 못 찾음: 멈춤")');
+  else if (s.notfound === 'skip') L.push(`if not _ok: skip[0] = ${Math.max(1, num(s.skipN) || 1)}`);
+  return L;
+}
+function pyImgFuncs() {
+  return [
+    '', '# ===== 이미지 찾아 클릭 (opencv 필요, 베타) =====',
+    'try:',
+    '    import cv2  # opencv-python',
+    '    _imgcv = True',
+    'except Exception:',
+    '    _imgcv = False',
+    '    print("(이미지 찾기엔  pip install opencv-python  필요. 없으면 이 동작은 건너뜁니다)")',
+    'def find_click(slot, conf, retries, every, button="left", double=False):',
+    '    import os',
+    '    if not _imgcv: return False',
+    '    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "images", "template_%d.png" % slot)',
+    '    if not os.path.exists(path):',
+    '        print("[주의] 이미지 파일이 없어요:", path); return False',
+    '    for _ in range(retries):',
+    '        control()',
+    '        try:',
+    '            pt = pyautogui.locateCenterOnScreen(path, confidence=conf, grayscale=True)',
+    '        except Exception:',
+    '            pt = None',
+    '        if pt:',
+    '            pyautogui.click(pt.x, pt.y, button=button, clicks=(2 if double else 1))',
+    '            return True',
+    '        time.sleep(every)',
+    '    print("[주의] 화면에서 이미지를 못 찾았어요:", path)',
+    '    return False',
+  ];
 }
 function genPYReadPut(s) {
   const a = pyRegionArgs(s.mode, s.region || {}); const L = [...a.pre];
@@ -1186,6 +1373,62 @@ function genRegionPicker() {
   ].join('\r\n');
 }
 
+/* --- 이미지 캡처 도우미 (드래그로 영역 긁어 PNG 저장, 무설치) --- */
+function genImageCapturer() {
+  return [
+    '# -*- 이미지 캡처 도우미 -*-',
+    '# 찾을 버튼/아이콘을 마우스로 드래그해 긁으면 images\\template_N.png 로 저장돼요.',
+    '# 여러 개 연속 저장 가능. 그만하려면 어두운 화면에서 Esc.',
+    'Add-Type -AssemblyName System.Windows.Forms',
+    'Add-Type -AssemblyName System.Drawing',
+    '$dir = Join-Path $PSScriptRoot "images"',
+    'if(-not (Test-Path $dir)){ New-Item -ItemType Directory -Path $dir | Out-Null }',
+    '$script:n = 1',
+    'while(Test-Path (Join-Path $dir ("template_" + $script:n + ".png"))){ $script:n++ }',
+    '',
+    'function Snip(){',
+    '  $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen',
+    '  $f = New-Object System.Windows.Forms.Form',
+    '  $f.FormBorderStyle = "None"; $f.StartPosition = "Manual"; $f.Bounds = $vs',
+    '  $f.BackColor = "Black"; $f.Opacity = 0.35; $f.TopMost = $true; $f.KeyPreview = $true',
+    '  $f.Cursor = [System.Windows.Forms.Cursors]::Cross',
+    '  $script:sx = 0; $script:sy = 0; $script:rect = [System.Drawing.Rectangle]::Empty; $script:drawing = $false; $script:ok = $false',
+    '  $f.Add_MouseDown({ $script:sx = $_.X; $script:sy = $_.Y; $script:drawing = $true })',
+    '  $f.Add_MouseMove({ if($script:drawing){ $x=[Math]::Min($script:sx,$_.X); $y=[Math]::Min($script:sy,$_.Y); $w=[Math]::Abs($_.X-$script:sx); $h=[Math]::Abs($_.Y-$script:sy); $script:rect = New-Object System.Drawing.Rectangle $x,$y,$w,$h; $f.Invalidate() } })',
+    '  $f.Add_Paint({ if($script:rect.Width -gt 0){ $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::Red), 2; $_.Graphics.DrawRectangle($pen, $script:rect); $pen.Dispose() } })',
+    '  $f.Add_MouseUp({ $script:drawing = $false; $script:ok = $true; $f.Close() })',
+    '  $f.Add_KeyDown({ if($_.KeyCode -eq "Escape"){ $script:ok = $false; $f.Close() } })',
+    '  [void]$f.ShowDialog()',
+    '  $rc = $script:rect; $okk = $script:ok; $f.Dispose()',
+    '  if(-not $okk -or $rc.Width -lt 3 -or $rc.Height -lt 3){ return $false }',
+    '  Start-Sleep -Milliseconds 200',
+    '  $bmp = New-Object System.Drawing.Bitmap $rc.Width, $rc.Height',
+    '  $g = [System.Drawing.Graphics]::FromImage($bmp)',
+    '  $g.CopyFromScreen($vs.Left + $rc.X, $vs.Top + $rc.Y, 0, 0, $rc.Size)',
+    '  $g.Dispose()',
+    '  $out = Join-Path $dir ("template_" + $script:n + ".png")',
+    '  $bmp.Save($out, [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()',
+    '  return $true',
+    '}',
+    '',
+    '[System.Windows.Forms.MessageBox]::Show("찾을 버튼/아이콘을 드래그로 긁으세요.`n저장되면 다음 슬롯으로 넘어가요. 그만하려면 어두운 화면에서 Esc.", "이미지 캡처 도우미") | Out-Null',
+    'while($true){',
+    '  if(Snip){',
+    '    [System.Windows.Forms.MessageBox]::Show(("슬롯 " + $script:n + " 저장됨 (template_" + $script:n + ".png)`n매크로의 이미지 슬롯 번호에 " + $script:n + " 를 적으세요."), "저장됨") | Out-Null',
+    '    $script:n++',
+    '  } else { break }',
+    '}',
+    'Write-Host "끝났어요. images 폴더를 매크로 파일과 같은 폴더에 두세요."',
+    '',
+  ].join('\r\n');
+}
+function genImgCapBat(ps1Name) {
+  return [
+    '@echo off', 'chcp 65001 >nul', 'echo 이미지 캡처 도우미를 시작합니다...',
+    `powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0${ps1Name}"`, '',
+  ].join('\r\n');
+}
+
 function doExport(kind) {
   const l = activeLoop();
   if (['ahk', 'ps', 'py'].includes(kind)) {
@@ -1213,6 +1456,11 @@ function doExport(kind) {
   } else if (kind === 'region') {
     download('영역선택도우미.ahk', genRegionPicker());
     toast('영역 선택 도우미를 받았어요');
+  } else if (kind === 'imgcap') {
+    const ps1 = '이미지캡처도우미.ps1';
+    download(ps1, genImageCapturer(), 'text/plain;charset=utf-8');
+    download('이미지캡처도우미-실행.bat', genImgCapBat(ps1), 'application/bat');
+    toast('이미지 캡처 도우미를 받았어요');
   } else if (kind === 'backup') {
     download(fileName('매크로설계소-백업', 'json'), JSON.stringify(state, null, 2), 'application/json');
     toast('전체 백업을 저장했어요');
@@ -1322,6 +1570,7 @@ const HELP = `
 <li><b>🪟 창 활성화</b> — 제목으로 창을 찾아 앞으로 가져와요(위치가 바뀌어도 OK). <em>설정:</em> 창 제목의 일부. 모르면 아래 "F12 소스 분석"으로 뽑을 수 있어요.</li>
 <li><b>🖲️ 스크롤</b> — 위/아래로 굴려요. <em>설정:</em> 방향 + 몇 칸.</li>
 <li><b>⏱️ 대기</b> — 몇 초 기다려요. <em>설정:</em> 초. (창 뜨는 시간·로딩을 기다릴 때)</li>
+<li><b>🖼️ 이미지 찾아 클릭</b> — 저장해 둔 <b>그림(버튼·아이콘)</b>을 화면에서 찾아 그 자리를 클릭해요(위치가 바뀌어도 OK). <em>설정:</em> 이미지 슬롯 번호, 관대함(느슨/보통/엄격), 버튼·더블, 재시도, 못 찾을 때 할 일. 아래 "이미지 찾기" 참고. 무설치·.ahk·파이썬 지원(베타).</li>
 <li><b>📋 영역 값 읽어 입력</b> — 화면 영역의 글자/숫자를 읽어 <b>지금 커서가 있는 칸에 붙여넣어요</b>(자료수집용). <em>설정:</em> 글자/숫자, 영역 좌표, 붙여넣은 뒤 누를 키(없음/엔터/탭). 무설치·파이썬 전용(베타).</li>
 <li><b>❓ 조건</b> — 화면 영역을 읽어 다르게 진행해요(아래 "조건" 참고).</li>
 </ul>
@@ -1358,6 +1607,14 @@ const HELP = `
 <li>파이썬만 <code>pip install keyboard</code> 후에 단축키가 켜져요.</li>
 </ul>
 
+<h4>🖼️ 이미지 찾아 클릭 — 베타</h4>
+<ul>
+<li>고정 좌표 대신 <b>"이 그림"을 화면에서 찾아</b> 그 자리를 클릭해요. 창·버튼 위치가 바뀌어도 그림으로 찾아갑니다.</li>
+<li><b>쓰는 법</b>: ① PC에서 <b>이미지 캡처 도우미</b>를 받아 실행 → 찾을 버튼/아이콘을 <b>드래그로 긁어</b> 저장(슬롯 1,2,3…) → ② 설계 화면에서 <b>이미지 찾아 클릭</b> 동작의 슬롯 번호에 그 번호를 적기 → ③ 매크로 파일과 <b>images 폴더를 같은 폴더</b>에 두고 실행.</li>
+<li><b>어디서 되나</b>: <b>.ahk</b>가 가장 정확(내장 기능). <b>무설치(윈도우)</b>도 돼요(캡처=실행이 같은 PC라 정확도 높음). <b>파이썬</b>은 <code>pip install opencv-python</code> 필요.</li>
+<li><b>꼭 알아야 할 점</b>: 캡처한 때와 실행할 때의 <b>해상도·배율(100/125/150%)이 같아야</b> 찾아요(다르면 다시 캡처). 아이콘·버튼처럼 <b>모양 고정된 그림</b>에 적합. 글자·숫자는 이미지보다 <b>조건(OCR)</b>이 안정적이에요. 같은 그림이 화면에 여러 개면 엉뚱한 걸 누를 수 있으니 기본은 "못 찾으면 멈춤".</li>
+</ul>
+
 <h4>❓ 조건 (영역을 읽어 분기) — 베타</h4>
 <ul>
 <li>화면의 네모 영역에서 <b>글자/숫자</b>를 읽어(OCR), 결과에 따라 <b>계속 / 멈춤 / 다음 N개 건너뛰기</b>로 갈라져요.</li>
@@ -1375,6 +1632,7 @@ const HELP = `
 <li><b>.py (파이썬)</b> — 맥이거나 파이썬을 쓰는 경우.</li>
 <li><b>좌표 찾기 도우미</b> — 클릭할 X·Y 숫자 알아내기.</li>
 <li><b>영역 선택 도우미</b> — 조건의 네모 영역 좌표 알아내기.</li>
+<li><b>이미지 캡처 도우미</b> — "이미지 찾아 클릭"에 쓸 그림(버튼·아이콘)을 PC에서 드래그로 긁어 PNG로 저장.</li>
 <li><b>전체 백업 저장 / 불러오기</b> — 만든 모든 루프를 파일로 저장하거나 되돌려요(기기를 바꿀 때).</li>
 </ul>
 
