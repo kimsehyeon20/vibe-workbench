@@ -18,8 +18,12 @@ const TYPES = {
   win:    { ico: '🪟', label: '창 활성화 (제목으로 찾기)' },
   scroll: { ico: '🖲️', label: '스크롤' },
   wait:   { ico: '⏱️', label: '대기 (초)' },
+  readput:{ ico: '📋', label: '영역 값 읽어 입력' },
   if:     { ico: '❓', label: '조건 (영역을 읽어 분기)' },
 };
+
+/* 읽어 입력 후 누를 키 */
+const AFTERS = { none: '(없음)', enter: '엔터(다음 줄)', tab: '탭(다음 칸)' };
 
 /* 조건 동작: 비교 연산자 */
 const OPS_NUM = { gt: '보다 큼 (>)', lt: '보다 작음 (<)', ge: '크거나 같음 (≥)', le: '작거나 같음 (≤)', eq: '같음 (=)', ne: '다름 (≠)' };
@@ -143,6 +147,7 @@ function stepDesc(s) {
     case 'win': return `제목에 "${s.title}" 있는 창 앞으로`;
     case 'scroll': return `${s.dir === 'up' ? '위' : '아래'}로 ${s.amount}칸 스크롤`;
     case 'wait': return `${s.sec}초 기다리기`;
+    case 'readput': return `영역의 ${s.read === 'number' ? '숫자' : '글자'}를 읽어 붙여넣기${s.after && s.after !== 'none' ? ` → ${s.after === 'enter' ? '엔터' : '탭'}` : ''}`;
     case 'if': return condDesc(s);
     default: return '';
   }
@@ -171,6 +176,7 @@ function stepIssue(s) {
     case 'win': return (s.title || '').trim() === '' ? '창 제목을 입력하세요' : null;
     case 'scroll': return (bad(s.amount) || Number(s.amount) < 1) ? '스크롤 칸 수를 입력하세요' : null;
     case 'wait': return (bad(s.sec) || Number(s.sec) < 0) ? '대기 시간을 입력하세요' : null;
+    case 'readput': { const r = s.region || {}; return (bad(r.x1) || bad(r.y1) || bad(r.x2) || bad(r.y2)) ? '읽을 영역을 정하세요' : null; }
     case 'if': {
       const r = s.region || {};
       if (bad(r.x1) || bad(r.y1) || bad(r.x2) || bad(r.y2)) return '읽을 영역①을 정하세요';
@@ -285,6 +291,7 @@ function setType(type) {
     win:    { type, title: '' },
     scroll: { type, dir: 'down', amount: 3 },
     wait:   { type, sec: 1 },
+    readput:{ type, read: 'text', mode: 'screen', region: { x1: 100, y1: 100, x2: 300, y2: 150 }, after: 'tab' },
     if:     { type, read: 'number', mode: 'screen', region: { x1: 100, y1: 100, x2: 300, y2: 150 }, src: 'const', op: 'ge', value: '', mode2: 'screen', region2: { x1: 100, y1: 300, x2: 300, y2: 350 }, onTrue: 'continue', onFalse: 'stop', skip: 1, skipElse: 1 },
   };
   draft = d[type];
@@ -342,6 +349,25 @@ function fieldsFor(type) {
         <label class="field"><span>몇 칸</span><input type="number" data-k="amount" value="${draft.amount}" min="1" inputmode="numeric"></label>`;
     case 'wait':
       return `<label class="field"><span>기다릴 시간(초)</span><input type="number" data-k="sec" value="${draft.sec}" min="0" step="0.5" inputmode="decimal"></label>`;
+    case 'readput': {
+      const r = draft.region || (draft.region = { x1: 100, y1: 100, x2: 300, y2: 150 });
+      const cur = draft.mode === 'cursor';
+      const rin = (lbl, key) => `<label class="field"><span>${lbl}</span><input type="number" data-k="region.${key}" value="${r[key]}" inputmode="numeric"></label>`;
+      return `
+        <p class="hint" style="margin-top:0">화면 영역의 글자/숫자를 읽어 <b>지금 커서가 있는 칸에 붙여넣어요</b>(자료수집용). <b>무설치(윈도우)·파이썬</b>에서 동작(베타). .ahk 는 건너뜁니다.</p>
+        <div class="field"><span>무엇을 읽나요</span><div class="chk-row" data-group="read">
+          ${chk('read', 'text', '글자')}${chk('read', 'number', '숫자만')}
+        </div></div>
+        <div class="field"><span>영역 기준</span><div class="chk-row" data-group="mode">
+          ${chk('mode', 'screen', '화면 좌표')}${chk('mode', 'cursor', '커서 기준')}
+        </div></div>
+        <div class="two">${rin(cur ? '왼쪽(−/＋)' : '왼쪽 X', 'x1')}${rin(cur ? '위(−/＋)' : '위 Y', 'y1')}</div>
+        <div class="two">${rin(cur ? '오른쪽' : '오른쪽 X', 'x2')}${rin(cur ? '아래' : '아래 Y', 'y2')}</div>
+        <div class="field"><span>붙여넣은 뒤</span><div class="chk-row" data-group="after">
+          ${chk('after', 'none', '없음')}${chk('after', 'enter', '엔터(다음 줄)')}${chk('after', 'tab', '탭(다음 칸)')}
+        </div></div>
+        <p class="hint">반복과 함께 쓰면 한 줄씩 자동으로 옮겨 적을 수 있어요. 붙여넣기는 클립보드를 사용해 한글도 잘 됩니다.</p>`;
+    }
     case 'if': {
       const r = draft.region || (draft.region = { x1: 100, y1: 100, x2: 300, y2: 150 });
       const r2 = draft.region2 || (draft.region2 = { x1: 100, y1: 300, x2: 300, y2: 350 });
@@ -594,6 +620,7 @@ async function doStepPreview(s, fast) {
     case 'win': badge(`🪟 ${s.title}`); setCap(`창 앞으로: "${s.title}"`); return wait(c(900));
     case 'scroll': badge(`${s.dir === 'up' ? '↑' : '↓'} 스크롤`); setCap(`${s.dir === 'up' ? '위' : '아래'}로 ${s.amount}칸`); return wait(c(800));
     case 'wait': setCap(`${s.sec}초 대기${fast && s.sec * 1000 > 1400 ? ' (빠르게 보는 중)' : ''}`); return wait(c((Number(s.sec) || 0) * 1000));
+    case 'readput': { drawRegion('prev-region', s.mode, s.region || {}, 'r1'); hideOne('prev-region2'); badge('📋 읽어 입력'); setCap(stepDesc(s)); const r = await wait(c(1300)); hideRegions(); return r; }
     case 'if': { showRegions(s); badge(s.src === 'region2' ? '❓ 두 영역 비교' : '❓ 영역을 읽어 분기'); setCap(condDesc(s)); const r = await wait(c(1600)); hideRegions(); return r; }
     default: return wait(200);
   }
@@ -742,6 +769,7 @@ function genAHKStep(s) {
     case 'win': return [`WinActivate "${ahkStr(s.title)}"`, `WinWaitActive "${ahkStr(s.title)}", , 5`];
     case 'scroll': return [`Loop ${num(s.amount) || 1} {`, `    Send "{Wheel${s.dir === 'up' ? 'Up' : 'Down'}}"`, '    Sleep 40', '}'];
     case 'wait': return [`Sleep ${Math.round((Number(s.sec) || 0) * 1000)}`];
+    case 'readput': return ['; [영역 값 읽어 입력] 은 .ahk 에서 지원되지 않아 건너뜁니다 — "무설치(윈도우)" 또는 파이썬으로 내보내세요.'];
     case 'if': return ['; [조건] 동작은 .ahk 에서 지원되지 않아 건너뜁니다 — "무설치(윈도우)" 또는 파이썬으로 내보내세요.'];
     default: return [];
   }
@@ -830,8 +858,8 @@ function genPS1(l) {
   P.push('}');
   P.push("function Scroll($dir,$amt){ for($i=0;$i -lt $amt;$i++){ [U]::mouse_event(0x800,0,0,$(if($dir -eq 'up'){120}else{-120}),0); Start-Sleep -Milliseconds 50 } }");
   P.push('function OpenUrl($u){ Start-Process $u }');
-  const hasIf = l.steps.some(s => s.type === 'if');
-  if (hasIf) P.push(...psOcrFuncs());
+  const hasOcr = l.steps.some(s => s.type === 'if' || s.type === 'readput');
+  if (hasOcr) P.push(...psOcrFuncs());
   P.push('');
   P.push(`Write-Host "단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료"`);
   const p = hhmmParts(l.startAt);
@@ -911,9 +939,20 @@ function genPSStep(s) {
     case 'win': return [`ActivateWin ${psStr(s.title)}`];
     case 'scroll': return [`Scroll '${s.dir === 'up' ? 'up' : 'down'}' ${num(s.amount) || 1}`];
     case 'wait': return [`WaitMs ${Math.round((Number(s.sec) || 0) * 1000)}`];
+    case 'readput': return genPSReadPut(s);
     case 'if': return genPSCond(s);
     default: return [];
   }
+}
+function genPSReadPut(s) {
+  const L = psReadRegion('$txt', s.mode, s.region || {});
+  if (s.read === 'number') L.push('$n = ReadNumber $txt; $val = if($null -ne $n){ [string]$n } else { "" }');
+  else L.push('$val = "$txt".Trim()');
+  const lines = [`if($val -ne ""){ Set-Clipboard -Value $val; Start-Sleep -Milliseconds 90; Keys "^v"`];
+  if (s.after === 'enter') lines[0] += '; Keys "{ENTER}"';
+  else if (s.after === 'tab') lines[0] += '; Keys "{TAB}"';
+  lines[0] += ' }';
+  return L.concat(lines);
 }
 function psAct(a, n) { return a === 'stop' ? 'exit' : a === 'skip' ? `$skip = ${Math.max(1, num(n) || 1)}` : '$null = $null'; }
 function psReadRegion(dest, mode, r) {
@@ -945,7 +984,7 @@ function genPY(l) {
   P.push('# -*- coding: utf-8 -*-');
   P.push(`# 매크로: ${(l.name || '').replace(/[\r\n]/g, ' ')}`);
   P.push('# 실행: 1) 파이썬 설치  2) pip install pyautogui pygetwindow keyboard  3) python "이파일.py"');
-  P.push('#  (조건 기능을 쓰면 추가로:  pip install winocr pillow )');
+  P.push('#  (조건·읽어입력 기능을 쓰면 추가로:  pip install winocr pillow pyperclip )');
   P.push(`#  단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.startNowLabel} 예약 즉시시작 (keyboard 설치 시)`);
   P.push('#  급할 때: 마우스를 화면 왼쪽 맨 위 구석으로 휙 옮기면 멈춥니다.');
   P.push('import time, webbrowser, datetime');
@@ -981,8 +1020,8 @@ function genPY(l) {
   P.push('        for w in gw.getWindowsWithTitle(title):');
   P.push('            w.activate(); time.sleep(0.4); return');
   P.push('    except Exception: pass');
-  const hasIf = l.steps.some(s => s.type === 'if');
-  if (hasIf) P.push(...pyOcrFuncs());
+  const hasOcr = l.steps.some(s => s.type === 'if' || s.type === 'readput');
+  if (hasOcr) P.push(...pyOcrFuncs());
   P.push('');
   P.push('def run():');
   const p = hhmmParts(l.startAt);
@@ -1043,6 +1082,14 @@ function pyOcrFuncs() {
     "    if op == 'has': return b in a",
     "    if op == 'ne': return a != b",
     '    return a == b',
+    'def set_clip(s):',
+    '    try:',
+    '        import pyperclip; pyperclip.copy(s); return True',
+    '    except Exception: pass',
+    '    try:',
+    "        import subprocess; subprocess.run('clip', input=s, text=True, shell=True); return True",
+    '    except Exception:',
+    '        return False',
   ];
 }
 function genPYStep(s) {
@@ -1062,9 +1109,24 @@ function genPYStep(s) {
     case 'win': return [`activate_window(${J(s.title)})`];
     case 'scroll': return [`pyautogui.scroll(${(s.dir === 'up' ? 1 : -1) * (num(s.amount) || 1) * 300})`];
     case 'wait': return [`time.sleep(${Number(s.sec) || 0})`];
+    case 'readput': return genPYReadPut(s);
     case 'if': return genPYCond(s);
     default: return [];
   }
+}
+function genPYReadPut(s) {
+  const a = pyRegionArgs(s.mode, s.region || {}); const L = [...a.pre];
+  L.push(`_t = read_region(${a.args})`);
+  if (s.read === 'number') L.push('_n = read_number(_t); _val = "" if _n is None else (str(int(_n)) if float(_n).is_integer() else str(_n))');
+  else L.push('_val = (_t or "").strip()');
+  L.push('if _val:');
+  L.push('    if set_clip(_val):');
+  L.push("        time.sleep(0.09); pyautogui.hotkey('ctrl', 'v')");
+  L.push('    else:');
+  L.push('        pyautogui.write(_val, interval=0.02)');
+  if (s.after === 'enter') L.push("    pyautogui.press('enter')");
+  else if (s.after === 'tab') L.push("    pyautogui.press('tab')");
+  return L;
 }
 function pyAct(a, n) { return a === 'stop' ? 'raise SystemExit("조건: 멈춤")' : a === 'skip' ? `skip[0] = ${Math.max(1, num(n) || 1)}` : 'pass'; }
 function pyRegionArgs(mode, r) {
@@ -1129,8 +1191,8 @@ function doExport(kind) {
   if (['ahk', 'ps', 'py'].includes(kind)) {
     if (!l.steps.length) { toast('먼저 동작을 추가하세요'); return; }
     if (hasIssues(l) && !confirm('입력이 빠진 동작이 있어요(빨간 ⚠). 그대로 내보낼까요?')) return;
-    if (kind === 'ahk' && l.steps.some(s => s.type === 'if') &&
-      !confirm('.ahk 는 "조건" 동작을 건너뜁니다. 조건을 쓰려면 "무설치(윈도우)"나 파이썬으로 받으세요. 그래도 .ahk 로 받을까요?')) return;
+    if (kind === 'ahk' && l.steps.some(s => s.type === 'if' || s.type === 'readput') &&
+      !confirm('.ahk 는 "조건"·"영역 값 읽어 입력" 동작을 건너뜁니다. 이 동작을 쓰려면 "무설치(윈도우)"나 파이썬으로 받으세요. 그래도 .ahk 로 받을까요?')) return;
   }
   if (kind === 'ahk') {
     const ahkName = fileName(l.name, 'ahk');
@@ -1260,8 +1322,10 @@ const HELP = `
 <li><b>🪟 창 활성화</b> — 제목으로 창을 찾아 앞으로 가져와요(위치가 바뀌어도 OK). <em>설정:</em> 창 제목의 일부. 모르면 아래 "F12 소스 분석"으로 뽑을 수 있어요.</li>
 <li><b>🖲️ 스크롤</b> — 위/아래로 굴려요. <em>설정:</em> 방향 + 몇 칸.</li>
 <li><b>⏱️ 대기</b> — 몇 초 기다려요. <em>설정:</em> 초. (창 뜨는 시간·로딩을 기다릴 때)</li>
+<li><b>📋 영역 값 읽어 입력</b> — 화면 영역의 글자/숫자를 읽어 <b>지금 커서가 있는 칸에 붙여넣어요</b>(자료수집용). <em>설정:</em> 글자/숫자, 영역 좌표, 붙여넣은 뒤 누를 키(없음/엔터/탭). 무설치·파이썬 전용(베타).</li>
 <li><b>❓ 조건</b> — 화면 영역을 읽어 다르게 진행해요(아래 "조건" 참고).</li>
 </ul>
+<p class="muted small">💡 <b>자료수집 예시</b>: [영역 값 읽어 입력(→탭)] 여러 개를 이어 붙이고 끝에 [단축키 엔터]로 다음 줄로 이동 → 반복. 화면의 값들을 엑셀로 자동으로 옮겨 적어요.</p>
 
 <h4>🗂 루프(업무 묶음) 다루기</h4>
 <ul>
