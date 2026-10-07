@@ -69,6 +69,18 @@
     </div>
   </section>
 
+  <!-- 화면 기준 해상도 -->
+  <section class="card screen-card">
+    <label class="field grow"><span>내 PC 화면 해상도 (좌표·미리보기 기준)</span>
+      <select id="screen-sel"></select>
+    </label>
+    <div class="row" id="screen-custom" hidden style="margin-top:12px">
+      <label class="field"><span>가로(px)</span><input type="number" id="screen-w" inputmode="numeric"></label>
+      <label class="field"><span>세로(px)</span><input type="number" id="screen-h" inputmode="numeric"></label>
+    </div>
+    <p class="hint" style="margin:6px 0 0">모르면 그대로 두세요. 화면 좌표(X·Y)와 미리보기 커서가 이 크기 기준으로 계산돼요.</p>
+  </section>
+
   <!-- 동작 목록 -->
   <section class="steps-head">
     <h2>동작 순서</h2>
@@ -89,9 +101,10 @@
     </div>
     <div class="export-grid">
       <button class="out ghost" data-export="finder"><b>좌표 찾기 도우미</b><span>X·Y 숫자 알아내기</span></button>
+      <button class="out ghost" data-export="region"><b>영역 선택 도우미</b><span>조건 네모 좌표</span></button>
       <button class="out ghost" data-export="backup"><b>전체 백업 저장</b><span>모든 루프를 파일로</span></button>
-      <button class="out ghost" id="import-btn"><b>백업 불러오기</b><span>파일에서 되돌리기</span></button>
     </div>
+    <button class="out ghost wide-out" id="import-btn"><b>백업 불러오기</b><span>파일에서 되돌리기</span></button>
     <input type="file" id="import-file" accept=".json,application/json" hidden>
   </section>
 

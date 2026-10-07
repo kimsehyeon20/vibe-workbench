@@ -117,6 +117,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .out b { font-size: 14px; font-weight: 750; }
 .out span { font-size: 11px; color: var(--text-2); }
 .out.ghost { background: var(--surface-2); }
+.out.wide-out { width: 100%; margin-top: 8px; flex-direction: row; gap: 8px; justify-content: center; background: var(--surface-2); }
+.out.wide-out b { font-size: 13px; }
 
 /* 분석 결과 */
 .analyze-result { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
@@ -223,6 +225,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
   position: absolute; left: 50%; top: 10px; transform: translateX(-50%); z-index: 4; max-width: 90%;
   background: var(--text); color: var(--bg); padding: 7px 12px; border-radius: 10px; font-size: 13px; font-weight: 650;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pv-region {
+  position: absolute; z-index: 2; border: 2px dashed var(--accent); border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent); pointer-events: none;
 }
 .prev-caption { font-size: 14px; font-weight: 650; text-align: center; min-height: 20px; margin-bottom: 10px; }
 .prev-steps { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: none; }

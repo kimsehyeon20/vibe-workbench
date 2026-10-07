@@ -18,7 +18,14 @@ const TYPES = {
   win:    { ico: '🪟', label: '창 활성화 (제목으로 찾기)' },
   scroll: { ico: '🖲️', label: '스크롤' },
   wait:   { ico: '⏱️', label: '대기 (초)' },
+  if:     { ico: '❓', label: '조건 (영역을 읽어 분기)' },
 };
+
+/* 조건 동작: 비교 연산자 */
+const OPS_NUM = { gt: '보다 큼 (>)', lt: '보다 작음 (<)', ge: '크거나 같음 (≥)', le: '작거나 같음 (≤)', eq: '같음 (=)', ne: '다름 (≠)' };
+const OPS_TEXT = { has: '포함', eq: '같음 (=)', ne: '다름 (≠)' };
+/* 조건 결과 행동 */
+const ACTS = { continue: '계속 진행', stop: '매크로 멈춤', skip: '다음 N개 동작 건너뛰기' };
 
 const HOTKEYS = {
   copy:   { label: '복사 (Ctrl+C)',      ahk: '^c',      py: ['ctrl', 'c'], sk: '^c' },
@@ -36,7 +43,7 @@ const HOTKEYS = {
 };
 
 /* 실행 중 제어 단축키 (사람이 외우기 쉬운 키로 고정) */
-const CTRL_KEYS = { pauseLabel: 'F8', stopLabel: 'F9' };
+const CTRL_KEYS = { pauseLabel: 'F8', stopLabel: 'F9', startNowLabel: 'F7' };
 
 /* ===== 상태 ===== */
 let state = normalize(store.get(null));
@@ -136,8 +143,17 @@ function stepDesc(s) {
     case 'win': return `제목에 "${s.title}" 있는 창 앞으로`;
     case 'scroll': return `${s.dir === 'up' ? '위' : '아래'}로 ${s.amount}칸 스크롤`;
     case 'wait': return `${s.sec}초 기다리기`;
+    case 'if': return condDesc(s);
     default: return '';
   }
+}
+
+function condDesc(s) {
+  const kind = s.read === 'text' ? '글자' : '숫자';
+  const ops = s.read === 'text' ? OPS_TEXT : OPS_NUM;
+  const opL = (ops[s.op] || '').replace(/\s*\(.*\)/, '');
+  const act = a => a === 'skip' ? `${s.skip || 1}개 건너뜀` : (ACTS[a] || '').replace('매크로 ', '');
+  return `영역의 ${kind}가 "${s.value}" ${opL} → 맞으면 ${act(s.onTrue)}, 아니면 ${act(s.onFalse)}`;
 }
 
 /* 입력이 빠졌는지 검사 (빠진 채 내보내면 엉뚱하게 동작) */
@@ -152,6 +168,12 @@ function stepIssue(s) {
     case 'win': return (s.title || '').trim() === '' ? '창 제목을 입력하세요' : null;
     case 'scroll': return (bad(s.amount) || Number(s.amount) < 1) ? '스크롤 칸 수를 입력하세요' : null;
     case 'wait': return (bad(s.sec) || Number(s.sec) < 0) ? '대기 시간을 입력하세요' : null;
+    case 'if': {
+      const r = s.region || {};
+      if (bad(r.x1) || bad(r.y1) || bad(r.x2) || bad(r.y2)) return '읽을 영역을 정하세요';
+      if ((s.value ?? '') === '') return '비교할 값을 입력하세요';
+      return null;
+    }
     default: return null;
   }
 }
@@ -252,6 +274,7 @@ function setType(type) {
     win:    { type, title: '' },
     scroll: { type, dir: 'down', amount: 3 },
     wait:   { type, sec: 1 },
+    if:     { type, read: 'number', mode: 'screen', region: { x1: 100, y1: 100, x2: 300, y2: 150 }, op: 'ge', value: '', onTrue: 'continue', onFalse: 'stop', skip: 1, skipElse: 1 },
   };
   draft = d[type];
   renderSheetBody();
@@ -308,6 +331,36 @@ function fieldsFor(type) {
         <label class="field"><span>몇 칸</span><input type="number" data-k="amount" value="${draft.amount}" min="1" inputmode="numeric"></label>`;
     case 'wait':
       return `<label class="field"><span>기다릴 시간(초)</span><input type="number" data-k="sec" value="${draft.sec}" min="0" step="0.5" inputmode="decimal"></label>`;
+    case 'if': {
+      const r = draft.region || (draft.region = { x1: 100, y1: 100, x2: 300, y2: 150 });
+      const cursor = draft.mode === 'cursor';
+      const ops = draft.read === 'text' ? OPS_TEXT : OPS_NUM;
+      if (!ops[draft.op]) draft.op = draft.read === 'text' ? 'has' : 'ge';
+      const opSel = (k) => { let h = `<select data-k="${k}">`; for (const [v, lab] of Object.entries(ops)) h += `<option value="${v}"${draft[k] === v ? ' selected' : ''}>${lab}</option>`; return h + '</select>'; };
+      const actSel = (k) => { let h = `<select data-k="${k}">`; for (const [v, lab] of Object.entries(ACTS)) h += `<option value="${v}"${draft[k] === v ? ' selected' : ''}>${lab}</option>`; return h + '</select>'; };
+      const rin = (lbl, key) => `<label class="field"><span>${lbl}</span><input type="number" data-k="region.${key}" value="${r[key]}" inputmode="numeric"></label>`;
+      return `
+        <p class="hint" style="margin-top:0">화면의 네모 영역에서 글자/숫자를 읽어, 결과에 따라 다르게 진행해요. <b>무설치(윈도우)·파이썬</b>에서 동작(베타). .ahk 는 이 동작을 건너뜁니다.</p>
+        <div class="field"><span>무엇을 읽나요</span><div class="chk-row" data-group="read">
+          ${chk('read', 'number', '숫자')}${chk('read', 'text', '글자')}
+        </div></div>
+        <div class="field"><span>영역 기준</span><div class="chk-row" data-group="mode">
+          ${chk('mode', 'screen', '화면 좌표')}${chk('mode', 'cursor', '마우스 커서 기준')}
+        </div></div>
+        <div class="two">${rin(cursor ? '왼쪽 (−왼/＋오)' : '왼쪽 X', 'x1')}${rin(cursor ? '위 (−위/＋아래)' : '위 Y', 'y1')}</div>
+        <div class="two">${rin(cursor ? '오른쪽' : '오른쪽 X', 'x2')}${rin(cursor ? '아래' : '아래 Y', 'y2')}</div>
+        <p class="hint">${cursor ? '현재 커서 위치에서 떨어진 거리(픽셀)예요. 커서 바로 위면 위값을 음수로.' : '읽을 네모의 왼쪽위·오른쪽아래 좌표. "영역 선택 도우미"로 드래그해 쉽게 구할 수 있어요.'}</p>
+        <div class="field"><span>조건</span>
+          <div class="two">
+            <label class="field">${opSel('op')}</label>
+            <label class="field"><input type="text" data-k="value" value="${escapeHtml(String(draft.value ?? ''))}" placeholder="${draft.read === 'text' ? '예: 완료' : '예: 0'}" autocomplete="off"></label>
+          </div>
+        </div>
+        <div class="field"><span>조건이 맞으면</span>${actSel('onTrue')}</div>
+        ${draft.onTrue === 'skip' ? `<label class="field"><span>건너뛸 동작 수</span><input type="number" data-k="skip" value="${draft.skip || 1}" min="1" inputmode="numeric"></label>` : ''}
+        <div class="field"><span>아니면</span>${actSel('onFalse')}</div>
+        ${draft.onFalse === 'skip' ? `<label class="field"><span>건너뛸 동작 수</span><input type="number" data-k="skipElse" value="${draft.skipElse || 1}" min="1" inputmode="numeric"></label>` : ''}`;
+    }
     default: return '';
   }
 }
@@ -324,9 +377,10 @@ function bindFields() {
   body.querySelectorAll('input[data-k], select[data-k]').forEach(el => {
     el.oninput = () => {
       const k = el.dataset.k;
-      if (el.type === 'number') draft[k] = el.value === '' ? '' : Number(el.value);
-      else draft[k] = el.value;
-      if (k === 'preset') renderSheetBody();
+      const v = el.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value;
+      if (k.includes('.')) { const [a, b] = k.split('.'); (draft[a] = draft[a] || {})[b] = v; }
+      else draft[k] = v;
+      if (['preset', 'onTrue', 'onFalse'].includes(k)) renderSheetBody();
     };
   });
   body.querySelectorAll('.chk').forEach(btn => {
@@ -337,7 +391,7 @@ function bindFields() {
         const i = draft.mods.indexOf(val);
         if (i >= 0) draft.mods.splice(i, 1); else draft.mods.push(val);
       } else if (g === 'double') { draft.double = !draft.double; }
-      else { draft[g] = val; }
+      else { draft[g] = val; if (g === 'read') draft.op = (val === 'text' ? 'has' : 'ge'); }
       renderSheetBody();
     };
   });
@@ -397,19 +451,35 @@ function addDeleteLoopButton() {
 const prev = { running: false, playing: false, cancel: false };
 
 const RES = [[1920, 1080, 'FHD'], [1366, 768, '노트북'], [2560, 1440, 'QHD'], [1440, 900, '맥북'], [1280, 720, 'HD'], [3840, 2160, '4K']];
-function initPreviewRes() {
-  const sel = $('#prev-res');
-  sel.innerHTML = RES.map(([w, h, n]) => `<option value="${w}x${h}">${w}×${h} (${n})</option>`).join('');
-  const cur = `${state.screen.w}x${state.screen.h}`;
-  if (!RES.some(([w, h]) => `${w}x${h}` === cur)) { const o = document.createElement('option'); o.value = cur; o.textContent = cur; sel.appendChild(o); }
-  sel.value = cur;
+function curScreenKey() { return `${state.screen.w}x${state.screen.h}`; }
+function isPresetScreen() { return RES.some(([w, h]) => `${w}x${h}` === curScreenKey()); }
+function screenOptions() { return RES.map(([w, h, n]) => `<option value="${w}x${h}">${w}×${h} (${n})</option>`).join('') + '<option value="custom">직접 입력…</option>'; }
+function applyRes() { const el = $('#prev-screen'); if (el) el.style.aspectRatio = `${state.screen.w} / ${state.screen.h}`; }
+
+function renderScreenUI() {
+  const key = curScreenKey(), preset = isPresetScreen();
+  ['#screen-sel', '#prev-res'].forEach(id => { const el = $(id); if (!el) return; el.innerHTML = screenOptions(); el.value = preset ? key : 'custom'; });
+  const custom = $('#screen-custom');
+  if (custom) {
+    custom.hidden = preset;
+    const w = $('#screen-w'), h = $('#screen-h');
+    if (w && document.activeElement !== w) w.value = state.screen.w;
+    if (h && document.activeElement !== h) h.value = state.screen.h;
+  }
   applyRes();
-  sel.onchange = () => {
-    const [w, h] = sel.value.split('x').map(Number);
-    state.screen = { w, h }; save(); applyRes(); resetCursor();
-  };
 }
-function applyRes() { $('#prev-screen').style.aspectRatio = `${state.screen.w} / ${state.screen.h}`; }
+function setScreen(w, h) { if (w > 0 && h > 0) { state.screen = { w: Math.round(w), h: Math.round(h) }; save(); renderScreenUI(); } }
+function initScreenControls() {
+  renderScreenUI();
+  const onSel = e => {
+    const v = e.target.value;
+    if (v === 'custom') { const c = $('#screen-custom'); if (c) c.hidden = false; ['#screen-sel', '#prev-res'].forEach(id => { const el = $(id); if (el) el.value = 'custom'; }); }
+    else { const [w, h] = v.split('x').map(Number); setScreen(w, h); }
+  };
+  ['#screen-sel', '#prev-res'].forEach(id => { const el = $(id); if (el) el.onchange = onSel; });
+  const cw = $('#screen-w'), ch = $('#screen-h');
+  if (cw && ch) { const upd = () => setScreen(Number(cw.value) || state.screen.w, Number(ch.value) || state.screen.h); cw.oninput = upd; ch.oninput = upd; }
+}
 
 function openPreview() {
   buildPreviewSteps();
@@ -442,7 +512,7 @@ function setCap(t) { $('#prev-caption').textContent = t; }
 function resetCursor() {
   const c = $('#prev-cursor');
   c.style.transition = 'none'; c.style.left = '50%'; c.style.top = '50%';
-  c.classList.remove('down'); hideBadge();
+  c.classList.remove('down'); hideBadge(); hideRegion();
 }
 function moveCursor(x, y, ms) {
   const c = $('#prev-cursor');
@@ -501,9 +571,21 @@ async function doStepPreview(s, fast) {
     case 'win': badge(`🪟 ${s.title}`); setCap(`창 앞으로: "${s.title}"`); return wait(c(900));
     case 'scroll': badge(`${s.dir === 'up' ? '↑' : '↓'} 스크롤`); setCap(`${s.dir === 'up' ? '위' : '아래'}로 ${s.amount}칸`); return wait(c(800));
     case 'wait': setCap(`${s.sec}초 대기${fast && s.sec * 1000 > 1400 ? ' (빠르게 보는 중)' : ''}`); return wait(c((Number(s.sec) || 0) * 1000));
+    case 'if': { showRegion(s); badge('❓ 영역을 읽어 분기'); setCap(condDesc(s)); const r = await wait(c(1400)); hideRegion(); return r; }
     default: return wait(200);
   }
 }
+function showRegion(s) {
+  const box = $('#prev-screen'); let el = $('#prev-region');
+  if (!el) { el = document.createElement('div'); el.id = 'prev-region'; el.className = 'pv-region'; box.appendChild(el); }
+  const r = s.region || {};
+  const W = Math.abs((r.x2 - r.x1) / state.screen.w) * 100, H = Math.abs((r.y2 - r.y1) / state.screen.h) * 100;
+  let L = Math.min(r.x1, r.x2) / state.screen.w * 100, T = Math.min(r.y1, r.y2) / state.screen.h * 100;
+  if (s.mode === 'cursor') { const c = $('#prev-cursor'); L = (parseFloat(c.style.left) || 50) + L; T = (parseFloat(c.style.top) || 50) + T; }
+  el.style.left = Math.max(0, L) + '%'; el.style.top = Math.max(0, T) + '%';
+  el.style.width = Math.max(2, W) + '%'; el.style.height = Math.max(2, H) + '%'; el.hidden = false;
+}
+function hideRegion() { const el = $('#prev-region'); if (el) el.hidden = true; }
 
 async function runPreview() {
   const l = activeLoop();
@@ -519,7 +601,7 @@ async function runPreview() {
   resetCursor();
 
   const done = v => v === 'cancel';
-  if (l.startAt) { setCap(`예약 시작: ${l.startAt} — 실제 실행 땐 이 시각까지 기다려요`); if (done(await wait(1100))) return endPreview(); }
+  if (l.startAt) { setCap(`예약: 다음 ${l.startAt} 까지 대기 (실행 중 F7로 즉시 시작)`); if (done(await wait(1100))) return endPreview(); }
   setCap(`시작 전 ${l.delay}초 대기`); if (done(await wait(capMs((Number(l.delay) || 0) * 1000, fast)))) return endPreview();
 
   const infinite = !(l.repeat && l.repeat > 0);
@@ -561,6 +643,7 @@ function download(name, text, mime = 'text/plain;charset=utf-8') {
 }
 function gapMs(l) { return Math.round((Number(l.gap) || 0) * 1000); }
 function hhmm(startAt) { return startAt ? Number(startAt.replace(':', '')) : null; }
+function hhmmParts(startAt) { if (!startAt) return null; const [hh, mm] = startAt.split(':'); return { hh: String(Number(hh)), mm: String(Number(mm)), pad: `${hh}${mm}00` }; }
 
 function ahkStr(s) {
   return String(s == null ? '' : s).replace(/`/g, '``').replace(/"/g, '""').replace(/\r/g, '').replace(/\n/g, '`n').replace(/\t/g, '`t');
@@ -587,19 +670,22 @@ function genAHK(l) {
     'SetTitleMatchMode 2', 'SetKeyDelay 30', 'SetMouseDelay 30', '');
   L.push(`; ===== 매크로: ${(l.name || '').replace(/[\r\n]/g, ' ')} =====`);
   L.push('; 이 파일을 더블클릭하면 시작합니다. (AutoHotkey v2 설치 필요)');
-  L.push(`; 단축키:  ${CTRL_KEYS.pauseLabel} = 일시정지/재생    ${CTRL_KEYS.stopLabel} = 종료 (Esc 도 종료)`);
+  L.push(`; 단축키:  ${CTRL_KEYS.pauseLabel} = 일시정지/재생    ${CTRL_KEYS.stopLabel} = 종료 (Esc 도 종료)    ${CTRL_KEYS.startNowLabel} = 예약 기다리지 않고 즉시 시작`);
   L.push('');
   L.push('*F8::Pause(-1)   ; 일시정지/재생');
   L.push('*F9::ExitApp     ; 종료');
   L.push('*Esc::ExitApp');
   L.push('');
-  const t = hhmm(l.startAt);
-  if (t != null) {
-    L.push(`; 예약 시작: 오늘 ${l.startAt} 까지 대기 (이미 지났으면 바로 시작)`);
-    L.push('Loop {');
-    L.push(`    if (FormatTime(A_Now, "HHmm") + 0 >= ${t})`);
+  const p = hhmmParts(l.startAt);
+  if (p) {
+    L.push(`; 예약 시작: 다음 ${l.startAt} 까지 대기 (${CTRL_KEYS.startNowLabel} 누르면 즉시 시작)`);
+    L.push(`target := FormatTime(A_Now, "yyyyMMdd") . "${p.pad}"`);
+    L.push('if (target <= A_Now)');
+    L.push('    target := DateAdd(target, 1, "Days")');
+    L.push('while (A_Now < target) {');
+    L.push(`    if GetKeyState("${CTRL_KEYS.startNowLabel}", "P")`);
     L.push('        break');
-    L.push('    Sleep 3000');
+    L.push('    Sleep 1000');
     L.push('}');
   }
   L.push(`Sleep ${Math.round((l.delay || 0) * 1000)}   ; 시작 전 대기`);
@@ -628,6 +714,7 @@ function genAHKStep(s) {
     case 'win': return [`WinActivate "${ahkStr(s.title)}"`, `WinWaitActive "${ahkStr(s.title)}", , 5`];
     case 'scroll': return [`Loop ${num(s.amount) || 1} {`, `    Send "{Wheel${s.dir === 'up' ? 'Up' : 'Down'}}"`, '    Sleep 40', '}'];
     case 'wait': return [`Sleep ${Math.round((Number(s.sec) || 0) * 1000)}`];
+    case 'if': return ['; [조건] 동작은 .ahk 에서 지원되지 않아 건너뜁니다 — "무설치(윈도우)" 또는 파이썬으로 내보내세요.'];
     default: return [];
   }
 }
@@ -671,9 +758,12 @@ function genPS1(l) {
   P.push('  [DllImport("user32.dll")] public static extern void mouse_event(uint f,uint dx,uint dy,int d,int e);');
   P.push('  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);');
   P.push('  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int k);');
+  P.push('  [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);');
+  P.push('  public struct POINT { public int X; public int Y; }');
   P.push('}');
   P.push('"@');
   P.push('Add-Type -AssemblyName System.Windows.Forms');
+  P.push('Add-Type -AssemblyName System.Drawing');
   P.push('');
   P.push('$script:paused = $false');
   P.push('$script:prevKey = $false');
@@ -712,27 +802,75 @@ function genPS1(l) {
   P.push('}');
   P.push("function Scroll($dir,$amt){ for($i=0;$i -lt $amt;$i++){ [U]::mouse_event(0x800,0,0,$(if($dir -eq 'up'){120}else{-120}),0); Start-Sleep -Milliseconds 50 } }");
   P.push('function OpenUrl($u){ Start-Process $u }');
+  const hasIf = l.steps.some(s => s.type === 'if');
+  if (hasIf) P.push(...psOcrFuncs());
   P.push('');
   P.push(`Write-Host "단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료"`);
-  const t = hhmm(l.startAt);
-  if (t != null) {
-    P.push(`# 예약 시작: 오늘 ${l.startAt} 까지 대기 (이미 지났으면 바로 시작)`);
-    P.push(`while([int](Get-Date -Format "HHmm") -lt ${t}){ Pump; Start-Sleep -Seconds 3 }`);
+  const p = hhmmParts(l.startAt);
+  if (p) {
+    P.push(`# 예약 시작: 다음 ${l.startAt} 까지 대기 (${CTRL_KEYS.startNowLabel} 즉시 시작)`);
+    P.push(`$target = (Get-Date).Date.AddHours(${p.hh}).AddMinutes(${p.mm})`);
+    P.push('if($target -le (Get-Date)){ $target = $target.AddDays(1) }');
+    P.push('Write-Host "예약: $target 까지 대기"');
+    P.push('while((Get-Date) -lt $target){');
+    P.push(`  if(([int][U]::GetAsyncKeyState(0x76) -band 0x8000) -ne 0){ break }   # ${CTRL_KEYS.startNowLabel}`);
+    P.push('  Pump; Start-Sleep -Seconds 1');
+    P.push('}');
   }
   P.push(`WaitMs ${Math.round((l.delay || 0) * 1000)}   # 시작 전 대기`);
   P.push(`$reps = ${l.repeat && l.repeat > 0 ? l.repeat : 0}   # 0 = 무한 반복`);
-  P.push('$i = 0');
+  P.push('$i = 0; $skip = 0');
   P.push('while($reps -eq 0 -or $i -lt $reps){');
+  P.push('  $skip = 0');
   const g = gapMs(l);
   l.steps.forEach(s => {
     P.push('  Pump');
-    genPSStep(s).forEach(x => P.push('  ' + x));
-    if (g > 0) P.push(`  WaitMs ${g}`);
+    P.push('  if($skip -gt 0){ $skip-- } else {');
+    genPSStep(s).forEach(x => P.push('    ' + x));
+    if (g > 0) P.push(`    WaitMs ${g}`);
+    P.push('  }');
   });
   P.push('  $i++');
   P.push('}');
   P.push('Write-Host "매크로가 끝났어요."');
   return P.join('\r\n') + '\r\n';
+}
+function psOcrFuncs() {
+  return [
+    '# ===== 조건용: 화면 영역을 읽는 OCR (윈도우 10/11 내장) =====',
+    'Add-Type -AssemblyName System.Runtime.WindowsRuntime',
+    '$script:ocrReady = $false',
+    'try {',
+    '  $null = [Windows.Media.Ocr.OcrEngine,Windows.Media.Ocr,ContentType=WindowsRuntime]',
+    '  $null = [Windows.Graphics.Imaging.BitmapDecoder,Windows.Graphics.Imaging,ContentType=WindowsRuntime]',
+    '  $null = [Windows.Graphics.Imaging.SoftwareBitmap,Windows.Graphics.Imaging,ContentType=WindowsRuntime]',
+    "  $script:asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]",
+    '  $script:ocr = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()',
+    '  $script:ocrReady = ($null -ne $script:ocr)',
+    '} catch { $script:ocrReady = $false }',
+    'if(-not $script:ocrReady){ Write-Host "[주의] 이 PC에서 화면 글자 읽기(OCR)를 쓸 수 없어 조건은 건너뜁니다." }',
+    'function Await($op,$t){ $m=$script:asTaskGeneric.MakeGenericMethod($t); $net=$m.Invoke($null,@($op)); $net.Wait(-1)|Out-Null; $net.Result }',
+    'function ReadRegion($x1,$y1,$x2,$y2){',
+    '  if(-not $script:ocrReady){ return "" }',
+    '  $w=[Math]::Abs($x2-$x1); $h=[Math]::Abs($y2-$y1); if($w -lt 1 -or $h -lt 1){ return "" }',
+    '  $lx=[Math]::Min($x1,$x2); $ly=[Math]::Min($y1,$y2)',
+    '  $bmp=New-Object System.Drawing.Bitmap $w,$h',
+    '  $g=[System.Drawing.Graphics]::FromImage($bmp)',
+    '  $g.CopyFromScreen($lx,$ly,0,0,(New-Object System.Drawing.Size $w,$h)); $g.Dispose()',
+    '  $ms=New-Object System.IO.MemoryStream',
+    '  $bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose(); $ms.Position=0',
+    '  try {',
+    '    $ras=[System.IO.WindowsRuntimeStreamExtensions]::AsRandomAccessStream($ms)',
+    '    $dec=Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($ras)) ([Windows.Graphics.Imaging.BitmapDecoder])',
+    '    $sb=Await ($dec.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])',
+    '    $res=Await ($script:ocr.RecognizeAsync($sb)) ([Windows.Media.Ocr.OcrResult])',
+    '    return $res.Text',
+    '  } catch { return "" } finally { $ms.Dispose() }',
+    '}',
+    "function ReadNumber($txt){ $m=[regex]::Match($txt,'-?\\d[\\d,]*(\\.\\d+)?'); if($m.Success){ return [double]($m.Value -replace ',','') } else { return $null } }",
+    'function TextCond($txt,$val,$op){ $t=$txt.Trim(); if($op -eq "has"){ return $t.Contains($val) } elseif($op -eq "ne"){ return ($t -ne $val) } else { return ($t -eq $val) } }',
+    'function CursorXY(){ $pt=New-Object U+POINT; [U]::GetCursorPos([ref]$pt)|Out-Null; return @($pt.X,$pt.Y) }',
+  ];
 }
 function genPSStep(s) {
   switch (s.type) {
@@ -745,8 +883,30 @@ function genPSStep(s) {
     case 'win': return [`ActivateWin ${psStr(s.title)}`];
     case 'scroll': return [`Scroll '${s.dir === 'up' ? 'up' : 'down'}' ${num(s.amount) || 1}`];
     case 'wait': return [`WaitMs ${Math.round((Number(s.sec) || 0) * 1000)}`];
+    case 'if': return genPSCond(s);
     default: return [];
   }
+}
+function psAct(a, n) { return a === 'stop' ? 'exit' : a === 'skip' ? `$skip = ${Math.max(1, num(n) || 1)}` : '$null = $null'; }
+function genPSCond(s) {
+  const r = s.region || {}; const L = [];
+  if (s.mode === 'cursor') {
+    L.push('$c = CursorXY');
+    L.push(`$rx1 = $c[0] + (${num(r.x1)}); $ry1 = $c[1] + (${num(r.y1)}); $rx2 = $c[0] + (${num(r.x2)}); $ry2 = $c[1] + (${num(r.y2)})`);
+    L.push('$txt = ReadRegion $rx1 $ry1 $rx2 $ry2');
+  } else {
+    L.push(`$txt = ReadRegion ${num(r.x1)} ${num(r.y1)} ${num(r.x2)} ${num(r.y2)}`);
+  }
+  L.push('Write-Host "조건 영역 값: $txt"');
+  if (s.read === 'text') {
+    L.push(`$cond = TextCond $txt ${psStr(s.value)} ${psStr(s.op)}`);
+  } else {
+    const op = { gt: '-gt', lt: '-lt', ge: '-ge', le: '-le', eq: '-eq', ne: '-ne' }[s.op] || '-ge';
+    L.push('$v = ReadNumber $txt');
+    L.push(`$cond = ($null -ne $v) -and ($v ${op} ${Number(s.value) || 0})`);
+  }
+  L.push(`if($cond){ ${psAct(s.onTrue, s.skip)} } else { ${psAct(s.onFalse, s.skipElse)} }`);
+  return L;
 }
 
 /* --- 파이썬 (pyautogui) --- */
@@ -755,7 +915,8 @@ function genPY(l) {
   P.push('# -*- coding: utf-8 -*-');
   P.push(`# 매크로: ${(l.name || '').replace(/[\r\n]/g, ' ')}`);
   P.push('# 실행: 1) 파이썬 설치  2) pip install pyautogui pygetwindow keyboard  3) python "이파일.py"');
-  P.push(`#  단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료 (keyboard 설치 시)`);
+  P.push('#  (조건 기능을 쓰면 추가로:  pip install winocr pillow )');
+  P.push(`#  단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.startNowLabel} 예약 즉시시작 (keyboard 설치 시)`);
   P.push('#  급할 때: 마우스를 화면 왼쪽 맨 위 구석으로 휙 옮기면 멈춥니다.');
   P.push('import time, webbrowser, datetime');
   P.push('try:');
@@ -768,7 +929,7 @@ function genPY(l) {
   P.push('    gw = None');
   P.push('pyautogui.FAILSAFE = True');
   P.push('pyautogui.PAUSE = 0.1');
-  P.push('_paused = {"v": False}; _stop = {"v": False}');
+  P.push('_paused = {"v": False}; _stop = {"v": False}; skip = [0]');
   P.push('try:');
   P.push('    import keyboard');
   P.push("    keyboard.add_hotkey('f8', lambda: (_paused.__setitem__('v', not _paused['v']), print('|| 일시정지' if _paused['v'] else '> 재생')))");
@@ -790,34 +951,69 @@ function genPY(l) {
   P.push('        for w in gw.getWindowsWithTitle(title):');
   P.push('            w.activate(); time.sleep(0.4); return');
   P.push('    except Exception: pass');
+  const hasIf = l.steps.some(s => s.type === 'if');
+  if (hasIf) P.push(...pyOcrFuncs());
   P.push('');
   P.push('def run():');
-  const t = hhmm(l.startAt);
-  if (t != null) {
-    P.push(`    # 예약 시작: 오늘 ${l.startAt} 까지 대기`);
-    P.push(`    while int(datetime.datetime.now().strftime("%H%M")) < ${t}:`);
-    P.push('        control(); time.sleep(3)');
+  const p = hhmmParts(l.startAt);
+  if (p) {
+    P.push(`    # 예약 시작: 다음 ${l.startAt} 까지 대기 (${CTRL_KEYS.startNowLabel} 즉시 시작)`);
+    P.push('    _now = datetime.datetime.now()');
+    P.push(`    _target = _now.replace(hour=${p.hh}, minute=${p.mm}, second=0, microsecond=0)`);
+    P.push('    if _target <= _now: _target += datetime.timedelta(days=1)');
+    P.push('    print("예약:", _target, "까지 대기")');
+    P.push('    while datetime.datetime.now() < _target:');
+    P.push('        control()');
+    P.push("        if keyboard and keyboard.is_pressed('f7'): break");
+    P.push('        time.sleep(1)');
   }
   P.push(`    time.sleep(${Number(l.delay) || 0})`);
-  const body = [];
   const g = (Number(l.gap) || 0);
+  const iter = ['skip[0] = 0'];
   l.steps.forEach(s => {
-    body.push('control()');
-    genPYStep(s).forEach(x => body.push(x));
-    if (g > 0) body.push(`time.sleep(${g})`);
+    iter.push('control()');
+    iter.push('if skip[0] > 0:');
+    iter.push('    skip[0] -= 1');
+    iter.push('else:');
+    genPYStep(s).forEach(x => iter.push('    ' + x));
+    if (g > 0) iter.push(`    time.sleep(${g})`);
   });
-  if (!body.length) body.push('pass');
-  if (l.repeat && l.repeat > 0) {
-    P.push(`    for _ in range(${l.repeat}):`);
-    body.forEach(x => P.push('        ' + x));
-  } else {
-    P.push('    while True:   # 무한 반복');
-    body.forEach(x => P.push('        ' + x));
-  }
+  if (l.repeat && l.repeat > 0) P.push(`    for _ in range(${l.repeat}):`);
+  else P.push('    while True:   # 무한 반복');
+  iter.forEach(x => P.push('        ' + x));
   P.push('');
   P.push('run()');
   P.push('print("매크로가 끝났어요.")');
   return P.join('\r\n') + '\r\n';
+}
+function pyOcrFuncs() {
+  return [
+    '', 'import re',
+    '# ===== 조건용: 화면 영역 글자 읽기(OCR) =====',
+    'try:',
+    '    import winocr',
+    '    from PIL import ImageGrab',
+    '    _ocr = True',
+    'except Exception:',
+    '    _ocr = False',
+    '    print("(조건 기능엔  pip install winocr pillow  필요. 없으면 조건은 건너뜁니다)")',
+    'def read_region(x1, y1, x2, y2):',
+    '    if not _ocr: return ""',
+    '    try:',
+    '        img = ImageGrab.grab(bbox=(min(x1,x2), min(y1,y2), max(x1,x2), max(y1,y2)))',
+    '        r = winocr.recognize_pil_sync(img)',
+    '        return getattr(r, "text", None) or (r.get("text", "") if hasattr(r, "get") else "")',
+    '    except Exception:',
+    '        return ""',
+    'def read_number(txt):',
+    "    m = re.search(r'-?\\d[\\d,]*(\\.\\d+)?', txt)",
+    "    return float(m.group().replace(',', '')) if m else None",
+    'def text_cond(t, val, op):',
+    '    t = t.strip()',
+    "    if op == 'has': return val in t",
+    "    if op == 'ne': return t != val",
+    '    return t == val',
+  ];
 }
 function genPYStep(s) {
   const J = v => JSON.stringify(v == null ? '' : v);
@@ -836,8 +1032,33 @@ function genPYStep(s) {
     case 'win': return [`activate_window(${J(s.title)})`];
     case 'scroll': return [`pyautogui.scroll(${(s.dir === 'up' ? 1 : -1) * (num(s.amount) || 1) * 300})`];
     case 'wait': return [`time.sleep(${Number(s.sec) || 0})`];
+    case 'if': return genPYCond(s);
     default: return [];
   }
+}
+function pyAct(a, n) { return a === 'stop' ? 'raise SystemExit("조건: 멈춤")' : a === 'skip' ? `skip[0] = ${Math.max(1, num(n) || 1)}` : 'pass'; }
+function genPYCond(s) {
+  const J = v => JSON.stringify(v == null ? '' : v);
+  const r = s.region || {}; const L = [];
+  let x1, y1, x2, y2;
+  if (s.mode === 'cursor') {
+    L.push('_cx, _cy = pyautogui.position()');
+    x1 = `_cx + ${num(r.x1)}`; y1 = `_cy + ${num(r.y1)}`; x2 = `_cx + ${num(r.x2)}`; y2 = `_cy + ${num(r.y2)}`;
+  } else { x1 = num(r.x1); y1 = num(r.y1); x2 = num(r.x2); y2 = num(r.y2); }
+  L.push(`_t = read_region(${x1}, ${y1}, ${x2}, ${y2})`);
+  L.push('print("조건 영역 값:", _t)');
+  if (s.read === 'text') {
+    L.push(`_cond = text_cond(_t, ${J(s.value)}, ${J(s.op)})`);
+  } else {
+    const op = { gt: '>', lt: '<', ge: '>=', le: '<=', eq: '==', ne: '!=' }[s.op] || '>=';
+    L.push('_v = read_number(_t)');
+    L.push(`_cond = (_v is not None and _v ${op} ${Number(s.value) || 0})`);
+  }
+  L.push('if _cond:');
+  L.push('    ' + pyAct(s.onTrue, s.skip));
+  L.push('else:');
+  L.push('    ' + pyAct(s.onFalse, s.skipElse));
+  return L;
 }
 
 /* --- 좌표 찾기 도우미 --- */
@@ -851,11 +1072,32 @@ function genFinder() {
   ].join('\r\n');
 }
 
+/* --- 영역 선택 도우미 (조건의 네모 영역 좌표 구하기) --- */
+function genRegionPicker() {
+  return [
+    '#Requires AutoHotkey v2.0', '#SingleInstance Force', 'CoordMode "Mouse", "Screen"',
+    '; 읽을 네모 영역의 왼쪽위에서 F1, 오른쪽아래에서 F2 를 누르세요.',
+    '; 나온 네 숫자를 매크로 "조건" 동작의 영역칸에 적으면 됩니다.',
+    'global gx1 := 0, gy1 := 0, got1 := false',
+    'SetTimer ShowPos, 50',
+    '*Esc::ExitApp',
+    'F1:: {', '    global', '    MouseGetPos &gx1, &gy1', '    got1 := true', '}',
+    'F2:: {', '    global', '    MouseGetPos &x2, &y2',
+    '    MsgBox "왼쪽 X = " gx1 "`n위 Y = " gy1 "`n오른쪽 X = " x2 "`n아래 Y = " y2, "영역 좌표"', '}',
+    'ShowPos() {', '    global', '    MouseGetPos &mx, &my',
+    '    s := "X = " mx "   Y = " my "`nF1=왼쪽위  F2=오른쪽아래  Esc=끄기"',
+    '    if got1', '        s .= "`n(왼쪽위 저장: " gx1 ", " gy1 ")"',
+    '    ToolTip s', '}', '',
+  ].join('\r\n');
+}
+
 function doExport(kind) {
   const l = activeLoop();
   if (['ahk', 'ps', 'py'].includes(kind)) {
     if (!l.steps.length) { toast('먼저 동작을 추가하세요'); return; }
     if (hasIssues(l) && !confirm('입력이 빠진 동작이 있어요(빨간 ⚠). 그대로 내보낼까요?')) return;
+    if (kind === 'ahk' && l.steps.some(s => s.type === 'if') &&
+      !confirm('.ahk 는 "조건" 동작을 건너뜁니다. 조건을 쓰려면 "무설치(윈도우)"나 파이썬으로 받으세요. 그래도 .ahk 로 받을까요?')) return;
   }
   if (kind === 'ahk') {
     const ahkName = fileName(l.name, 'ahk');
@@ -873,6 +1115,9 @@ function doExport(kind) {
   } else if (kind === 'finder') {
     download('좌표찾기도우미.ahk', genFinder());
     toast('좌표 찾기 도우미를 받았어요');
+  } else if (kind === 'region') {
+    download('영역선택도우미.ahk', genRegionPicker());
+    toast('영역 선택 도우미를 받았어요');
   } else if (kind === 'backup') {
     download(fileName('매크로설계소-백업', 'json'), JSON.stringify(state, null, 2), 'application/json');
     toast('전체 백업을 저장했어요');
@@ -952,14 +1197,23 @@ const HELP = `
 <ul>
 <li><b>${CTRL_KEYS.pauseLabel}</b> — 일시정지 / 다시 재생</li>
 <li><b>${CTRL_KEYS.stopLabel}</b> — 완전 종료 (.ahk 는 Esc 도 종료)</li>
+<li><b>${CTRL_KEYS.startNowLabel}</b> — 예약 시간을 기다리지 않고 즉시 시작</li>
 <li>파이썬은 <code>pip install keyboard</code> 후에 단축키가 켜져요.</li>
 </ul>
 
 <h4>반복 · 예약 · 텀</h4>
 <ul>
 <li><b>반복 횟수</b>: 숫자만큼 반복, <b>0</b>이면 멈출 때까지 무한.</li>
-<li><b>예약 시작</b>: 시간을 정하면 그 시각까지 기다렸다 시작해요(이미 지난 시각이면 바로 시작).</li>
-<li><b>동작 사이 텀</b>: 각 동작 사이에 자동으로 넣는 짧은 간격(기본 0.5초).</li>
+<li><b>예약 시작</b>: 시간을 정하면 <b>다음 그 시각</b>까지 기다렸다 시작해요(이미 지났으면 다음 날 그 시각). 기다리기 싫으면 실행 중 <b>${CTRL_KEYS.startNowLabel}</b>로 즉시 시작.</li>
+<li><b>동작 사이 텀</b>: 각 동작 사이 자동 간격(기본 0.5초). 루프 설정에서 바꿀 수 있어요.</li>
+</ul>
+
+<h4>조건 (영역을 읽어 분기) — 베타</h4>
+<ul>
+<li>화면의 네모 영역에서 <b>글자/숫자</b>를 읽어(OCR), 결과에 따라 <b>계속 / 멈춤 / 다음 N개 건너뛰기</b>로 갈라져요.</li>
+<li><b>무설치(윈도우)·파이썬</b>에서 동작해요. .ahk 는 이 동작을 건너뜁니다.</li>
+<li>영역은 <b>영역 선택 도우미</b>로 드래그하듯 F1·F2를 눌러 좌표를 구하면 쉬워요. "마우스 커서 기준"으로 하면 커서를 옮긴 위치마다 읽어요.</li>
+<li>OCR은 글꼴·배율·대비에 따라 틀릴 수 있어요. 큰 글씨·또렷한 영역일수록 정확합니다.</li>
 </ul>
 
 <h4>어떤 파일을 받나요?</h4>
@@ -985,4 +1239,4 @@ function renderAll() {
   addDeleteLoopButton();
 }
 renderAll();
-initPreviewRes();
+initScreenControls();
