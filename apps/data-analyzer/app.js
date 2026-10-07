@@ -162,8 +162,8 @@ const isDark = () => matchMedia('(prefers-color-scheme: dark)').matches;
 function chartTheme(light) {
   const dark = !light && isDark();
   return dark
-    ? { bg: '#1b1b1e', text: '#f2f2f4', text2: '#a8a8b2', grid: 'rgba(255,255,255,.08)', axis: 'rgba(255,255,255,.25)', point: '#3987e5', fit: '#d95926', ring: '#1b1b1e' }
-    : { bg: '#ffffff', text: '#1b1b1f', text2: '#5f5f68', grid: 'rgba(20,20,30,.08)', axis: 'rgba(20,20,30,.3)', point: '#2a78d6', fit: '#eb6834', ring: '#ffffff' };
+    ? { bg: '#1b1b1e', text: '#f2f2f4', text2: '#a8a8b2', grid: 'rgba(255,255,255,.08)', axis: 'rgba(255,255,255,.25)', point: '#3987e5', fit: '#d95926', ring: '#1b1b1e', warn: '#e66767' }
+    : { bg: '#ffffff', text: '#1b1b1f', text2: '#5f5f68', grid: 'rgba(20,20,30,.08)', axis: 'rgba(20,20,30,.3)', point: '#2a78d6', fit: '#eb6834', ring: '#ffffff', warn: '#e34948' };
 }
 
 // spec: { x[], y[], line(점 잇기), fn(회귀식), xLabel, yLabel, title?, fitLabel? }
@@ -177,22 +177,19 @@ function drawChart(canvas, spec, opt = {}) {
   const font = w => `${w} ${fs}px "Pretendard Variable", Pretendard, system-ui, sans-serif`;
   ctx.fillStyle = th.bg; ctx.fillRect(0, 0, W, H);
 
-  const pts = spec.x.map((x, i) => [x, spec.y[i]]).filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b));
-  if (!pts.length) return null;
-  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const pts = spec.x.map((x, i) => [x, spec.y[i], i]).filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b));
+  // 여러 개의 가는 선 (예: 강번별 곡선)
+  const lines = (spec.lines || []).map(l => ({ ...l, p: l.x.map((xv, i) => [xv, l.y[i]]).filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b)) })).filter(l => l.p.length);
+  if (!pts.length && !lines.length) return null;
+  const linePts = lines.flatMap(l => l.p);
+  const xs = [...pts.map(p => p[0]), ...linePts.map(p => p[0])], ys = [...pts.map(p => p[1]), ...linePts.map(p => p[1])];
   let xmin = Math.min(...xs), xmax = Math.max(...xs);
-  const curve = [];
-  if (spec.fn) {
-    for (let i = 0; i <= 160; i++) {
-      const xv = xmin + (xmax - xmin) * i / 160;
-      const yv = spec.fn(xv);
-      if (Number.isFinite(yv)) curve.push([xv, yv]);
-    }
-  }
+  const curve = [], bx = Array.from({ length: 161 }, (_, i) => xmin + (xmax - xmin) * i / 160);
+  if (spec.fn) for (const xv of bx) { const yv = spec.fn(xv); if (Number.isFinite(yv)) curve.push([xv, yv]); }
   // 곡선이 데이터 범위를 크게 벗어나면 축은 데이터 기준으로
   const yr = Math.max(...ys) - Math.min(...ys) || 1;
   const band = [];
-  if (spec.band) for (const [xv] of curve) { const [lo, hi] = spec.band(xv); if (Number.isFinite(lo) && Number.isFinite(hi)) band.push([xv, lo, hi]); }
+  if (spec.band) for (const xv of bx) { const [lo, hi] = spec.band(xv); if (Number.isFinite(lo) && Number.isFinite(hi)) band.push([xv, lo, hi]); }
   const inView = v => v > Math.min(...ys) - yr * 0.5 && v < Math.max(...ys) + yr * 0.5;
   const ov = spec.overlay ? spec.overlay.x.map((xv, i) => [xv, spec.overlay.y[i]]).filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b)) : [];
   const cys = [...curve.map(p => p[1]), ...band.flatMap(b => [b[1], b[2]]), ...ov.map(p => p[1])].filter(inView);
@@ -247,6 +244,11 @@ function drawChart(canvas, spec, opt = {}) {
     [...band].reverse().forEach(([a, , hi]) => ctx.lineTo(px(a), py(hi)));
     ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
   }
+  for (const l of lines) {
+    ctx.strokeStyle = l.flag ? th.warn : th.point; ctx.globalAlpha = l.flag ? .8 : .28; ctx.lineWidth = l.flag ? 1.6 : 1.1; ctx.lineJoin = 'round';
+    ctx.beginPath(); l.p.forEach(([a, b], i) => i ? ctx.lineTo(px(a), py(b)) : ctx.moveTo(px(a), py(b))); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
   if (spec.line) {
     ctx.strokeStyle = th.point; ctx.globalAlpha = .35; ctx.lineWidth = 1.5; ctx.lineJoin = 'round';
     ctx.beginPath(); sorted.forEach(([a, b], i) => i ? ctx.lineTo(px(a), py(b)) : ctx.moveTo(px(a), py(b))); ctx.stroke();
@@ -254,7 +256,10 @@ function drawChart(canvas, spec, opt = {}) {
   }
   const r = pts.length > 400 ? 2 : pts.length > 120 ? 2.6 : 3.4;
   ctx.fillStyle = th.point; ctx.strokeStyle = th.ring; ctx.lineWidth = 1.2;
-  for (const [a, b] of pts) { ctx.beginPath(); ctx.arc(px(a), py(b), r * (opt.markScale || 1), 0, Math.PI * 2); ctx.fill(); if (pts.length < 400) ctx.stroke(); }
+  if (!spec.hidePoints) for (const [a, b, i] of pts) {
+    ctx.fillStyle = spec.flagged && spec.flagged[i] ? th.warn : th.point;
+    ctx.beginPath(); ctx.arc(px(a), py(b), r * (opt.markScale || 1), 0, Math.PI * 2); ctx.fill(); if (pts.length < 400) ctx.stroke();
+  }
   if (curve.length) {
     ctx.strokeStyle = th.fit; ctx.lineWidth = 2 * (opt.markScale || 1); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
     ctx.beginPath(); curve.forEach(([a, b], i) => i ? ctx.lineTo(px(a), py(b)) : ctx.moveTo(px(a), py(b))); ctx.stroke();
@@ -267,7 +272,7 @@ function drawChart(canvas, spec, opt = {}) {
 
   if (opt.legend) {
     ctx.font = font(400); ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-    const items = [[spec.pointLabel || '측정값', th.point, 'dot'], ...(spec.fn ? [[spec.fitLabel || '회귀 함수', th.fit, 'line']] : []), ...(ov.length ? [[spec.overlayLabel || '예측', th.fit, 'line']] : []), ...(band.length ? [['95% 예측 범위', th.fit, 'band']] : [])];
+    const items = [...(spec.hidePoints ? [] : [[spec.pointLabel || '측정값', th.point, 'dot']]), ...(lines.length ? [[spec.linesLabel || '각 강번', th.point, 'line']] : []), ...(lines.some(l => l.flag) ? [['이상 강번', th.warn, 'line']] : []), ...(spec.fn ? [[spec.fitLabel || '회귀 함수', th.fit, 'line']] : []), ...(ov.length ? [[spec.overlayLabel || '예측', th.fit, 'line']] : []), ...(band.length ? [[spec.bandLabel || '95% 예측 범위', th.fit, 'band']] : [])];
     let lx = L + pw - sum(items.map(([t]) => ctx.measureText(t).width + 34)), ly = spec.title ? 10 + fs / 2 : top + 8;
     for (const [t, c, k] of items) {
       ctx.fillStyle = c;
@@ -304,9 +309,10 @@ function mountChart(container, spec) {
     }
     if (!best) return;
     const fx = spec.fn ? spec.fn(best[0]) : NaN;
-    tip.innerHTML = `${esc(spec.xLabel)}: <b>${fmt(best[0], 5)}</b><br>${esc(spec.yLabel)}: <b>${fmt(best[1], 5)}</b>` +
+    if (spec.tip) tip.innerHTML = spec.tip(best[2], best);
+    else tip.innerHTML = `${esc(spec.xLabel)}: <b>${fmt(best[0], 5)}</b><br>${esc(spec.yLabel)}: <b>${fmt(best[1], 5)}</b>` +
       (Number.isFinite(fx) ? `<br>함수 계산값: ${fmt(fx, 5)}` : '') +
-      (spec.band ? (([lo, hi]) => Number.isFinite(lo) ? `<br>95% 범위: ${fmt(lo, 4)} ~ ${fmt(hi, 4)}` : '')(spec.band(best[0])) : '');
+      (spec.band ? (([lo, hi]) => Number.isFinite(lo) ? `<br>${esc(spec.bandLabel || '95% 범위')}: ${fmt(lo, 4)} ~ ${fmt(hi, 4)}` : '')(spec.band(best[0])) : '');
     tip.hidden = false;
     const tx = rect.left + geo.px(best[0]), ty = rect.top + geo.py(best[1]);
     const tw = tip.offsetWidth, thh = tip.offsetHeight;
@@ -1346,38 +1352,47 @@ function cellToText(v) {
   return String(v).replace(/[\t\n\r]+/g, ' ');
 }
 
+/** 파일 하나 → [{ name, text, size }] (엑셀은 시트마다 하나). 읽을 수 없으면 오류 */
+async function fileToSheets(f) {
+  if (/\.xls$/i.test(f.name)) throw new Error('옛날 엑셀(.xls)은 못 읽어요. .xlsx로 저장하거나 표를 복사해서 붙여넣어 주세요.');
+  if (/\.xlsx$/i.test(f.name)) {
+    const ExcelJS = await getExcelJS();
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(await f.arrayBuffer());
+    return wb.worksheets.map(ws => {
+      const lines = [];
+      ws.eachRow({ includeEmpty: false }, row => {
+        const vals = [];
+        for (let c = 1; c <= ws.columnCount; c++) vals.push(cellToText(row.getCell(c).value));
+        if (vals.some(v => v !== '')) lines.push(vals.join('\t'));
+      });
+      return { name: ws.name, text: lines.join('\n'), size: lines.length };
+    }).filter(sh => sh.size > 0);
+  }
+  const buf = await f.arrayBuffer();
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+  catch { text = new TextDecoder('euc-kr').decode(buf); } // 한글 윈도우 엑셀 CSV
+  text = text.replace(/^\uFEFF/, '');
+  return [{ name: f.name, text, size: text.split('\n').length }];
+}
+
 $('file').onchange = async e => {
   const f = e.target.files[0]; e.target.value = '';
   if (!f) return;
   try {
+    if (/\.xls$/i.test(f.name)) { setMsg('옛날 엑셀(.xls)은 못 읽어요. .xlsx로 저장하거나 표를 복사해서 붙여넣어 주세요.', 'err'); return; }
     if (/\.xlsx$/i.test(f.name)) {
       setMsg('엑셀 파일을 읽는 중…');
-      const ExcelJS = await getExcelJS();
-      const wb = new ExcelJS.Workbook();
-      await wb.xlsx.load(await f.arrayBuffer());
-      const sheets = wb.worksheets.map(ws => {
-        const lines = [];
-        ws.eachRow({ includeEmpty: false }, row => {
-          const vals = [];
-          for (let c = 1; c <= ws.columnCount; c++) vals.push(cellToText(row.getCell(c).value));
-          if (vals.some(v => v !== '')) lines.push(vals.join('\t'));
-        });
-        return { name: ws.name, text: lines.join('\n'), size: lines.length };
-      }).filter(sh => sh.size > 0);
+      const sheets = await fileToSheets(f);
       if (!sheets.length) { setMsg('엑셀 파일에 값이 없어요.', 'err'); return; }
       state.sheets = sheets;
       state.sheetIdx = Math.max(0, sheets.findIndex(sh => sh.size > 1));
       input.value = sheets[state.sheetIdx].text;
       state.layout = 'auto'; store.set('layout', 'auto');
       if (sheets.length > 1) toast(`시트 ${sheets.length}개 중 "${sheets[state.sheetIdx].name}"을(를) 읽었어요. 다른 시트는 아래에서 고를 수 있어요`, 4000);
-    } else if (/\.xls$/i.test(f.name)) {
-      setMsg('옛날 엑셀(.xls)은 못 읽어요. .xlsx로 저장하거나 표를 복사해서 붙여넣어 주세요.', 'err'); return;
     } else {
-      const buf = await f.arrayBuffer();
-      let text;
-      try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
-      catch { text = new TextDecoder('euc-kr').decode(buf); } // 한글 윈도우 엑셀 CSV
-      input.value = text.replace(/^\uFEFF/, '');
+      input.value = (await fileToSheets(f))[0].text;
       state.sheets = null; state.layout = 'auto'; store.set('layout', 'auto');
     }
     onInput();

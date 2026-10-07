@@ -38,7 +38,8 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 .icon-btn:active { background: var(--line); }
 
 .wrap { max-width: 720px; margin: 0 auto; padding: 8px 16px calc(110px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
-.wrap > *, #results > * { min-width: 0; }
+.wrap > *, #results > *, .mode > *, #b-results > * { min-width: 0; }
+.mode, #b-results { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 #results { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 .card { background: var(--tint); border-radius: var(--radius); padding: 20px; }
 .card h2 { font-size: 24px; font-weight: 800; letter-spacing: -.03em; margin: 2px 0 6px; }
@@ -210,3 +211,18 @@ details.more table { margin-top: 6px; }
 .rec-main.down b { color: var(--neg); }
 .rec-why { font-size: 13.5px; color: var(--text-2); }
 .rec-why.warn { color: var(--warn); }
+
+.modes { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+.modes button { min-height: 44px; border-radius: 11px; font-weight: 700; font-size: 15px; color: var(--text-2); }
+.modes button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+.src-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; max-height: 260px; overflow: auto; }
+.src-list li { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 12px; background: var(--bg); border-radius: 10px; font-size: 14px; }
+.src-list li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.src-list li small { color: var(--text-3); }
+.src-list li button { width: 36px; height: 36px; border-radius: 8px; color: var(--text-3); font-size: 18px; }
+input.num { min-height: 46px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--bg); padding: 0 12px; font-size: 16px; width: 100%; }
+.chart.tall { height: 280px; }
+.heat-table td.flag { color: var(--neg); font-weight: 650; white-space: normal; min-width: 120px; }
+.heat-table tr.off td { color: var(--text-3); text-decoration: line-through; }
+.heat-table button { min-height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line-2); font-size: 13px; color: var(--text-2); text-decoration: none; }
+#b-attrs { min-height: 110px; margin-top: 4px; }
