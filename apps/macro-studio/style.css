@@ -196,7 +196,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .help-body ol, .help-body ul { margin: 6px 0; padding-left: 20px; }
 .help-body li { margin: 4px 0; }
 .help-body code { background: var(--surface-2); padding: 2px 6px; border-radius: 6px; font-size: 13px; }
-.help-body .warn { background: var(--tint); border-radius: 12px; padding: 12px 14px; color: var(--text); }
+.help-body em { font-style: normal; color: var(--accent); font-weight: 650; }
+.help-body .warn { background: var(--tint); border-radius: 12px; padding: 12px 14px; color: var(--text); margin: 8px 0; }
+.help-body .muted.small { margin: 2px 0 6px; }
 
 /* 미리보기 */
 .preview .sheet-head small { font-size: 12px; font-weight: 600; color: var(--text-3); }
