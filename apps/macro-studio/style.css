@@ -102,6 +102,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .step-actions button:active { background: var(--line); color: var(--text); }
 .step-actions svg { width: 18px; height: 18px; }
 .empty-steps { text-align: center; color: var(--text-2); font-size: 14px; padding: 24px 16px; background: var(--surface); border: 1px dashed var(--line); border-radius: 14px; }
+.step.warn { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); }
+.st-issue { font-size: 12.5px; font-weight: 650; color: var(--danger); margin-top: 2px; }
+.step-warn { margin: 10px 2px 0; font-size: 13px; font-weight: 650; color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); padding: 10px 12px; border-radius: 12px; }
 
 /* 내보내기 */
 .export h3 { margin-bottom: 2px; }
@@ -157,6 +160,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 18px; font-size: 17px; font-weight: 750; }
 .sheet-body { padding: 4px 18px 16px; overflow-y: auto; }
 .sheet-foot { padding: 10px 18px calc(14px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); }
+.sheet-foot.foot-row { display: flex; gap: 10px; }
+.sheet-foot.foot-row #sheet-dup { flex: 0 0 34%; }
+.sheet-foot.foot-row #sheet-save { flex: 1; }
 
 /* 동작 종류 고르기 */
 .type-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 4px; }
@@ -226,7 +232,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
   background: var(--surface-2); border: 1px solid var(--line); font-size: 13px; font-weight: 700; color: var(--text-2);
 }
 .pv-chip.on { background: var(--accent); color: var(--on-accent); border-color: transparent; transform: scale(1.06); }
-.prev-fast { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); margin-top: 12px; }
+.prev-res { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--text-2); margin-top: 12px; }
+.prev-res select { width: auto; flex: 0 0 auto; padding: 8px 10px; font-size: 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); }
+.prev-fast { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); margin-top: 10px; }
 .prev-fast input { width: 18px; height: 18px; }
 .prev-controls { display: flex; gap: 10px; }
 .prev-controls .btn { flex: 1; }
@@ -236,7 +244,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
   position: fixed; left: 50%; bottom: calc(96px + env(safe-area-inset-bottom)); transform: translateX(-50%);
   z-index: 40; background: var(--text); color: var(--bg); padding: 11px 18px; border-radius: 999px;
   font-size: 14px; font-weight: 650; box-shadow: 0 8px 24px rgba(0,0,0,.25); animation: pop .2s ease;
+  display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 32px);
 }
+.toast-btn { color: var(--accent); font-weight: 800; font-size: 14px; flex: none; }
 @keyframes pop { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 
 @media (max-width: 360px) {

@@ -82,6 +82,15 @@ function toast(msg) {
   t.textContent = msg; t.hidden = false;
   clearTimeout(t._t); t._t = setTimeout(() => { t.hidden = true; }, 1800);
 }
+function toastAction(msg, label, cb) {
+  const t = $('#toast');
+  t.textContent = '';
+  const span = document.createElement('span'); span.textContent = msg;
+  const btn = document.createElement('button'); btn.className = 'toast-btn'; btn.textContent = label;
+  btn.onclick = () => { t.hidden = true; clearTimeout(t._t); cb(); };
+  t.append(span, btn); t.hidden = false;
+  clearTimeout(t._t); t._t = setTimeout(() => { t.hidden = true; }, 4500);
+}
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function num(v) { return Number.isFinite(Number(v)) ? Math.round(Number(v)) : 0; }
 
@@ -131,6 +140,23 @@ function stepDesc(s) {
   }
 }
 
+/* 입력이 빠졌는지 검사 (빠진 채 내보내면 엉뚱하게 동작) */
+function stepIssue(s) {
+  const bad = v => v === '' || v == null || !Number.isFinite(Number(v));
+  switch (s.type) {
+    case 'url': { const u = (s.url || '').trim(); return (!u || u === 'https://' || u === 'http://') ? '주소를 입력하세요' : null; }
+    case 'move': case 'click': return (bad(s.x) || bad(s.y)) ? '좌표(X·Y)를 입력하세요' : null;
+    case 'drag': return (bad(s.x1) || bad(s.y1) || bad(s.x2) || bad(s.y2)) ? '시작·끝 좌표를 입력하세요' : null;
+    case 'hotkey': return (s.preset === 'custom' && !(s.key || '').trim()) ? '누를 키를 입력하세요' : null;
+    case 'text': return (s.text || '') === '' ? '입력할 글자가 비었어요' : null;
+    case 'win': return (s.title || '').trim() === '' ? '창 제목을 입력하세요' : null;
+    case 'scroll': return (bad(s.amount) || Number(s.amount) < 1) ? '스크롤 칸 수를 입력하세요' : null;
+    case 'wait': return (bad(s.sec) || Number(s.sec) < 0) ? '대기 시간을 입력하세요' : null;
+    default: return null;
+  }
+}
+function hasIssues(l) { return l.steps.some(stepIssue); }
+
 /* ===== 렌더: 동작 목록 ===== */
 const ICON = {
   up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>',
@@ -147,14 +173,16 @@ function renderSteps() {
 
   l.steps.forEach((s, i) => {
     const t = TYPES[s.type] || { ico: '•', label: s.type };
+    const issue = stepIssue(s);
     const li = document.createElement('li');
-    li.className = 'step';
+    li.className = 'step' + (issue ? ' warn' : '');
     li.dataset.i = i;
     li.innerHTML = `
       <span class="num">${i + 1}</span>
       <div class="st-main">
         <div class="st-type"><span class="st-ico">${t.ico}</span>${t.label}</div>
         <div class="st-desc">${escapeHtml(stepDesc(s))}</div>
+        ${issue ? `<div class="st-issue">⚠ ${escapeHtml(issue)}</div>` : ''}
       </div>
       <div class="step-actions">
         <button data-act="up" aria-label="위로">${ICON.up}</button>
@@ -167,12 +195,22 @@ function renderSteps() {
     });
     ol.appendChild(li);
   });
+
+  const n = l.steps.filter(stepIssue).length;
+  const w = $('#step-warn');
+  if (n) { w.hidden = false; w.textContent = `⚠ 입력이 빠진 동작 ${n}개 — 내보내기 전에 확인하세요`; }
+  else w.hidden = true;
 }
 
 function stepAction(act, i) {
   const steps = activeLoop().steps;
-  if (act === 'del') { steps.splice(i, 1); }
-  else if (act === 'up' && i > 0) { [steps[i - 1], steps[i]] = [steps[i], steps[i - 1]]; }
+  if (act === 'del') {
+    const removed = steps[i];
+    steps.splice(i, 1); save(); renderSteps();
+    toastAction('동작을 지웠어요', '되돌리기', () => { steps.splice(i, 0, removed); save(); renderSteps(); });
+    return;
+  }
+  if (act === 'up' && i > 0) { [steps[i - 1], steps[i]] = [steps[i], steps[i - 1]]; }
   else if (act === 'down' && i < steps.length - 1) { [steps[i + 1], steps[i]] = [steps[i], steps[i + 1]]; }
   save(); renderSteps();
 }
@@ -185,6 +223,7 @@ function openStepSheet(index) {
   if (index == null) draft = { type: 'click', x: 100, y: 100, button: 'left', double: false };
   else draft = JSON.parse(JSON.stringify(activeLoop().steps[index]));
   $('#sheet-title').textContent = index == null ? '동작 추가' : '동작 수정';
+  $('#sheet-dup').hidden = index == null;
   renderSheetBody();
   showSheet('#sheet', '#sheet-bg');
 }
@@ -310,6 +349,14 @@ $('#sheet-save').onclick = () => {
   else l.steps[editingIndex] = draft;
   save(); renderSteps(); hideSheet('#sheet', '#sheet-bg');
 };
+$('#sheet-dup').onclick = () => {
+  if (editingIndex == null) return;
+  const l = activeLoop();
+  l.steps[editingIndex] = draft;                       // 현재 수정 내용 반영
+  const copy = JSON.parse(JSON.stringify(draft)); copy.id = uid();
+  l.steps.splice(editingIndex + 1, 0, copy);           // 바로 아래에 복제본
+  save(); renderSteps(); hideSheet('#sheet', '#sheet-bg'); toast('동작을 복제했어요');
+};
 $('#sheet-close').onclick = () => hideSheet('#sheet', '#sheet-bg');
 $('#sheet-bg').onclick = () => hideSheet('#sheet', '#sheet-bg');
 $('#add-step').onclick = () => openStepSheet(null);
@@ -327,8 +374,15 @@ function addDeleteLoopButton() {
   const sec = $('#loop-settings');
   const row = document.createElement('div');
   row.className = 'row'; row.style.marginTop = '12px';
-  row.innerHTML = `<button class="mini ghost danger" id="del-loop" style="margin-left:auto">이 루프 삭제</button>`;
+  row.innerHTML = `<button class="mini ghost" id="dup-loop">루프 복제</button><button class="mini ghost danger" id="del-loop" style="margin-left:auto">이 루프 삭제</button>`;
   sec.appendChild(row);
+  $('#dup-loop').onclick = () => {
+    const src = activeLoop();
+    const copy = JSON.parse(JSON.stringify(src));
+    copy.id = uid(); copy.name = src.name + ' 복사';
+    copy.steps.forEach(s => s.id = uid());
+    state.loops.push(copy); activeId = copy.id; save(); renderAll(); toast('루프를 복제했어요');
+  };
   $('#del-loop').onclick = () => {
     if (state.loops.length <= 1) { toast('마지막 루프는 지울 수 없어요'); return; }
     if (!confirm(`"${activeLoop().name}" 루프를 삭제할까요?`)) return;
@@ -341,6 +395,21 @@ function addDeleteLoopButton() {
    미리보기 (모의 실행) — 브라우저 안에서 순서·타이밍만 재현
    ========================================================= */
 const prev = { running: false, playing: false, cancel: false };
+
+const RES = [[1920, 1080, 'FHD'], [1366, 768, '노트북'], [2560, 1440, 'QHD'], [1440, 900, '맥북'], [1280, 720, 'HD'], [3840, 2160, '4K']];
+function initPreviewRes() {
+  const sel = $('#prev-res');
+  sel.innerHTML = RES.map(([w, h, n]) => `<option value="${w}x${h}">${w}×${h} (${n})</option>`).join('');
+  const cur = `${state.screen.w}x${state.screen.h}`;
+  if (!RES.some(([w, h]) => `${w}x${h}` === cur)) { const o = document.createElement('option'); o.value = cur; o.textContent = cur; sel.appendChild(o); }
+  sel.value = cur;
+  applyRes();
+  sel.onchange = () => {
+    const [w, h] = sel.value.split('x').map(Number);
+    state.screen = { w, h }; save(); applyRes(); resetCursor();
+  };
+}
+function applyRes() { $('#prev-screen').style.aspectRatio = `${state.screen.w} / ${state.screen.h}`; }
 
 function openPreview() {
   buildPreviewSteps();
@@ -546,7 +615,7 @@ function genAHK(l) {
 }
 function genAHKStep(s) {
   switch (s.type) {
-    case 'url': return [`Run "${ahkStr(s.url)}"`];
+    case 'url': return [`try Run "${ahkStr(s.url)}"`];
     case 'move': return [`MouseMove ${num(s.x)}, ${num(s.y)}, 10`];
     case 'click': {
       const btn = s.button === 'right' ? 'Right' : s.button === 'middle' ? 'Middle' : '';
@@ -784,6 +853,10 @@ function genFinder() {
 
 function doExport(kind) {
   const l = activeLoop();
+  if (['ahk', 'ps', 'py'].includes(kind)) {
+    if (!l.steps.length) { toast('먼저 동작을 추가하세요'); return; }
+    if (hasIssues(l) && !confirm('입력이 빠진 동작이 있어요(빨간 ⚠). 그대로 내보낼까요?')) return;
+  }
   if (kind === 'ahk') {
     const ahkName = fileName(l.name, 'ahk');
     download(ahkName, genAHK(l));
@@ -912,3 +985,4 @@ function renderAll() {
   addDeleteLoopButton();
 }
 renderAll();
+initPreviewRes();
