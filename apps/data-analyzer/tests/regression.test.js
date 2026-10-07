@@ -112,4 +112,36 @@ test('빈 값·변하지 않는 값·로그 불가 데이터', () => {
   assert.ok(!fr.all.some(f => f.id === 'log' || f.id === 'exp' || f.id === 'power'));
 });
 
+test('상세 통계: statsmodels 결과와 같다', () => {
+  // 기준값은 같은 데이터를 Python statsmodels OLS 로 계산한 값
+  let sd5 = 5; const r = () => { sd5 = (sd5 * 16807) % 2147483647; return sd5 / 2147483647 - 0.5; };
+  const x = range(30, i => i * 2 + 1), y = x.map(v => 3 + 0.4 * v - 0.004 * v * v + r() * 2);
+  const q = R.fitModel('quad', x, y), d = R.details(q, 't');
+  near(d.anova.F, 412.367064912261, 1e-9, 'F');
+  near(d.anova.p, 5.811739483638463e-21, 1e-6, 'F p');
+  near(d.coefs[2].p, 3.00483616e-11, 1e-6, 'x² p');
+  near(d.coefs[2].lo, -0.00496358, 1e-5, 'CI 하한');
+  near(d.dw, 1.93383920777849, 1e-9, 'DW');
+  near(d.jb, 1.712701430649789, 1e-9, 'JB');
+  near(d.lev[0], 0.26330645, 1e-7, '지렛값');
+  near(d.cook[0], 0.30094166, 1e-7, '쿡의 거리');
+  near(q.aic, 54.11184170144979, 1e-9, 'AIC');
+  const a = range(30, i => i + r() * 8), b = range(30, i => (i % 6) * 2 + r() * 3);
+  const yy = a.map((v, i) => 2 + 0.5 * v - 1.2 * b[i] + r() * 3);
+  const m = R.multiRegression('y', yy, [{ name: 'a', values: a }, { name: 'b', values: b }]);
+  const dm = R.details(m);
+  near(dm.coefs[0].se, 0.3814461674465754, 1e-9, '절편 표준오차');
+  near(dm.coefs[1].p, 1.2669198530623145e-20, 1e-6, 'a p');
+  near(dm.coefs[1].vif, 1.0181086845704967, 1e-9, 'VIF');
+  near(dm.anova.F, 574.3651616435178, 1e-9, '다중 F');
+  near(dm.dw, 1.7552080860144157, 1e-9, '다중 DW');
+});
+
+test('분포 함수: t·F 임계값', () => {
+  near(R.tP(2.160, 13), 0.05, 1e-3, 't p');
+  near(R.fP(4.667, 1, 13), 0.05, 1e-3, 'F p');
+  near(R.t975(1), 12.706, 1e-4, 't(1)');
+  near(R.t975(1000), 1.9623, 1e-4, 't(1000)');
+});
+
 console.log(`\n${pass}개 모두 통과`);

@@ -50,6 +50,19 @@
   <!-- 2. 설정 -->
   <section class="panel" id="setup" hidden>
     <div class="step-head"><span class="step-no">2</span><h3>확인하기</h3></div>
+    <label class="field" id="sheet-field" hidden>
+      <span>시트</span>
+      <select id="sheet"></select>
+    </label>
+    <label class="field">
+      <span>표 방향 <small class="hint">(값이 아래로 이어지면 세로, 옆으로 이어지면 가로)</small></span>
+      <select id="layout">
+        <option value="auto">자동</option>
+        <option value="cols">세로 표: 항목 이름이 맨 위 줄, 값이 아래로</option>
+        <option value="rows">가로 표: 항목 이름이 맨 왼쪽 칸, 값이 옆으로</option>
+      </select>
+    </label>
+    <p class="hint" id="prep-notes"></p>
     <div class="table-scroll"><table class="preview" id="preview"></table></div>
     <p class="hint" id="preview-note"></p>
 
@@ -134,6 +147,7 @@
 <div class="tip" id="tip" hidden></div>
 <div class="toast" id="toast" role="status" hidden></div>
 
+<script src="reader.js"></script>
 <script src="regression.js"></script>
 <script src="app.js"></script>
 </body>

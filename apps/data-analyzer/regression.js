@@ -45,14 +45,54 @@
   function solve(A, b) { const r = gaussJordan(A, b.map(v => [v])); return r && r.map(x => x[0]); }
   function invert(A) { return gaussJordan(A, A.map((_, i) => A.map((__, j) => +(i === j)))); }
 
-  // 95% 양측 t 분포 임계값 (자유도 df)
-  const T_TABLE = [NaN, 12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228];
-  function t975(df) {
-    if (!(df >= 1)) return NaN;
-    if (df <= 10) return T_TABLE[Math.floor(df)];
-    const z = 1.959963985, z3 = z ** 3, z5 = z ** 5, z7 = z ** 7;
-    return z + (z3 + z) / (4 * df) + (5 * z5 + 16 * z3 + 3 * z) / (96 * df ** 2) + (3 * z7 + 19 * z5 + 17 * z3 - 15 * z) / (384 * df ** 3);
+  /* ---------- 확률 분포 (t, F, 카이제곱) ---------- */
+  function lgamma(x) {
+    const g = [76.18009172947146, -86.50532032941677, 24.01409824083091, -1.231739572450155, 0.1208650973866179e-2, -0.5395239384953e-5];
+    let y = x, tmp = x + 5.5;
+    tmp -= (x + 0.5) * Math.log(tmp);
+    let ser = 1.000000000190015;
+    for (const c of g) ser += c / ++y;
+    return -tmp + Math.log(2.5066282746310005 * ser / x);
   }
+  function betacf(a, b, x) {
+    const EPS = 3e-14, FPMIN = 1e-300;
+    let qab = a + b, qap = a + 1, qam = a - 1, c = 1, d = 1 - qab * x / qap;
+    if (Math.abs(d) < FPMIN) d = FPMIN;
+    d = 1 / d; let h = d;
+    for (let m = 1; m <= 300; m++) {
+      const m2 = 2 * m;
+      let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+      d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN;
+      c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN;
+      d = 1 / d; h *= d * c;
+      aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+      d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN;
+      c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN;
+      d = 1 / d; const del = d * c; h *= del;
+      if (Math.abs(del - 1) < EPS) break;
+    }
+    return h;
+  }
+  // 정규화된 불완전 베타 함수 I_x(a, b)
+  function ibeta(x, a, b) {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    const bt = Math.exp(lgamma(a + b) - lgamma(a) - lgamma(b) + a * Math.log(x) + b * Math.log(1 - x));
+    return x < (a + 1) / (a + b + 2) ? bt * betacf(a, b, x) / a : 1 - bt * betacf(b, a, 1 - x) / b;
+  }
+  /** t 검정 양측 p값 */
+  const tP = (t, df) => (Number.isFinite(t) && df > 0 ? ibeta(df / (df + t * t), df / 2, 0.5) : NaN);
+  /** F 검정 p값 (오른쪽 꼬리) */
+  const fP = (F, d1, d2) => (Number.isFinite(F) && F >= 0 && d1 > 0 && d2 > 0 ? ibeta(d2 / (d2 + d1 * F), d2 / 2, d1 / 2) : NaN);
+  /** 양측 유의수준 alpha 의 t 임계값 (이분법) */
+  function tInv(alpha, df) {
+    if (!(df > 0)) return NaN;
+    let lo = 0, hi = 1;
+    while (tP(hi, df) > alpha) hi *= 2;
+    for (let i = 0; i < 100; i++) { const mid = (lo + hi) / 2; if (tP(mid, df) > alpha) lo = mid; else hi = mid; }
+    return (lo + hi) / 2;
+  }
+  const t975 = df => tInv(0.05, df);
 
   /* ---------- 핵심: 표준화한 다항식 최소제곱 ----------
    * 설명변수 g를 u = (g − center) / scale 로 바꿔 [1, u, u², …]로 푼다.
@@ -145,6 +185,7 @@
     const yh = x.map(model.predict);
     if (!yh.every(Number.isFinite)) return null;
     Object.assign(model, scores(y, yh, meta.p));
+    Object.defineProperty(model, 'data', { value: { x, y, g, h }, enumerable: false });
     return model;
   }
 
@@ -154,7 +195,9 @@
     const ssTot = sum(y.map(v => (v - my) ** 2));
     const r2 = ssTot > 0 ? 1 - ssRes / ssTot : 1;
     const adj = n - p - 1 > 0 ? 1 - (1 - r2) * (n - 1) / (n - p - 1) : r2;
-    return { r2, adj, rmse: Math.sqrt(ssRes / n), n };
+    // AIC/BIC: 원래 값 기준, 정규분포 로그우도 (statsmodels 와 같은 정의, 계수 p+1개). 작을수록 좋음
+    const k = p + 1, nll2 = n * (Math.log(2 * Math.PI * Math.max(ssRes, 1e-300) / n) + 1);
+    return { r2, adj, rmse: Math.sqrt(ssRes / n), n, aic: nll2 + 2 * k, bic: nll2 + k * Math.log(n) };
   }
 
   /** 모델로 값 하나 예측. 단일 모델은 x(숫자), 다중 모델은 {항목이름: 값} 또는 배열 */
@@ -262,6 +305,7 @@
     Object.assign(model, scores(ys, yh, k));
     Object.defineProperty(model, 'yh', { value: yh, enumerable: false });
     Object.defineProperty(model, 'ys', { value: ys, enumerable: false });
+    Object.defineProperty(model, 'data', { value: { rows, X: rows.map(i => preds.map(p => p.values[i])), ms, ss }, enumerable: false });
     return model;
   }
 
@@ -271,6 +315,99 @@
     if (!b.every(Number.isFinite)) return { eta: NaN, se: NaN };
     const q = dot(b, matVec(model.core.cov, b));
     return { eta: dot(model.core.coef, b), se: model.core.sigma * Math.sqrt(1 + Math.max(0, q)) };
+  }
+
+  /* ---------- 상세 통계 ---------- */
+  const SUPN = ['', '', '²', '³'];
+
+  // 잔차 진단 공통: e(검정 공간 잔차), lev(지렛값), order(시간/x 순서)
+  function diagnose(e, lev, sigma, nPar, order) {
+    const n = e.length;
+    const eo = order.map(i => e[i]);
+    let num = 0; for (let i = 1; i < n; i++) num += (eo[i] - eo[i - 1]) ** 2;
+    const sse = sum(e.map(v => v * v));
+    const dw = sse > 0 ? num / sse : NaN;
+    // 자기상관(직전 잔차와의 상관)
+    const r1 = sse > 0 ? sum(eo.slice(1).map((v, i) => v * eo[i])) / sse : NaN;
+    const m2 = sse / n, m3 = mean(e.map(v => v ** 3)), m4 = mean(e.map(v => v ** 4));
+    const skew = m2 > 0 ? m3 / m2 ** 1.5 : 0, kurt = m2 > 0 ? m4 / m2 ** 2 : 3;
+    const jb = n / 6 * (skew ** 2 + (kurt - 3) ** 2 / 4);
+    const stud = e.map((v, i) => (sigma > 0 && lev[i] < 1 ? v / (sigma * Math.sqrt(1 - lev[i])) : 0));
+    const cook = stud.map((r, i) => (lev[i] < 1 ? r * r * lev[i] / (nPar * (1 - lev[i])) : 0));
+    return { dw, r1, skew, kurt, jb, jbP: Math.exp(-jb / 2), stud, cook, lev };
+  }
+
+  function coefRows(names, est, covB, df, sigma) {
+    const tc = t975(df);
+    return names.map((name, j) => {
+      const se = sigma * Math.sqrt(Math.max(0, covB[j][j]));
+      const t = se > 0 ? est[j] / se : NaN;
+      return { name, est: est[j], se, t, p: tP(t, df), lo: est[j] - tc * se, hi: est[j] + tc * se };
+    });
+  }
+  const mulT = (T, C) => T.map(r => C[0].map((_, k) => sum(r.map((v, j) => v * C[j][k]))));
+  const tr = M => M[0].map((_, i) => M.map(r => r[i]));
+
+  /** 단일 모델 상세: 계수 검정, 분산분석(F), 잔차 진단
+   *  지수·로그·거듭제곱은 변환한 공간(예: ln y)에서 검정한다 → space 로 표시 */
+  function details(model, xSym = 'x') {
+    if (model.kind === 'multi') return multiDetails(model);
+    const { x, y, g, h } = model.data;
+    const core = model.core, n = x.length, deg = core.deg, df = core.df;
+    const { center: m, scale: s } = core;
+    // 표준화 계수 c → 원래 g 계수 a = T c
+    const T = Array.from({ length: deg + 1 }, (_, j) => Array.from({ length: deg + 1 }, (_, k) => (k >= j ? s ** -k * binom(k, j) * (-m) ** (k - j) : 0)));
+    const a = matVec(T, core.coef);
+    const covA = mulT(mulT(T, core.cov), tr(T));
+    const gx = model.transform.x === 'ln' ? `ln(${xSym})` : xSym;
+    const names = a.map((_, k) => (k === 0 ? '절편' : `${gx}${SUPN[k] || ''}`));
+    let coefs = coefRows(names, a, covA, df, core.sigma);
+    if (model.transform.y === 'ln') { // y = a·e^(…) : 절편은 ln a → a 로 되돌린다
+      const c0 = coefs[0];
+      coefs[0] = { name: 'a (배율)', est: Math.exp(c0.est), se: Math.exp(c0.est) * c0.se, t: NaN, p: NaN, lo: Math.exp(c0.lo), hi: Math.exp(c0.hi) };
+      coefs[1].name = model.id === 'exp' ? `b (${xSym}의 지수)` : `b (거듭제곱)`;
+    }
+    const U = g.map(v => basis((v - m) / s, deg));
+    const eta = U.map(r => dot(core.coef, r));
+    const e = h.map((v, i) => v - eta[i]);
+    const hm = mean(h);
+    const sst = sum(h.map(v => (v - hm) ** 2)), sse = sum(e.map(v => v * v)), ssr = Math.max(0, sst - sse);
+    const F = deg > 0 && sse > 0 ? (ssr / deg) / (sse / df) : NaN;
+    const lev = U.map(r => dot(r, matVec(core.cov, r)));
+    const order = [...x.keys()].sort((i, j) => x[i] - x[j]);
+    const dg = diagnose(e, lev, core.sigma, deg + 1, order);
+    return {
+      space: model.transform.y === 'ln' ? 'ln(y)' : 'y',
+      coefs, n, df,
+      anova: { ssr, sse, sst, dfR: deg, dfE: df, F, p: fP(F, deg, df) },
+      ...dg,
+      points: x.map((v, i) => ({ x: v, y: y[i], fit: model.predict(v), resid: y[i] - model.predict(v), stud: dg.stud[i], cook: dg.cook[i] })),
+    };
+  }
+
+  function multiDetails(model) {
+    const { X, ms, ss } = model.data;
+    const core = model.core, k = model.terms.length, n = X.length, df = core.df;
+    // 표준화 계수 c → 원래 계수 [b0, b1..bk]
+    const T = [[1, ...ms.map((mj, j) => -mj / ss[j])], ...ms.map((_, j) => Array.from({ length: k + 1 }, (__, c) => (c === j + 1 ? 1 / ss[j] : 0)))];
+    const b = matVec(T, core.coef);
+    const covB = mulT(mulT(T, core.cov), tr(T));
+    const coefs = coefRows(['절편', ...model.terms.map(t => t.name)], b, covB, df, core.sigma);
+    coefs.slice(1).forEach((c, j) => { c.beta = model.terms[j].beta; c.vif = (n - 1) * core.cov[j + 1][j + 1]; });
+    const U = X.map(r => [1, ...r.map((v, j) => (v - ms[j]) / ss[j])]);
+    const yh = model.yh, ys = model.ys;
+    const e = ys.map((v, i) => v - yh[i]);
+    const my = mean(ys);
+    const sst = sum(ys.map(v => (v - my) ** 2)), sse = sum(e.map(v => v * v)), ssr = Math.max(0, sst - sse);
+    const F = sse > 0 ? (ssr / k) / (sse / df) : NaN;
+    const lev = U.map(r => dot(r, matVec(core.cov, r)));
+    const dg = diagnose(e, lev, core.sigma, k + 1, [...e.keys()]);
+    return {
+      space: 'y', coefs, n, df,
+      anova: { ssr, sse, sst, dfR: k, dfE: df, F, p: fP(F, k, df) },
+      ...dg,
+      points: ys.map((v, i) => ({ x: yh[i], y: v, fit: yh[i], resid: e[i], stud: dg.stud[i], cook: dg.cook[i], row: model.data.rows[i] })),
+    };
   }
 
   /* ---------- 모델 파일 (JSON) ---------- */
@@ -308,8 +445,8 @@
 
   const Regression = {
     VERSION, MODELS,
-    sum, mean, sd, solve, invert, t975,
-    fitModel, bestFit, validate, pearson, multiRegression,
+    sum, mean, sd, solve, invert, t975, tInv, tP, fP, ibeta,
+    fitModel, bestFit, validate, pearson, multiRegression, details,
     predict, interval, serialize, deserialize,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = Regression;

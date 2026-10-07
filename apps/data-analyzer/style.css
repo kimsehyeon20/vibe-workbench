@@ -172,3 +172,17 @@ details.more table { margin-top: 6px; }
 .predict-out .range { color: var(--text-2); font-size: 13.5px; margin-left: 4px; }
 .predict-out .warn { color: var(--warn); font-size: 13px; }
 .model-btn { margin-top: 12px; width: 100%; }
+
+.stats { margin-top: 6px; }
+.mini-title { margin: 14px 0 6px; font-size: 14px; font-weight: 750; color: var(--text); }
+.stat-table td, .stat-table th { font-size: 12.5px; padding: 6px 8px; }
+.stat-table td.ok { color: var(--pos); font-weight: 650; }
+.stat-table td.meh { color: var(--text-3); }
+.stat-table.kv th { text-align: left; width: 45%; background: var(--bg); }
+.stat-table.kv td { text-align: right; }
+.diag { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13.5px; }
+.diag li { padding: 8px 10px 8px 30px; border-radius: 10px; background: var(--bg); position: relative; }
+.diag li::before { content: "•"; position: absolute; left: 12px; top: 8px; color: var(--text-3); font-weight: 800; }
+.diag li.ok::before { content: "✓"; color: var(--pos); }
+.diag li.bad::before { content: "!"; color: var(--warn); }
+.chart.small { height: 170px; }

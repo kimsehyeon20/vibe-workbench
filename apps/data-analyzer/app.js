@@ -26,171 +26,9 @@ const el = (tag, attrs = {}, ...kids) => {
 };
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-/* ---------------- 1. 입력 읽기 ---------------- */
+/* ---------------- 1. 입력 읽기: reader.js (Reader) ---------------- */
 
-function detectDelimiter(lines) {
-  const sample = lines.slice(0, 20);
-  for (const d of ['\t', ';', ',']) {
-    const counts = sample.map(l => splitLine(l, d).length);
-    if (counts[0] > 1 && counts.every(c => c === counts[0])) return d;
-  }
-  for (const d of ['\t', ',', ';']) if (sample.some(l => l.includes(d))) return d;
-  return /\s{1,}/;
-}
-
-// 따옴표("…")를 지원하는 한 줄 나누기
-function splitLine(line, d) {
-  if (d instanceof RegExp) return line.trim().split(d);
-  const out = []; let cur = ''; let q = false;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (q) {
-      if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; }
-      else if (c === '"') q = false;
-      else cur += c;
-    } else if (c === '"' && cur.trim() === '') { q = true; cur = ''; }
-    else if (c === d) { out.push(cur); cur = ''; }
-    else cur += c;
-  }
-  out.push(cur);
-  return out.map(s => s.trim());
-}
-
-function parseText(text) {
-  const lines = text.replace(/\r\n?/g, '\n').split('\n').filter(l => l.trim() !== '');
-  if (!lines.length) return [];
-  const d = detectDelimiter(lines);
-  const rows = lines.map(l => splitLine(l, d));
-  const w = Math.max(...rows.map(r => r.length));
-  return rows.map(r => { while (r.length < w) r.push(''); return r; });
-}
-
-function toNumber(s) {
-  if (typeof s === 'number') return Number.isFinite(s) ? s : NaN;
-  if (s == null) return NaN;
-  let t = String(s).trim().replace(/−/g, '-');
-  if (t === '') return NaN;
-  if (/^[-+]?\d{1,3}(,\d{3})+(\.\d+)?$/.test(t)) t = t.replace(/,/g, '');
-  t = t.replace(/%$/, '');
-  if (!/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(t)) return NaN;
-  return Number(t);
-}
-
-const CLOCK_RE = /^(오전|오후|AM|PM)?\s*(\d{1,2}):(\d{2})(?::(\d{2}(?:\.\d+)?))?\s*(AM|PM|오전|오후)?$/i;
-const DATE_RE = /^(\d{4})\s*[-./]\s*(\d{1,2})\s*[-./]\s*(\d{1,2})\.?(?:[ T]+(?:(오전|오후|AM|PM)\s*)?(\d{1,2}):(\d{2})(?::(\d{2}(?:\.\d+)?))?)?$/i;
-
-function hour12(h, ap) {
-  if (!ap) return h;
-  const pm = /오후|pm/i.test(ap);
-  if (pm && h < 12) return h + 12;
-  if (!pm && h === 12) return 0;
-  return h;
-}
-
-// 시간 칸 하나를 읽는다 → { kind: 'clock'(초) | 'date'(ms), v } 또는 null
-function parseTimeCell(s) {
-  const t = String(s ?? '').trim();
-  if (!t) return null;
-  let m = t.match(CLOCK_RE);
-  if (m) {
-    const h = hour12(+m[2], m[1] || m[5]);
-    return { kind: 'clock', v: h * 3600 + +m[3] * 60 + (m[4] ? +m[4] : 0) };
-  }
-  m = t.match(DATE_RE);
-  if (m) {
-    const h = m[5] ? hour12(+m[5], m[4]) : 0;
-    const sec = m[7] ? +m[7] : 0;
-    const ms = Date.UTC(+m[1], +m[2] - 1, +m[3], h, m[6] ? +m[6] : 0, Math.floor(sec), Math.round((sec % 1) * 1000));
-    return Number.isFinite(ms) ? { kind: 'date', v: ms } : null;
-  }
-  return null;
-}
-
-const nonEmpty = a => a.filter(v => String(v ?? '').trim() !== '');
-
-// 열의 성격: 'time'(시각/날짜) | 'number' | 'text'
-function columnKind(values) {
-  const ne = nonEmpty(values);
-  if (!ne.length) return 'text';
-  const num = ne.filter(v => !Number.isNaN(toNumber(v))).length;
-  const tm = ne.filter(v => parseTimeCell(v)).length;
-  if (tm / ne.length >= 0.8) return 'time';
-  if (num / ne.length >= 0.8) return 'number';
-  return 'text';
-}
-
-function buildTable(rows) {
-  if (rows.length < 2) return { error: '줄이 너무 적어요. 이름 한 줄과 값 여러 줄이 필요해요.' };
-  const first = rows[0];
-  const isHeader = first.some(c => String(c).trim() !== '' && Number.isNaN(toNumber(c)) && !parseTimeCell(c));
-  const headers = first.map((c, i) => (isHeader && String(c).trim()) ? String(c).trim() : `항목${i + 1}`);
-  // 같은 이름이 있으면 구분
-  const seen = {};
-  headers.forEach((h, i) => { if (seen[h]) headers[i] = `${h} (${++seen[h]})`; else seen[h] = 1; });
-  const body = isHeader ? rows.slice(1) : rows;
-  const cols = headers.map((_, i) => body.map(r => r[i] ?? ''));
-  const kinds = cols.map(columnKind);
-  return { headers, body, cols, kinds, hasHeader: isHeader };
-}
-
-const TIME_NAME_RE = /시간|시각|일시|날짜|time|date|경과|^t$|^t\s*\(/i;
-
-function guessTimeCol(tb) {
-  const i = tb.kinds.indexOf('time');
-  if (i >= 0) return i;
-  const byName = tb.headers.findIndex((h, j) => TIME_NAME_RE.test(h) && tb.kinds[j] === 'number');
-  if (byName >= 0) return byName;
-  if (tb.kinds[0] === 'number') {
-    const v = tb.cols[0].map(toNumber).filter(Number.isFinite);
-    if (v.length > 2 && v.every((x, k) => k === 0 || x > v[k - 1])) return 0;
-  }
-  return -1;
-}
-
-const UNITS = { s: { label: '초', sec: 1 }, min: { label: '분', sec: 60 }, h: { label: '시간', sec: 3600 }, d: { label: '일', sec: 86400 } };
-
-// 표 + 설정 → 분석용 데이터
-function buildDataset(tb, cfg) {
-  const n = tb.body.length;
-  let t = new Array(n).fill(NaN);
-  let tLabel, tSym = 't', unit = null, kind = 'index';
-  const tc = cfg.timeCol;
-  if (tc < 0) {
-    t = t.map((_, i) => i + 1);
-    tLabel = '측정 순서(번째)';
-  } else if (tb.kinds[tc] === 'time') {
-    kind = 'time';
-    const parsed = tb.cols[tc].map(parseTimeCell);
-    // 시각(HH:MM)은 자정을 넘기면 하루를 더한다
-    let dayAdd = 0, prev = null;
-    const sec = parsed.map(p => {
-      if (!p) return NaN;
-      if (p.kind === 'date') return p.v / 1000;
-      if (prev != null && p.v + dayAdd * 86400 < prev - 43200) dayAdd++;
-      const s = p.v + dayAdd * 86400; prev = s; return s;
-    });
-    const fin = sec.filter(Number.isFinite);
-    const t0 = Math.min(...fin), span = Math.max(...fin) - t0;
-    unit = cfg.unit !== 'auto' ? cfg.unit : span <= 180 ? 's' : span <= 3 * 3600 ? 'min' : span <= 3 * 86400 ? 'h' : 'd';
-    t = sec.map(s => (s - t0) / UNITS[unit].sec);
-    tLabel = `경과 시간(${UNITS[unit].label})`;
-  } else {
-    kind = 'number';
-    t = tb.cols[tc].map(toNumber);
-    tLabel = tb.headers[tc];
-  }
-  const vars = cfg.vars.map(j => ({ name: tb.headers[j], col: j, values: tb.cols[j].map(toNumber) }));
-  // 시간 순으로 정렬 (시간이 빈 줄은 뺀다)
-  const idx = [...Array(n).keys()].filter(i => Number.isFinite(t[i])).sort((a, b) => t[a] - t[b]);
-  return {
-    kind, unit, tLabel, tSym,
-    timeHeader: tc >= 0 ? tb.headers[tc] : null,
-    tRaw: idx.map(i => tc >= 0 ? tb.cols[tc][i] : i + 1),
-    t: idx.map(i => t[i]),
-    vars: vars.map(v => ({ ...v, values: idx.map(i => v.values[i]) })),
-    dropped: n - idx.length,
-  };
-}
+const { parseText, toNumber, parseTimeCell, columnKind, buildTable, guessTimeCol, buildDataset, prepareGrid, transpose, UNITS, TIME_NAME_RE } = Reader;
 
 /* ---------------- 2. 통계 계산: regression.js (Regression) ---------------- */
 
@@ -486,7 +324,8 @@ function chartPNG(spec) {
 /* ---------------- 6. 화면 상태 ---------------- */
 
 const state = {
-  table: null,
+  table: null, prep: null, sheets: null, sheetIdx: 0,
+  layout: store.get('layout', 'auto'),
   cfg: { timeCol: -1, unit: 'auto', vars: [], target: -1 },
   result: null,
 };
@@ -505,7 +344,9 @@ function onInput() {
   store.set('text', input.value.length < 800_000 ? input.value : '');
   state.result = null;
   $('results').hidden = true;
-  const rows = parseText(input.value);
+  const prep = prepareGrid(parseText(input.value), state.layout);
+  state.prep = prep;
+  const rows = prep.rows;
   if (!rows.length) { state.table = null; $('setup').hidden = true; setMsg(''); updateButton(); return; }
   const tb = buildTable(rows);
   if (tb.error) { state.table = null; $('setup').hidden = true; setMsg(tb.error, 'err'); updateButton(); return; }
@@ -524,7 +365,8 @@ function onInput() {
     }
   }
   const numCols = tb.kinds.filter(k => k === 'number').length;
-  setMsg(`${tb.body.length}줄 · ${tb.headers.length}칸을 읽었어요${tb.hasHeader ? '' : ' (첫 줄에 이름이 없어서 항목1, 항목2…로 불러요)'}.`, numCols ? 'ok' : 'err');
+  const dir = prep.layout === 'rows' ? '가로 표(항목이 행)' : '세로 표(항목이 열)';
+  setMsg(`${dir}로 읽었어요: 항목 ${tb.headers.length}개 · 각각 값 ${tb.body.length}개${tb.hasHeader ? '' : ' (이름이 없어서 항목1, 항목2…로 불러요)'}.`, numCols ? 'ok' : 'err');
   renderSetup();
 }
 
@@ -535,6 +377,18 @@ function saveCfg() {
 function renderSetup() {
   const tb = state.table, cfg = state.cfg;
   $('setup').hidden = false;
+
+  const ls = $('layout');
+  ls.value = state.layout;
+  ls.options[0].textContent = `자동 (지금: ${state.prep.layout === 'rows' ? '가로 표로 읽음' : '세로 표로 읽음'})`;
+  const multiSheet = !!(state.sheets && state.sheets.length > 1);
+  $('sheet-field').hidden = !multiSheet;
+  if (multiSheet) {
+    const ss = $('sheet'); ss.innerHTML = '';
+    state.sheets.forEach((sh, i) => ss.append(el('option', { value: String(i), text: sh.name })));
+    ss.value = String(state.sheetIdx || 0);
+  }
+  $('prep-notes').textContent = state.prep.notes.join(' · ');
 
   // 미리보기 (앞 5줄)
   const pv = $('preview'); pv.innerHTML = '';
@@ -592,6 +446,11 @@ $('time-col').onchange = e => {
   if (!c.vars.includes(c.target)) c.target = c.vars[c.vars.length - 1] ?? -1;
   changed();
 };
+$('layout').onchange = e => { state.layout = e.target.value; store.set('layout', state.layout); state.table = null; onInput(); };
+$('sheet').onchange = e => {
+  state.sheetIdx = +e.target.value; input.value = state.sheets[state.sheetIdx].text;
+  state.table = null; state.layout = 'auto'; store.set('layout', 'auto'); onInput();
+};
 $('time-unit').onchange = e => { state.cfg.unit = e.target.value; changed(); };
 $('target').onchange = e => { state.cfg.target = +e.target.value; changed(); };
 
@@ -623,9 +482,15 @@ function analyze() {
     const key = `p:${v.col}:${target.col}`;
     return { v, key, fr: bestFit(v.values, target.values, { validate: 'spread', prefer: ov[key] }), r: pearson(v.values, target.values).r };
   });
-  const multi = others.length >= 2 ? multiRegression(target.name, target.values, others) : null;
+  const ex = new Set(state.cfg.multiExclude || []);
+  const multiPreds = [
+    ...others.filter(v => !ex.has(v.col)),
+    ...(state.cfg.multiTime ? [{ name: ds.tLabel, values: ds.t, col: 'time' }] : []),
+  ];
+  const multi = !others.length ? null : multiPreds.length >= 2 ? multiRegression(target.name, target.values, multiPreds)
+    : { error: '함께 쓸 항목을 2개 이상 골라주세요 (시간도 넣을 수 있어요).' };
 
-  state.result = { ds, unitWord, timeFits, corr, target, others, pairFits, multi, at: new Date() };
+  state.result = { ds, unitWord, timeFits, corr, target, others, pairFits, multi, multiPreds, at: new Date() };
   renderResults();
   updateButton();
 }
@@ -661,6 +526,84 @@ function predictBox(model, xLabel, x0, xUnitHint) {
   return box;
 }
 
+/* ---- 회귀 상세 통계 ---- */
+
+const fmtP = p => (!Number.isFinite(p) ? '-' : p < 0.001 ? '<0.001' : p.toFixed(3));
+const sigMark = p => (!Number.isFinite(p) ? '' : p < 0.05 ? '✓ 의미 있음' : '△ 우연일 수 있음');
+
+// 잔차 진단을 쉬운 문장으로: [{ ok: true|false|null, text }]
+function diagnosis(det, { orderWord = '시간 순서', isMulti = false, xLabel = 'x' } = {}) {
+  const out = [];
+  const a = det.anova;
+  out.push(a.p < 0.05
+    ? { ok: true, text: `F 검정: F = ${fmt(a.F, 4)}, p ${fmtP(a.p).startsWith('<') ? fmtP(a.p) : '= ' + fmtP(a.p)} → 이 식은 우연히 맞은 게 아니에요 (기준 p < 0.05).` }
+    : { ok: false, text: `F 검정: F = ${fmt(a.F, 4)}, p = ${fmtP(a.p)} → 식이 "그냥 평균"보다 낫다고 보기 어려워요.` });
+  const weak = det.coefs.slice(1).filter(c => Number.isFinite(c.p) && c.p >= 0.05);
+  if (weak.length) out.push({ ok: false, text: `p값이 0.05 이상인 항(${weak.map(c => c.name).join(', ')})은 없어도 정확도가 비슷할 수 있어요. ${isMulti ? '그 항목을 빼고 다시 계산해 보세요.' : '더 단순한 함수를 고려해 보세요.'}` });
+  if (Number.isFinite(det.dw)) {
+    if (det.dw < 1.5) out.push({ ok: false, text: `더빈-왓슨 ${fmt(det.dw, 3)}: ${orderWord}대로 오차가 비슷하게 이어져요(자기상관). 식이 놓친 흐름이 있거나, 예측 범위가 실제보다 좁을 수 있어요.` });
+    else if (det.dw > 2.5) out.push({ ok: false, text: `더빈-왓슨 ${fmt(det.dw, 3)}: ${orderWord}대로 오차가 번갈아 튀어요. 측정 방식에 규칙적인 흔들림이 있는지 확인해 보세요.` });
+    else out.push({ ok: true, text: `더빈-왓슨 ${fmt(det.dw, 3)}: ${orderWord}대로 오차가 서로 독립적이에요 (기준 1.5 ~ 2.5).` });
+  }
+  out.push(det.jbP < 0.05
+    ? { ok: false, text: `정규성(자크-베라) p = ${fmtP(det.jbP)}: 오차 분포가 한쪽으로 치우쳤거나 튀는 값이 있어요. p값·예측 범위는 참고용으로 보세요.` }
+    : { ok: true, text: `정규성(자크-베라) p = ${fmtP(det.jbP)}: 오차가 고르게 퍼져 있어요.` });
+  const pts = det.points.map((p, i) => ({ ...p, i }));
+  const outl = pts.filter(p => Math.abs(p.stud) > 2.5).sort((a, b) => Math.abs(b.stud) - Math.abs(a.stud)).slice(0, 5);
+  if (outl.length) out.push({ ok: false, text: `튀는 값 ${outl.length}개: ` + outl.map(p => `${isMulti ? `${p.row + 1}번째 값` : `${xLabel} ${fmt(p.x, 4)}`}(실제 ${fmt(p.y, 4)}, 식 ${fmt(p.fit, 4)})`).join(', ') + '. 측정 실수인지 확인해 보세요.' });
+  else out.push({ ok: true, text: '크게 튀는 값(표준화 잔차 2.5 초과)이 없어요.' });
+  const n = det.points.length;
+  const infl = pts.filter(p => p.cook > Math.max(4 / n, 0.5)).sort((a, b) => b.cook - a.cook).slice(0, 3);
+  if (infl.length) out.push({ ok: null, text: `식에 영향이 큰 값: ` + infl.map(p => `${isMulti ? `${p.row + 1}번째 값` : `${xLabel} ${fmt(p.x, 4)}`}(쿡의 거리 ${fmt(p.cook, 2)})`).join(', ') + '. 이 값 하나로 식이 크게 바뀔 수 있어요.' });
+  if (isMulti) {
+    const hv = det.coefs.slice(1).filter(c => c.vif > 5);
+    out.push(hv.length
+      ? { ok: false, text: `다중공선성: ${hv.map(c => `${c.name}(VIF ${fmt(c.vif, 3)})`).join(', ')}은(는) 다른 항목과 거의 같이 움직여서 계수가 불안정해요. 하나를 빼보세요 (기준 VIF < 5).` }
+      : { ok: true, text: '다중공선성: 항목끼리 겹치는 정도가 괜찮아요 (모든 VIF < 5).' });
+  }
+  if (det.space === 'ln(y)') out.push({ ok: null, text: '이 함수는 로그를 취하면 직선이 되므로, 검정은 ln(y) 기준으로 했어요.' });
+  return out;
+}
+
+function statsBlock(det, model, { orderWord, isMulti, xLabel, residX } = {}) {
+  const box = el('div', { class: 'stats' });
+  // 계수 표
+  const t = el('table', { class: 'stat-table' }, el('tr', {}, ...['항', '계수', '표준오차', 't', 'p값', '95% 신뢰구간', ...(isMulti ? ['VIF'] : []), '판정'].map(h => el('th', { text: h }))));
+  det.coefs.forEach(c => t.append(el('tr', {},
+    el('td', { text: c.name }), el('td', { text: fmt(c.est, 5) }), el('td', { text: fmt(c.se, 3) }),
+    el('td', { text: Number.isFinite(c.t) ? fmt(c.t, 3) : '-' }), el('td', { text: fmtP(c.p) }),
+    el('td', { text: `${fmt(c.lo, 4)} ~ ${fmt(c.hi, 4)}` }),
+    ...(isMulti ? [el('td', { text: c.vif != null ? fmt(c.vif, 3) : '' })] : []),
+    el('td', { class: c.p < 0.05 ? 'ok' : 'meh', text: sigMark(c.p) }))));
+  box.append(el('p', { class: 'mini-title', text: '계수 검정' }), el('div', { class: 'table-scroll' }, t));
+  // 모형 요약
+  const a = det.anova;
+  const sum2 = el('table', { class: 'stat-table kv' });
+  [
+    ['결정계수 R²', fmtR2(model.r2)], ['수정 R²', fmtR2(model.adj)], ['오차 RMSE', fmt(model.rmse, 4)],
+    ['F (p값)', `${fmt(a.F, 4)} (${fmtP(a.p)})`], ['AIC / BIC', `${fmt(model.aic, 4)} / ${fmt(model.bic, 4)}`],
+    ['더빈-왓슨', fmt(det.dw, 3)], ['자료 수 / 자유도', `${det.n} / ${det.df}`],
+  ].forEach(([k, v]) => sum2.append(el('tr', {}, el('th', { text: k }), el('td', { text: v }))));
+  box.append(el('p', { class: 'mini-title', text: '모형 요약' }), el('div', { class: 'table-scroll' }, sum2));
+  // 분산분석표
+  const an = el('table', { class: 'stat-table' }, el('tr', {}, ...['요인', '제곱합', '자유도', '평균제곱', 'F', 'p값'].map(h => el('th', { text: h }))));
+  an.append(el('tr', {}, el('td', { text: '회귀' }), el('td', { text: fmt(a.ssr, 5) }), el('td', { text: String(a.dfR) }), el('td', { text: fmt(a.ssr / a.dfR, 5) }), el('td', { text: fmt(a.F, 4) }), el('td', { text: fmtP(a.p) })));
+  an.append(el('tr', {}, el('td', { text: '오차' }), el('td', { text: fmt(a.sse, 5) }), el('td', { text: String(a.dfE) }), el('td', { text: fmt(a.sse / a.dfE, 5) }), el('td', { text: '' }), el('td', { text: '' })));
+  an.append(el('tr', {}, el('td', { text: '전체' }), el('td', { text: fmt(a.sst, 5) }), el('td', { text: String(a.dfR + a.dfE) }), el('td', { text: '' }), el('td', { text: '' }), el('td', { text: '' })));
+  box.append(el('p', { class: 'mini-title', text: `분산분석표${det.space === 'ln(y)' ? ' (ln y 기준)' : ''}` }), el('div', { class: 'table-scroll' }, an));
+  // 진단
+  const ul = el('ul', { class: 'diag' });
+  diagnosis(det, { orderWord, isMulti, xLabel }).forEach(d => ul.append(el('li', { class: d.ok === true ? 'ok' : d.ok === false ? 'bad' : '', text: d.text })));
+  box.append(el('p', { class: 'mini-title', text: '잔차 진단' }), ul);
+  // 잔차 그래프
+  const wrap = el('div', { class: 'chart small' });
+  box.append(el('p', { class: 'mini-title', text: '잔차 그래프 (실제 − 식). 0 위아래로 고르게 흩어지면 좋아요' }), wrap);
+  const rx = det.points.map(p => (residX ? residX(p) : p.x));
+  requestAnimationFrame(() => mountChart(wrap, { x: rx, y: det.points.map(p => p.resid), fn: () => 0, xLabel: isMulti ? '식으로 계산한 값' : xLabel, yLabel: '잔차', line: false }));
+  box.append(el('p', { class: 'hint', text: 'p값: 이 항이 실제로는 0인데 우연히 이만큼 나올 확률. 0.05보다 작으면 의미 있는 항으로 봐요. 95% 신뢰구간: 진짜 계수가 들어 있을 범위.' }));
+  return box;
+}
+
 function fitBlock({ title, fr, key, xLabel, yLabel, xSym, line, says, x0 }) {
   const box = el('div', { class: 'fit' });
   const h = el('h4', {}, title);
@@ -687,8 +630,9 @@ function fitBlock({ title, fr, key, xLabel, yLabel, xSym, line, says, x0 }) {
   box.append(predictBox(best, xLabel, x0 ?? mean(fr.x)));
 
   const d = el('details', { class: 'more' }, el('summary', { text: '다른 함수와 비교 · 직접 고르기' }));
-  const t = el('table', {}, el('tr', {}, el('th', { text: '함수' }), el('th', { text: '정확도(R²)' }), el('th', { text: '오차' }), el('th', { text: '검증 오차' })));
-  fr.all.forEach(f => t.append(el('tr', {}, el('td', { text: f.name + (f === best ? ' ✓' : '') }), el('td', { text: fmtR2(f.r2) }), el('td', { text: fmt(f.rmse, 3) }), el('td', { text: f.validation ? fmt(f.validation.rmse, 3) : '-' }))));
+  const t = el('table', {}, el('tr', {}, el('th', { text: '함수' }), el('th', { text: 'R²' }), el('th', { text: '수정 R²' }), el('th', { text: '오차' }), el('th', { text: '검증 오차' }), el('th', { text: 'AIC' })));
+  const minAic = Math.min(...fr.all.map(f => f.aic));
+  fr.all.forEach(f => t.append(el('tr', {}, el('td', { text: f.name + (f === best ? ' ✓' : '') }), el('td', { text: fmtR2(f.r2) }), el('td', { text: fmtR2(f.adj) }), el('td', { text: fmt(f.rmse, 3) }), el('td', { text: f.validation ? fmt(f.validation.rmse, 3) : '-' }), el('td', { text: fmt(f.aic, 4) + (f.aic === minAic ? ' ★' : '') }))));
   d.append(el('div', { class: 'table-scroll' }, t));
   const sel = el('select', { 'aria-label': '사용할 함수' });
   sel.append(el('option', { value: '', text: `자동 (${fr.auto.name})` }));
@@ -700,8 +644,15 @@ function fitBlock({ title, fr, key, xLabel, yLabel, xSym, line, says, x0 }) {
     saveCfg(); const y0 = scrollY; analyze(); scrollTo(0, y0);
   };
   d.append(el('label', { class: 'field' }, el('span', { text: '사용할 함수' }), sel));
-  d.append(el('p', { class: 'hint', text: '자동 선택: 정확도가 거의 같으면(0.01 이내) 더 단순한 함수를 골라요. 예측에 쓸 거라면 "검증 오차"가 작은 함수가 더 믿을 만해요. 고른 함수는 엑셀과 모델 파일에도 그대로 들어가요.' }));
+  d.append(el('p', { class: 'hint', text: '자동 선택: 수정 R²가 거의 같으면(0.01 이내) 더 단순한 함수를 골라요. AIC는 정확도와 복잡도를 함께 따진 점수로 작을수록(★) 좋아요. 예측에 쓸 거라면 "검증 오차"가 작은 함수가 더 믿을 만해요. 고른 함수는 엑셀과 모델 파일에도 그대로 들어가요.' }));
   box.append(d);
+  const ds2 = el('details', { class: 'more' }, el('summary', { text: '상세 통계 보기 (계수 검정 · 분산분석 · 잔차 진단)' }));
+  ds2.addEventListener('toggle', () => {
+    if (!ds2.open || ds2.dataset.done) return;
+    ds2.dataset.done = '1';
+    ds2.append(statsBlock(Regression.details(best, xSym), best, { orderWord: line ? '시간 순서' : `${xLabel} 순서`, xLabel }));
+  });
+  box.append(ds2);
   return box;
 }
 
@@ -770,10 +721,26 @@ function renderResults() {
   const mp = $('multi-panel'), mu = $('multi');
   mp.hidden = !R.multi; mu.innerHTML = '';
   $('multi-title').textContent = `여러 항목으로 ${R.target.name} 계산하기`;
+  if (R.multi) {
+    const chips = el('div', { class: 'chips' });
+    const ex = new Set(state.cfg.multiExclude || []);
+    const toggle = (on, fn) => { const b = el('button', { class: 'chip', type: 'button', 'aria-pressed': String(on) }); b.onclick = fn; return b; };
+    R.others.forEach(v => {
+      const b = toggle(!ex.has(v.col), () => {
+        const s2 = new Set(state.cfg.multiExclude || []);
+        s2.has(v.col) ? s2.delete(v.col) : s2.add(v.col);
+        state.cfg.multiExclude = [...s2]; saveCfg(); const y0 = scrollY; analyze(); scrollTo(0, y0);
+      });
+      b.textContent = v.name; chips.append(b);
+    });
+    const tb2 = toggle(!!state.cfg.multiTime, () => { state.cfg.multiTime = !state.cfg.multiTime; saveCfg(); const y0 = scrollY; analyze(); scrollTo(0, y0); });
+    tb2.textContent = `⏱ ${ds.tLabel}`; chips.append(tb2);
+    mu.append(el('p', { class: 'mini-title', text: '함께 쓸 항목 (누르면 빼거나 넣어요)' }), chips);
+  }
   if (R.multi?.error) mu.append(el('p', { class: 'says', text: R.multi.error }));
   else if (R.multi) {
     const M = R.multi;
-    mu.append(el('p', { class: 'hint', text: '다른 항목을 모두 함께 써서 한 번에 계산하는 식이에요 (다중 선형 회귀).' }));
+    mu.append(el('p', { class: 'hint', text: '고른 항목을 모두 함께 써서 한 번에 계산하는 식이에요 (다중 선형 회귀).' }));
     const txt = `${M.yName} = ` + joinTerms([[M.b0, ''], ...M.terms.map(t => [t.coef, t.name])], fmt);
     mu.append(el('div', { class: 'formula wrap', html: `${esc(txt)}<small>측정값 ${M.n}개 사용</small>` }));
     mu.append(el('p', {}, badge(M.r2)));
@@ -805,6 +772,13 @@ function renderResults() {
     M.terms.forEach((t, j) => { inputs[j].addEventListener('input', upd); form.append(el('label', {}, el('span', { text: t.name }), inputs[j])); });
     form.append(out); upd();
     mu.append(el('p', { class: 'says', text: '값을 넣어서 예측해보기 (처음엔 각 항목의 평균이 들어 있어요)' }), form);
+    const dm = el('details', { class: 'more' }, el('summary', { text: '상세 통계 보기 (계수 검정 · 분산분석 · VIF · 잔차 진단)' }));
+    dm.addEventListener('toggle', () => {
+      if (!dm.open || dm.dataset.done) return;
+      dm.dataset.done = '1';
+      dm.append(statsBlock(Regression.details(M), M, { orderWord: '시간 순서', isMulti: true }));
+    });
+    mu.append(dm);
   }
 }
 
@@ -1041,6 +1015,34 @@ async function exportExcel() {
       if (f === fr.best) row.getCell(2).font = { bold: true };
     }));
 
+    r++;
+    title('8. 회귀 상세 통계 (계수 검정 · 분산분석 · 잔차 진단)');
+    note('p값 < 0.05 이면 의미 있는 항. 95% 신뢰구간 = 진짜 계수가 들어 있을 범위. 더빈-왓슨 1.5~2.5 이면 오차가 독립적. VIF < 5 이면 항목끼리 겹침이 적음.');
+    const detail = (heading, model, det, opts) => {
+      r++;
+      const hr = put([heading]); hr.getCell(1).font = { bold: true, size: 12 };
+      const isMulti = !!opts.isMulti;
+      put(['항', '계수', '표준오차', 't', 'p값', '95% 하한', '95% 상한', isMulti ? 'VIF' : '', '판정'], XL.sub, { to: 9 });
+      det.coefs.forEach(c => {
+        const row = put([c.name, +c.est.toPrecision(10), +c.se.toPrecision(6), Number.isFinite(c.t) ? +c.t.toPrecision(5) : '-',
+          Number.isFinite(c.p) ? +c.p.toPrecision(4) : '-', +c.lo.toPrecision(8), +c.hi.toPrecision(8),
+          isMulti && c.vif != null ? +c.vif.toPrecision(4) : '', sigMark(c.p)], null, { border: true });
+        if (Number.isFinite(c.p)) row.getCell(5).numFmt = c.p < 0.001 ? '0.00E+00' : '0.0000';
+      });
+      const a = det.anova;
+      put(['요인', '제곱합', '자유도', '평균제곱', 'F', 'p값'], XL.sub, { to: 6 });
+      const fr2 = put(['회귀', +a.ssr.toPrecision(8), a.dfR, +(a.ssr / a.dfR).toPrecision(8), +a.F.toPrecision(6), +a.p.toPrecision(4)], null, { border: true });
+      fr2.getCell(6).numFmt = a.p < 0.001 ? '0.00E+00' : '0.0000';
+      put(['오차', +a.sse.toPrecision(8), a.dfE, +(a.sse / a.dfE).toPrecision(8), '', ''], null, { border: true });
+      put(['전체', +a.sst.toPrecision(8), a.dfR + a.dfE, '', '', ''], null, { border: true });
+      put(['R²', '수정 R²', 'RMSE', 'AIC', 'BIC', '더빈-왓슨', '정규성 p', '자료 수'], XL.sub, { to: 8 });
+      put([+fmtR2(model.r2), +fmtR2(model.adj), +model.rmse.toPrecision(5), +model.aic.toPrecision(6), +model.bic.toPrecision(6), +det.dw.toPrecision(4), +det.jbP.toPrecision(3), det.n], null, { border: true });
+      diagnosis(det, opts).forEach(d => note(`${d.ok === true ? '✓' : d.ok === false ? '!' : '·'} ${d.text}`));
+    };
+    R.timeFits.forEach(({ v, fr }) => { if (fr.best) detail(`■ ${v.name} = f(t) · ${fr.best.name}`, fr.best, Regression.details(fr.best, 't'), { orderWord: '시간 순서', xLabel: ds.tLabel }); });
+    R.pairFits.forEach(({ v, fr }) => { if (fr.best) detail(`■ ${R.target.name} = f(${v.name}) · ${fr.best.name}`, fr.best, Regression.details(fr.best, 'x'), { orderWord: `${v.name} 순서`, xLabel: v.name }); });
+    if (R.multi && !R.multi.error) detail(`■ ${R.target.name} = 다중 선형 회귀 (${R.multi.terms.map(t => t.name).join(', ')})`, R.multi, Regression.details(R.multi), { orderWord: '시간 순서', isMulti: true });
+
     ws3.views = [{ showGridLines: false }];
 
     const buf = await wb.xlsx.writeBuffer();
@@ -1132,15 +1134,21 @@ $('file').onchange = async e => {
       const ExcelJS = await getExcelJS();
       const wb = new ExcelJS.Workbook();
       await wb.xlsx.load(await f.arrayBuffer());
-      const ws = wb.worksheets.find(w => w.actualRowCount > 1) || wb.worksheets[0];
-      const lines = [];
-      ws.eachRow({ includeEmpty: false }, row => {
-        const vals = [];
-        for (let c = 1; c <= ws.columnCount; c++) vals.push(cellToText(row.getCell(c).value));
-        if (vals.some(v => v !== '')) lines.push(vals.join('\t'));
-      });
-      input.value = lines.join('\n');
-      if (wb.worksheets.length > 1) toast(`첫 번째 표("${ws.name}") 시트를 읽었어요`);
+      const sheets = wb.worksheets.map(ws => {
+        const lines = [];
+        ws.eachRow({ includeEmpty: false }, row => {
+          const vals = [];
+          for (let c = 1; c <= ws.columnCount; c++) vals.push(cellToText(row.getCell(c).value));
+          if (vals.some(v => v !== '')) lines.push(vals.join('\t'));
+        });
+        return { name: ws.name, text: lines.join('\n'), size: lines.length };
+      }).filter(sh => sh.size > 0);
+      if (!sheets.length) { setMsg('엑셀 파일에 값이 없어요.', 'err'); return; }
+      state.sheets = sheets;
+      state.sheetIdx = Math.max(0, sheets.findIndex(sh => sh.size > 1));
+      input.value = sheets[state.sheetIdx].text;
+      state.layout = 'auto'; store.set('layout', 'auto');
+      if (sheets.length > 1) toast(`시트 ${sheets.length}개 중 "${sheets[state.sheetIdx].name}"을(를) 읽었어요. 다른 시트는 아래에서 고를 수 있어요`, 4000);
     } else if (/\.xls$/i.test(f.name)) {
       setMsg('옛날 엑셀(.xls)은 못 읽어요. .xlsx로 저장하거나 표를 복사해서 붙여넣어 주세요.', 'err'); return;
     } else {
@@ -1148,7 +1156,8 @@ $('file').onchange = async e => {
       let text;
       try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
       catch { text = new TextDecoder('euc-kr').decode(buf); } // 한글 윈도우 엑셀 CSV
-      input.value = text.replace(/^﻿/, '');
+      input.value = text.replace(/^\uFEFF/, '');
+      state.sheets = null; state.layout = 'auto'; store.set('layout', 'auto');
     }
     onInput();
   } catch (err) {
@@ -1174,8 +1183,8 @@ function sampleData() {
   return lines.join('\n');
 }
 
-$('sample-btn').onclick = () => { input.value = sampleData(); state.table = null; onInput(); toast('예시: 냉방 중인 방을 2시간 동안 5분마다 잰 값이에요'); };
-$('clear-btn').onclick = () => { input.value = ''; state.table = null; store.set('cfg', null); onInput(); input.focus(); };
+$('sample-btn').onclick = () => { input.value = sampleData(); state.table = null; state.sheets = null; state.layout = 'auto'; onInput(); toast('예시: 냉방 중인 방을 2시간 동안 5분마다 잰 값이에요'); };
+$('clear-btn').onclick = () => { input.value = ''; state.table = null; state.sheets = null; state.layout = 'auto'; store.set('layout', 'auto'); store.set('cfg', null); onInput(); input.focus(); };
 
 let inputTimer;
 input.addEventListener('input', () => { clearTimeout(inputTimer); inputTimer = setTimeout(onInput, 250); });
