@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>매크로 설계소</title>
-<meta name="description" content="클릭·키보드 동작 순서를 눈으로 짜고, PC에서 도는 매크로 파일로 내보내요">
+<meta name="description" content="클릭·키보드 동작 순서를 짜서 미리 재생해보고, PC용 매크로 파일로 내보내요">
 <meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#111113" media="(prefers-color-scheme: dark)">
 <meta name="mobile-web-app-capable" content="yes">
@@ -29,7 +29,7 @@
   <!-- 루프(동작 묶음) 선택 줄 -->
   <section class="loops">
     <div class="loops-head">
-      <span class="label">루프 (동작 묶음)</span>
+      <span class="label">루프 (업무 묶음)</span>
       <button class="mini" id="add-loop">+ 새 루프</button>
     </div>
     <div class="chips" id="loop-chips"></div>
@@ -55,6 +55,18 @@
         <em>창 전환할 시간</em>
       </label>
     </div>
+    <div class="row">
+      <label class="field">
+        <span>동작 사이 텀(초)</span>
+        <input type="number" id="loop-gap" min="0" step="0.1" value="0.5" inputmode="decimal">
+        <em>각 동작 사이 기본 간격</em>
+      </label>
+      <label class="field">
+        <span>예약 시작 (선택)</span>
+        <input type="time" id="loop-startat">
+        <em>이 시각까지 기다렸다 시작</em>
+      </label>
+    </div>
   </section>
 
   <!-- 동작 목록 -->
@@ -68,7 +80,7 @@
   <!-- 내보내기 -->
   <section class="card export">
     <h3>이 루프를 실행 파일로 내보내기</h3>
-    <p class="muted small">PC에서 아래 파일을 받아 실행하면 실제로 마우스·키보드가 움직여요.</p>
+    <p class="muted small">먼저 <b>▶ 미리보기</b>로 순서를 확인한 뒤, 내 PC에 맞는 파일을 받으세요.</p>
     <div class="export-grid">
       <button class="out" data-export="ps"><b>무설치 (윈도우)</b><span>설치 없이 더블클릭</span></button>
       <button class="out" data-export="ahk"><b>.ahk + .bat</b><span>윈도우 · 설치형 · 안정적</span></button>
@@ -85,15 +97,16 @@
   <!-- F12 소스 분석 -->
   <section class="card analyze">
     <h3>F12 페이지 소스에서 이름 찾기</h3>
-    <p class="muted small">페이지에서 <b>F12</b>로 나온 코드(HTML)를 통째로 붙여넣으면, 제목·버튼·링크 글자를 뽑아줘요. 창을 제목으로 찾아가는 동작에 쓰면 위치가 바뀌어도 잘 찾아가요.</p>
+    <p class="muted small">페이지에서 <b>F12</b>로 나온 코드(HTML)를 붙여넣으면 제목·버튼·링크 글자를 뽑아줘요. "창 제목으로 찾기" 동작에 쓰면 위치가 바뀌어도 잘 찾아가요.</p>
     <textarea id="html-input" rows="4" placeholder="여기에 페이지 소스(HTML)를 붙여넣으세요"></textarea>
     <button class="mini wide" id="analyze-btn">분석하기</button>
     <div id="analyze-result" class="analyze-result"></div>
   </section>
 </main>
 
-<!-- 아래 고정 추가 버튼 -->
+<!-- 아래 고정 버튼 -->
 <div class="bottom">
+  <button class="btn secondary" id="preview-btn">▶ 미리보기</button>
   <button class="btn" id="add-step">+ 동작 추가</button>
 </div>
 
@@ -108,6 +121,29 @@
   <div class="sheet-body" id="sheet-body"></div>
   <div class="sheet-foot">
     <button class="btn" id="sheet-save">저장</button>
+  </div>
+</div>
+
+<!-- 미리보기 -->
+<div class="sheet-bg" id="prev-bg" hidden></div>
+<div class="sheet preview" id="preview" hidden role="dialog" aria-modal="true">
+  <div class="sheet-grip"></div>
+  <div class="sheet-head">
+    <span>미리보기 <small>(모의 실행)</small></span>
+    <button class="mini ghost" id="prev-close">닫기</button>
+  </div>
+  <div class="sheet-body">
+    <div class="screen" id="prev-screen">
+      <div class="prev-cursor" id="prev-cursor"></div>
+      <div class="prev-badge" id="prev-badge" hidden></div>
+    </div>
+    <div class="prev-caption" id="prev-caption">재생을 누르면 동작 순서를 차례로 보여줘요</div>
+    <div class="prev-steps" id="prev-steps"></div>
+    <label class="prev-fast"><input type="checkbox" id="prev-fast" checked> 긴 대기는 줄여서 빠르게 보기</label>
+  </div>
+  <div class="sheet-foot prev-controls">
+    <button class="btn" id="prev-play">▶ 재생</button>
+    <button class="btn secondary" id="prev-stop">■ 정지</button>
   </div>
 </div>
 
