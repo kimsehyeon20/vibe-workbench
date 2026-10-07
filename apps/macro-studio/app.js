@@ -153,7 +153,10 @@ function condDesc(s) {
   const ops = s.read === 'text' ? OPS_TEXT : OPS_NUM;
   const opL = (ops[s.op] || '').replace(/\s*\(.*\)/, '');
   const act = a => a === 'skip' ? `${s.skip || 1}개 건너뜀` : (ACTS[a] || '').replace('매크로 ', '');
-  return `영역의 ${kind}가 "${s.value}" ${opL} → 맞으면 ${act(s.onTrue)}, 아니면 ${act(s.onFalse)}`;
+  const head = s.src === 'region2'
+    ? `두 영역의 ${kind}가 ${opL}`
+    : `영역의 ${kind}가 "${s.value}" ${opL}`;
+  return `${head} → 맞으면 ${act(s.onTrue)}, 아니면 ${act(s.onFalse)}`;
 }
 
 /* 입력이 빠졌는지 검사 (빠진 채 내보내면 엉뚱하게 동작) */
@@ -170,8 +173,11 @@ function stepIssue(s) {
     case 'wait': return (bad(s.sec) || Number(s.sec) < 0) ? '대기 시간을 입력하세요' : null;
     case 'if': {
       const r = s.region || {};
-      if (bad(r.x1) || bad(r.y1) || bad(r.x2) || bad(r.y2)) return '읽을 영역을 정하세요';
-      if ((s.value ?? '') === '') return '비교할 값을 입력하세요';
+      if (bad(r.x1) || bad(r.y1) || bad(r.x2) || bad(r.y2)) return '읽을 영역①을 정하세요';
+      if (s.src === 'region2') {
+        const r2 = s.region2 || {};
+        if (bad(r2.x1) || bad(r2.y1) || bad(r2.x2) || bad(r2.y2)) return '비교할 영역②를 정하세요';
+      } else if ((s.value ?? '') === '') return '비교할 값을 입력하세요';
       return null;
     }
     default: return null;
@@ -274,7 +280,7 @@ function setType(type) {
     win:    { type, title: '' },
     scroll: { type, dir: 'down', amount: 3 },
     wait:   { type, sec: 1 },
-    if:     { type, read: 'number', mode: 'screen', region: { x1: 100, y1: 100, x2: 300, y2: 150 }, op: 'ge', value: '', onTrue: 'continue', onFalse: 'stop', skip: 1, skipElse: 1 },
+    if:     { type, read: 'number', mode: 'screen', region: { x1: 100, y1: 100, x2: 300, y2: 150 }, src: 'const', op: 'ge', value: '', mode2: 'screen', region2: { x1: 100, y1: 300, x2: 300, y2: 350 }, onTrue: 'continue', onFalse: 'stop', skip: 1, skipElse: 1 },
   };
   draft = d[type];
   renderSheetBody();
@@ -333,29 +339,37 @@ function fieldsFor(type) {
       return `<label class="field"><span>기다릴 시간(초)</span><input type="number" data-k="sec" value="${draft.sec}" min="0" step="0.5" inputmode="decimal"></label>`;
     case 'if': {
       const r = draft.region || (draft.region = { x1: 100, y1: 100, x2: 300, y2: 150 });
-      const cursor = draft.mode === 'cursor';
+      const r2 = draft.region2 || (draft.region2 = { x1: 100, y1: 300, x2: 300, y2: 350 });
+      if (!draft.src) draft.src = 'const';
+      const cursor = draft.mode === 'cursor', cursor2 = draft.mode2 === 'cursor';
       const ops = draft.read === 'text' ? OPS_TEXT : OPS_NUM;
       if (!ops[draft.op]) draft.op = draft.read === 'text' ? 'has' : 'ge';
       const opSel = (k) => { let h = `<select data-k="${k}">`; for (const [v, lab] of Object.entries(ops)) h += `<option value="${v}"${draft[k] === v ? ' selected' : ''}>${lab}</option>`; return h + '</select>'; };
       const actSel = (k) => { let h = `<select data-k="${k}">`; for (const [v, lab] of Object.entries(ACTS)) h += `<option value="${v}"${draft[k] === v ? ' selected' : ''}>${lab}</option>`; return h + '</select>'; };
-      const rin = (lbl, key) => `<label class="field"><span>${lbl}</span><input type="number" data-k="region.${key}" value="${r[key]}" inputmode="numeric"></label>`;
+      const rin = (regKey, obj, lbl, key) => `<label class="field"><span>${lbl}</span><input type="number" data-k="${regKey}.${key}" value="${obj[key]}" inputmode="numeric"></label>`;
+      const regionBlock = (regKey, obj, cur, title) => `
+        <div class="field"><span>${title} 기준</span><div class="chk-row" data-group="${regKey === 'region' ? 'mode' : 'mode2'}">
+          ${chk(regKey === 'region' ? 'mode' : 'mode2', 'screen', '화면 좌표')}${chk(regKey === 'region' ? 'mode' : 'mode2', 'cursor', '커서 기준')}
+        </div></div>
+        <div class="two">${rin(regKey, obj, cur ? '왼쪽(−/＋)' : '왼쪽 X', 'x1')}${rin(regKey, obj, cur ? '위(−/＋)' : '위 Y', 'y1')}</div>
+        <div class="two">${rin(regKey, obj, cur ? '오른쪽' : '오른쪽 X', 'x2')}${rin(regKey, obj, cur ? '아래' : '아래 Y', 'y2')}</div>`;
       return `
-        <p class="hint" style="margin-top:0">화면의 네모 영역에서 글자/숫자를 읽어, 결과에 따라 다르게 진행해요. <b>무설치(윈도우)·파이썬</b>에서 동작(베타). .ahk 는 이 동작을 건너뜁니다.</p>
+        <p class="hint" style="margin-top:0">화면 영역의 글자/숫자를 읽어 결과에 따라 다르게 진행해요. <b>무설치(윈도우)·파이썬</b>에서 동작(베타). .ahk 는 건너뜁니다.</p>
         <div class="field"><span>무엇을 읽나요</span><div class="chk-row" data-group="read">
           ${chk('read', 'number', '숫자')}${chk('read', 'text', '글자')}
         </div></div>
-        <div class="field"><span>영역 기준</span><div class="chk-row" data-group="mode">
-          ${chk('mode', 'screen', '화면 좌표')}${chk('mode', 'cursor', '마우스 커서 기준')}
+        <div class="seg-title">영역 ①</div>
+        ${regionBlock('region', r, cursor, '영역①')}
+        <div class="field"><span>무엇과 비교하나요</span><div class="chk-row" data-group="src">
+          ${chk('src', 'const', '고정값')}${chk('src', 'region2', '다른 영역 ②')}
         </div></div>
-        <div class="two">${rin(cursor ? '왼쪽 (−왼/＋오)' : '왼쪽 X', 'x1')}${rin(cursor ? '위 (−위/＋아래)' : '위 Y', 'y1')}</div>
-        <div class="two">${rin(cursor ? '오른쪽' : '오른쪽 X', 'x2')}${rin(cursor ? '아래' : '아래 Y', 'y2')}</div>
-        <p class="hint">${cursor ? '현재 커서 위치에서 떨어진 거리(픽셀)예요. 커서 바로 위면 위값을 음수로.' : '읽을 네모의 왼쪽위·오른쪽아래 좌표. "영역 선택 도우미"로 드래그해 쉽게 구할 수 있어요.'}</p>
-        <div class="field"><span>조건</span>
-          <div class="two">
-            <label class="field">${opSel('op')}</label>
-            <label class="field"><input type="text" data-k="value" value="${escapeHtml(String(draft.value ?? ''))}" placeholder="${draft.read === 'text' ? '예: 완료' : '예: 0'}" autocomplete="off"></label>
-          </div>
+        <div class="field"><span>비교</span>
+          ${draft.src === 'region2'
+            ? `<label class="field">${opSel('op')}</label>`
+            : `<div class="two"><label class="field">${opSel('op')}</label><label class="field"><input type="text" data-k="value" value="${escapeHtml(String(draft.value ?? ''))}" placeholder="${draft.read === 'text' ? '예: 완료' : '예: 0'}" autocomplete="off"></label></div>`}
         </div>
+        ${draft.src === 'region2' ? `<div class="seg-title">영역 ②</div>${regionBlock('region2', r2, cursor2, '영역②')}
+        <p class="hint">두 영역을 각각 읽어 ${draft.read === 'text' ? '글자' : '숫자'}로 비교해요. 글꼴·배율이 달라도 숫자는 숫자로, 글자는 앞뒤 공백을 지우고 비교합니다(완전히 똑같진 않을 수 있어요).</p>` : `<p class="hint">"영역 선택 도우미"로 F1·F2를 눌러 영역 좌표를 쉽게 구할 수 있어요.</p>`}
         <div class="field"><span>조건이 맞으면</span>${actSel('onTrue')}</div>
         ${draft.onTrue === 'skip' ? `<label class="field"><span>건너뛸 동작 수</span><input type="number" data-k="skip" value="${draft.skip || 1}" min="1" inputmode="numeric"></label>` : ''}
         <div class="field"><span>아니면</span>${actSel('onFalse')}</div>
@@ -391,7 +405,11 @@ function bindFields() {
         const i = draft.mods.indexOf(val);
         if (i >= 0) draft.mods.splice(i, 1); else draft.mods.push(val);
       } else if (g === 'double') { draft.double = !draft.double; }
-      else { draft[g] = val; if (g === 'read') draft.op = (val === 'text' ? 'has' : 'ge'); }
+      else {
+        draft[g] = val;
+        if (g === 'read') draft.op = (val === 'text' ? 'has' : 'ge');
+        if (g === 'src' && val === 'region2') draft.op = 'eq';
+      }
       renderSheetBody();
     };
   });
@@ -512,7 +530,7 @@ function setCap(t) { $('#prev-caption').textContent = t; }
 function resetCursor() {
   const c = $('#prev-cursor');
   c.style.transition = 'none'; c.style.left = '50%'; c.style.top = '50%';
-  c.classList.remove('down'); hideBadge(); hideRegion();
+  c.classList.remove('down'); hideBadge(); hideRegions();
 }
 function moveCursor(x, y, ms) {
   const c = $('#prev-cursor');
@@ -571,21 +589,25 @@ async function doStepPreview(s, fast) {
     case 'win': badge(`🪟 ${s.title}`); setCap(`창 앞으로: "${s.title}"`); return wait(c(900));
     case 'scroll': badge(`${s.dir === 'up' ? '↑' : '↓'} 스크롤`); setCap(`${s.dir === 'up' ? '위' : '아래'}로 ${s.amount}칸`); return wait(c(800));
     case 'wait': setCap(`${s.sec}초 대기${fast && s.sec * 1000 > 1400 ? ' (빠르게 보는 중)' : ''}`); return wait(c((Number(s.sec) || 0) * 1000));
-    case 'if': { showRegion(s); badge('❓ 영역을 읽어 분기'); setCap(condDesc(s)); const r = await wait(c(1400)); hideRegion(); return r; }
+    case 'if': { showRegions(s); badge(s.src === 'region2' ? '❓ 두 영역 비교' : '❓ 영역을 읽어 분기'); setCap(condDesc(s)); const r = await wait(c(1600)); hideRegions(); return r; }
     default: return wait(200);
   }
 }
-function showRegion(s) {
-  const box = $('#prev-screen'); let el = $('#prev-region');
-  if (!el) { el = document.createElement('div'); el.id = 'prev-region'; el.className = 'pv-region'; box.appendChild(el); }
-  const r = s.region || {};
+function drawRegion(id, mode, r, cls) {
+  const box = $('#prev-screen'); let el = document.getElementById(id);
+  if (!el) { el = document.createElement('div'); el.id = id; el.className = 'pv-region ' + cls; box.appendChild(el); }
   const W = Math.abs((r.x2 - r.x1) / state.screen.w) * 100, H = Math.abs((r.y2 - r.y1) / state.screen.h) * 100;
   let L = Math.min(r.x1, r.x2) / state.screen.w * 100, T = Math.min(r.y1, r.y2) / state.screen.h * 100;
-  if (s.mode === 'cursor') { const c = $('#prev-cursor'); L = (parseFloat(c.style.left) || 50) + L; T = (parseFloat(c.style.top) || 50) + T; }
+  if (mode === 'cursor') { const c = $('#prev-cursor'); L = (parseFloat(c.style.left) || 50) + L; T = (parseFloat(c.style.top) || 50) + T; }
   el.style.left = Math.max(0, L) + '%'; el.style.top = Math.max(0, T) + '%';
   el.style.width = Math.max(2, W) + '%'; el.style.height = Math.max(2, H) + '%'; el.hidden = false;
 }
-function hideRegion() { const el = $('#prev-region'); if (el) el.hidden = true; }
+function showRegions(s) {
+  drawRegion('prev-region', s.mode, s.region || {}, 'r1');
+  if (s.src === 'region2') drawRegion('prev-region2', s.mode2, s.region2 || {}, 'r2'); else hideOne('prev-region2');
+}
+function hideOne(id) { const el = document.getElementById(id); if (el) el.hidden = true; }
+function hideRegions() { hideOne('prev-region'); hideOne('prev-region2'); }
 
 async function runPreview() {
   const l = activeLoop();
@@ -868,7 +890,7 @@ function psOcrFuncs() {
     '  } catch { return "" } finally { $ms.Dispose() }',
     '}',
     "function ReadNumber($txt){ $m=[regex]::Match($txt,'-?\\d[\\d,]*(\\.\\d+)?'); if($m.Success){ return [double]($m.Value -replace ',','') } else { return $null } }",
-    'function TextCond($txt,$val,$op){ $t=$txt.Trim(); if($op -eq "has"){ return $t.Contains($val) } elseif($op -eq "ne"){ return ($t -ne $val) } else { return ($t -eq $val) } }',
+    'function TextCmp($a,$b,$op){ $x="$a".Trim(); $y="$b".Trim(); if($op -eq "has"){ return $x.Contains($y) } elseif($op -eq "ne"){ return ($x -ne $y) } else { return ($x -eq $y) } }',
     'function CursorXY(){ $pt=New-Object U+POINT; [U]::GetCursorPos([ref]$pt)|Out-Null; return @($pt.X,$pt.Y) }',
   ];
 }
@@ -888,22 +910,24 @@ function genPSStep(s) {
   }
 }
 function psAct(a, n) { return a === 'stop' ? 'exit' : a === 'skip' ? `$skip = ${Math.max(1, num(n) || 1)}` : '$null = $null'; }
+function psReadRegion(dest, mode, r) {
+  if (mode === 'cursor') return [`$c = CursorXY`, `${dest} = ReadRegion ($c[0] + (${num(r.x1)})) ($c[1] + (${num(r.y1)})) ($c[0] + (${num(r.x2)})) ($c[1] + (${num(r.y2)}))`];
+  return [`${dest} = ReadRegion ${num(r.x1)} ${num(r.y1)} ${num(r.x2)} ${num(r.y2)}`];
+}
 function genPSCond(s) {
-  const r = s.region || {}; const L = [];
-  if (s.mode === 'cursor') {
-    L.push('$c = CursorXY');
-    L.push(`$rx1 = $c[0] + (${num(r.x1)}); $ry1 = $c[1] + (${num(r.y1)}); $rx2 = $c[0] + (${num(r.x2)}); $ry2 = $c[1] + (${num(r.y2)})`);
-    L.push('$txt = ReadRegion $rx1 $ry1 $rx2 $ry2');
-  } else {
-    L.push(`$txt = ReadRegion ${num(r.x1)} ${num(r.y1)} ${num(r.x2)} ${num(r.y2)}`);
-  }
+  const L = [];
+  const two = s.src === 'region2';
+  L.push(...psReadRegion('$txt', s.mode, s.region || {}));
   L.push('Write-Host "조건 영역 값: $txt"');
+  if (two) { L.push(...psReadRegion('$txt2', s.mode2, s.region2 || {})); L.push('Write-Host "조건 영역2 값: $txt2"'); }
   if (s.read === 'text') {
-    L.push(`$cond = TextCond $txt ${psStr(s.value)} ${psStr(s.op)}`);
+    const right = two ? '$txt2' : psStr(s.value);
+    L.push(`$cond = TextCmp $txt ${right} ${psStr(s.op)}`);
   } else {
     const op = { gt: '-gt', lt: '-lt', ge: '-ge', le: '-le', eq: '-eq', ne: '-ne' }[s.op] || '-ge';
     L.push('$v = ReadNumber $txt');
-    L.push(`$cond = ($null -ne $v) -and ($v ${op} ${Number(s.value) || 0})`);
+    if (two) { L.push('$v2 = ReadNumber $txt2'); L.push(`$cond = ($null -ne $v) -and ($null -ne $v2) -and ($v ${op} $v2)`); }
+    else L.push(`$cond = ($null -ne $v) -and ($v ${op} ${Number(s.value) || 0})`);
   }
   L.push(`if($cond){ ${psAct(s.onTrue, s.skip)} } else { ${psAct(s.onFalse, s.skipElse)} }`);
   return L;
@@ -1008,11 +1032,11 @@ function pyOcrFuncs() {
     'def read_number(txt):',
     "    m = re.search(r'-?\\d[\\d,]*(\\.\\d+)?', txt)",
     "    return float(m.group().replace(',', '')) if m else None",
-    'def text_cond(t, val, op):',
-    '    t = t.strip()',
-    "    if op == 'has': return val in t",
-    "    if op == 'ne': return t != val",
-    '    return t == val',
+    'def text_cond(a, b, op):',
+    '    a = (a or "").strip(); b = (b or "").strip()',
+    "    if op == 'has': return b in a",
+    "    if op == 'ne': return a != b",
+    '    return a == b',
   ];
 }
 function genPYStep(s) {
@@ -1037,22 +1061,25 @@ function genPYStep(s) {
   }
 }
 function pyAct(a, n) { return a === 'stop' ? 'raise SystemExit("조건: 멈춤")' : a === 'skip' ? `skip[0] = ${Math.max(1, num(n) || 1)}` : 'pass'; }
+function pyRegionArgs(mode, r) {
+  if (mode === 'cursor') return { pre: ['_cx, _cy = pyautogui.position()'], args: `_cx + ${num(r.x1)}, _cy + ${num(r.y1)}, _cx + ${num(r.x2)}, _cy + ${num(r.y2)}` };
+  return { pre: [], args: `${num(r.x1)}, ${num(r.y1)}, ${num(r.x2)}, ${num(r.y2)}` };
+}
 function genPYCond(s) {
   const J = v => JSON.stringify(v == null ? '' : v);
-  const r = s.region || {}; const L = [];
-  let x1, y1, x2, y2;
-  if (s.mode === 'cursor') {
-    L.push('_cx, _cy = pyautogui.position()');
-    x1 = `_cx + ${num(r.x1)}`; y1 = `_cy + ${num(r.y1)}`; x2 = `_cx + ${num(r.x2)}`; y2 = `_cy + ${num(r.y2)}`;
-  } else { x1 = num(r.x1); y1 = num(r.y1); x2 = num(r.x2); y2 = num(r.y2); }
-  L.push(`_t = read_region(${x1}, ${y1}, ${x2}, ${y2})`);
+  const two = s.src === 'region2'; const L = [];
+  const a = pyRegionArgs(s.mode, s.region || {}); L.push(...a.pre);
+  L.push(`_t = read_region(${a.args})`);
   L.push('print("조건 영역 값:", _t)');
+  if (two) { const b = pyRegionArgs(s.mode2, s.region2 || {}); L.push(...b.pre); L.push(`_t2 = read_region(${b.args})`); L.push('print("조건 영역2 값:", _t2)'); }
   if (s.read === 'text') {
-    L.push(`_cond = text_cond(_t, ${J(s.value)}, ${J(s.op)})`);
+    const right = two ? '_t2' : J(s.value);
+    L.push(`_cond = text_cond(_t, ${right}, ${J(s.op)})`);
   } else {
     const op = { gt: '>', lt: '<', ge: '>=', le: '<=', eq: '==', ne: '!=' }[s.op] || '>=';
     L.push('_v = read_number(_t)');
-    L.push(`_cond = (_v is not None and _v ${op} ${Number(s.value) || 0})`);
+    if (two) { L.push('_v2 = read_number(_t2)'); L.push(`_cond = (_v is not None and _v2 is not None and _v ${op} _v2)`); }
+    else L.push(`_cond = (_v is not None and _v ${op} ${Number(s.value) || 0})`);
   }
   L.push('if _cond:');
   L.push('    ' + pyAct(s.onTrue, s.skip));
@@ -1263,11 +1290,12 @@ const HELP = `
 
 <h4>❓ 조건 (영역을 읽어 분기) — 베타</h4>
 <ul>
-<li>화면의 네모 영역에서 <b>글자/숫자</b>를 읽어(OCR), 결과에 따라 <b>계속 / 멈춤 / 다음 N개 건너뛰기</b>로 갈라져요. (예: "숫자가 0보다 크면 멈춤")</li>
-<li><em>설정:</em> ① 숫자/글자 ② 영역 기준(화면 좌표 / 마우스 커서 기준) ③ 네모 영역 좌표 ④ 비교(>, 포함 등)와 값 ⑤ 맞으면/아니면 할 일.</li>
-<li>영역은 <b>영역 선택 도우미</b>를 받아 왼쪽위에서 <b>F1</b>, 오른쪽아래에서 <b>F2</b>를 누르면 네 좌표가 나와요.</li>
-<li><b>무설치(윈도우)·파이썬</b>에서만 동작해요. <b>.ahk 는 이 동작을 건너뜁니다.</b></li>
-<li>OCR은 글꼴·배율·대비에 따라 틀릴 수 있어요. 큰 글씨·또렷한 영역일수록 정확합니다.</li>
+<li>화면의 네모 영역에서 <b>글자/숫자</b>를 읽어(OCR), 결과에 따라 <b>계속 / 멈춤 / 다음 N개 건너뛰기</b>로 갈라져요.</li>
+<li><em>비교 대상 2가지:</em> <b>고정값</b>(예: "숫자가 0보다 크면 멈춤") 또는 <b>다른 영역 ②</b>.</li>
+<li><b>두 영역 비교</b>: "무엇과 비교하나요"에서 <b>다른 영역 ②</b>를 고르면, <b>영역①과 영역②를 각각 읽어 같은지/다른지</b> 비교해요(디자인이 서로 달라도 OK). 예: 한쪽 표의 금액과 다른 쪽 화면의 금액이 <b>같으면 계속, 다르면 멈춤</b>.</li>
+<li><em>설정:</em> ① 숫자/글자 ② 영역① 좌표 ③ 비교 대상(고정값/다른 영역②) ④ 비교(같음/다름/&gt; 등) ⑤ (영역②면) 영역② 좌표 ⑥ 맞으면/아니면 할 일.</li>
+<li>영역은 <b>영역 선택 도우미</b>로 왼쪽위 <b>F1</b>, 오른쪽아래 <b>F2</b>를 누르면 네 좌표가 나와요.</li>
+<li><b>무설치(윈도우)·파이썬</b>에서만 동작, <b>.ahk 는 건너뜁니다.</b> OCR은 글꼴·배율·대비에 따라 틀릴 수 있어 <b>숫자 비교가 더 안정적</b>이에요. 글자 비교는 앞뒤 공백만 지우고 대조합니다.</li>
 </ul>
 
 <h4>💾 내보내기 — 어떤 파일을 받나요?</h4>
