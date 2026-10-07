@@ -17,10 +17,10 @@ const batchBtn = $('batch-btn');
 function setMode(m) {
   state.mode = m;
   store.set('mode', m);
-  $('mode-single').hidden = m !== 'single';
-  $('mode-batch').hidden = m !== 'batch';
+  ['single', 'batch', 'bal'].forEach(k => { $(`mode-${k}`).hidden = m !== k; });
   mainBtn.hidden = m !== 'single';
   batchBtn.hidden = m !== 'batch';
+  $('bal-btn').hidden = m !== 'bal';
   document.querySelectorAll('.modes button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === m)));
   $('tip').hidden = true;
 }
@@ -392,9 +392,11 @@ async function exportBatchExcel() {
       if (h.flags.length) row.getCell(heads.length).font = { color: { argb: 'FFC62828' }, bold: true };
     });
     const last = rows.length + 1;
-    ws0.addRow([]);
+    ws0.addRow(['']);
+    const statRow = {};
     [['평균', 'AVERAGE'], ['표준편차', 'STDEV'], ['최소', 'MIN'], ['최대', 'MAX'], ['중앙값', 'MEDIAN']].forEach(([name, fn]) => {
       const row = ws0.addRow([name, '']);
+      statRow[fn] = row.number;
       for (let c = 3; c < heads.length; c++) {
         const L = colL(c - 1), vals = rows.map(r => r[c - 2]).filter(Number.isFinite);
         const res = !vals.length ? 0 : fn === 'AVERAGE' ? mean(vals) : fn === 'STDEV' ? (vals.length > 1 ? sd(vals) : 0) : fn === 'MIN' ? Math.min(...vals) : fn === 'MAX' ? Math.max(...vals) : Batch.quantile([...vals].sort((a, b) => a - b), 0.5);
@@ -404,7 +406,8 @@ async function exportBatchExcel() {
       styleRow(row, XL.sub, 1, heads.length);
     });
     const cvRow = ws0.addRow(['변동계수(CV)', '']);
-    cvRow.getCell(4).value = { formula: `D${last + 3}/D${last + 2}`, result: R.stats.cv }; cvRow.getCell(4).numFmt = '0.0%';
+    // 회수량은 C열: 표준편차 ÷ 평균
+    cvRow.getCell(3).value = { formula: `C${statRow.STDEV}/C${statRow.AVERAGE}`, result: R.stats.cv }; cvRow.getCell(3).numFmt = '0.0%';
     ws0.columns.forEach((c, i) => { c.width = Math.min(26, Math.max(10, String(heads[i] || '').length * 1.6 + 4)); });
     if (R.excluded.length) ws0.addRow([`계산에서 뺀 강번: ${R.excluded.map(h => h.id).join(', ')}`]);
 
@@ -496,9 +499,10 @@ async function exportBatchExcel() {
       R.early.forEach(e => put([+(e.sec / 60).toPrecision(4), e.n, +fmtR2(e.model.r2), +e.model.rmse.toPrecision(4), e.model.validation ? +e.model.validation.rmse.toPrecision(4) : '-', `최종 = ${fmtX(e.model.params[0], 6)} + ${fmtX(e.model.params[1], 6)} × (c분까지 회수량)`], null, { border: true }));
       if (ep) {
         r++;
-        put([`${fmt(ep.sec / 60, 3)}분까지 회수량 넣기 →`, +mean(ep.x).toPrecision(6), '최종 회수량 →', ''], XL.sub);
+        const xw = +mean(ep.x).toPrecision(6);
+        put([`${fmt(ep.sec / 60, 3)}분까지 회수량 넣기 →`, xw, '최종 회수량 →', ''], XL.sub);
         const cell = ws3.getRow(r - 1).getCell(4);
-        cell.value = { formula: excelFormula(ep.model, `B${r - 1}`), result: ep.model.predict(mean(ep.x)) }; cell.numFmt = '#,##0.0';
+        cell.value = { formula: excelFormula(ep.model, `B${r - 1}`), result: ep.model.predict(xw) }; cell.numFmt = '#,##0.0';
         ws3.getRow(r - 1).getCell(2).fill = XL.input.fill;
         note('노란 칸에 회수 중인 강번의 "지금까지 회수량"을 넣으면 최종 회수량 예측이 나와요.');
       }
@@ -541,5 +545,5 @@ async function exportBatchExcel() {
     const cfg = store.get('batch:cfg', null);
     bstate.cfg = cfg; setSources(saved, { keepCfg: !!cfg });
   }
-  setMode(store.get('mode', 'single') === 'batch' ? 'batch' : 'single');
 })();
+// 모드는 모든 화면 스크립트가 준비된 뒤 balance-ui.js 끝에서 정한다

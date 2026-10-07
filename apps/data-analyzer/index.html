@@ -23,8 +23,9 @@
 
 <main class="wrap">
   <nav class="modes" aria-label="분석 종류">
-    <button type="button" data-mode="single" aria-pressed="true">측정값 분석</button>
-    <button type="button" data-mode="batch" aria-pressed="false">강번별(배치) 분석</button>
+    <button type="button" data-mode="single" aria-pressed="true">측정값</button>
+    <button type="button" data-mode="batch" aria-pressed="false">강번별</button>
+    <button type="button" data-mode="bal" aria-pressed="false">홀더 수지</button>
   </nav>
 
   <div class="mode" id="mode-single">
@@ -275,11 +276,92 @@ D24101	12800	251
       </section>
     </div>
   </div>
+
+  <!-- ================= 홀더 수지 ================= -->
+  <div class="mode" id="mode-bal" hidden>
+    <section class="card intro">
+      <p class="eyebrow">회수·사용처 유량 + 홀더 레벨 → 수지 · 계측기 편차 · 합계</p>
+      <h2>유량계마다 얼마나 틀리는지 찾아요</h2>
+      <p class="muted">홀더 레벨 변화 = 유입 − 사용처 가 맞아야 해요. 여러 구간에서 이 식을 맞춰 보며 <b>어느 계측기가 몇 % 틀리는지</b> 찾아요. 계열마다 기록 시각이 달라도 돼요.</p>
+    </section>
+
+    <section class="panel">
+      <div class="step-head"><span class="step-no">1</span><h3>데이터 넣기</h3></div>
+      <div class="row-btns">
+        <label class="chip-btn">
+          <input type="file" id="h-files" multiple accept=".csv,.tsv,.txt,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+          파일 여러 개 열기
+        </label>
+        <button class="chip-btn" id="h-demo" type="button">예시: 가스 홀더 24시간</button>
+        <button class="chip-btn ghost" id="h-clear" type="button">모두 지우기</button>
+      </div>
+      <details class="more">
+        <summary>표를 붙여넣어 추가하기</summary>
+        <textarea id="h-paste" spellcheck="false" placeholder="시각	발전소(Nm3/h)	가열로(Nm3/h)	홀더레벨(%)
+2026-10-01 00:00	20500	12100	61.2
+…"></textarea>
+        <div class="row-btns"><button class="chip-btn" id="h-paste-add" type="button">붙여넣은 표 추가</button></div>
+      </details>
+      <p class="hint">파일 모양: ① 시각 칸 + 여러 계열 칸, ② 시각·태그(사용처 이름)·값 3칸의 긴 표, ③ 계열마다 다른 파일. 시각은 날짜+시각이 가장 정확해요.</p>
+      <ul class="src-list" id="h-sources"></ul>
+      <p class="msg" id="h-msg" role="status"></p>
+    </section>
+
+    <section class="panel" id="h-setup" hidden>
+      <div class="step-head"><span class="step-no">2</span><h3>확인하기</h3></div>
+      <p class="hint">계열마다 역할을 확인하세요. 이름으로 자동으로 골랐어요 (회수 → 유입, 레벨 → 홀더 레벨, 온도·압력 → 안 씀, 나머지 → 사용처).</p>
+      <div class="table-scroll"><table class="role-table" id="h-series"></table></div>
+      <label class="field" id="h-factor-f"><span>레벨 1단위당 홀더 부피 (Nm³) <small class="hint">(예: 레벨 1% = 1,200 Nm³. 모르면 비워 두세요)</small></span>
+        <input class="num" id="h-factor" type="number" inputmode="decimal" step="any" min="0" placeholder="모름">
+      </label>
+      <label class="field" id="h-ref-f"><span>믿을 수 있는 계측기 <small class="hint">(레벨 환산값을 모를 때 이 계측기를 기준으로 나머지를 비교해요)</small></span><select id="h-ref"></select></label>
+      <label class="field"><span>구간 길이 <small class="hint">(이 길이마다 수지를 맞춰 봐요)</small></span>
+        <select id="h-window"><option value="0">자동</option><option value="300">5분</option><option value="600">10분</option><option value="900">15분</option><option value="1800">30분</option><option value="3600">1시간</option><option value="7200">2시간</option><option value="14400">4시간</option></select>
+      </label>
+      <label class="field"><span>허용 오차 <small class="hint">(이보다 작은 차이는 "허용 범위"로 봐요)</small></span>
+        <select id="h-tol"><option value="0.005">±0.5%</option><option value="0.01">±1%</option><option value="0.02">±2%</option><option value="0.03">±3%</option><option value="0.05">±5%</option></select>
+      </label>
+      <p class="hint" id="h-found"></p>
+    </section>
+
+    <div id="h-results" class="mode" hidden>
+      <section class="panel">
+        <div class="step-head"><span class="step-no">3</span><h3>한눈에 보기</h3></div>
+        <ul class="summary" id="h-summary"></ul>
+        <details class="glossary">
+          <summary>어떻게 계산했나요?</summary>
+          <dl>
+            <dt>1. 합계</dt><dd>각 유량을 자기 기록 시각 그대로 적분해요. 회수는 5초, 사용처는 1분처럼 간격이 달라도 정확해요.</dd>
+            <dt>2. 구간별 수지</dt><dd>전체 기간을 일정한 구간으로 나눠, 구간마다 "홀더 부피 변화"와 "유입 − 사용처"를 구해요. 레벨은 구간 경계 시각에서 보간해요.</dd>
+            <dt>3. 보정계수</dt><dd>홀더 변화 = Σ(보정계수 × 계측량) + 계측 안 되는 양 을 모든 구간에서 가장 잘 맞추는 보정계수를 회귀로 찾아요. 1이면 정확, 1.03이면 계측값이 실제보다 약 3% 적게 읽힌다는 뜻이에요.</dd>
+            <dt>4. 구분 조건</dt><dd>사용처끼리 따로따로 변해야 누가 틀렸는지 구분돼요. 늘 같이 움직이면(VIF가 큼) 구분할 수 없어요.</dd>
+          </dl>
+        </details>
+      </section>
+      <section class="panel" id="h-beta-panel">
+        <h3 class="sec-title">계측기별 편차</h3>
+        <p class="hint">보정계수 β: 실제 = β × 계측값. 95% 범위가 1을 포함하면 "틀렸다"고 말할 근거가 부족해요.</p>
+        <div class="table-scroll"><table class="stat-table" id="h-beta"></table></div>
+      </section>
+      <section class="panel" id="h-cum-panel">
+        <h3 class="sec-title">누적 수지</h3>
+        <p class="hint">"홀더 실제 변화 − 계측한 (유입 − 사용처)"를 처음부터 쌓은 값이에요. 계측이 맞으면 0 근처에 머물러요. 빨간 점(계측값 그대로)이 한쪽으로 계속 벌어지면 계측 편차가 쌓이는 것이고, 주황 선(보정 후)이 0 근처면 보정계수가 맞는 거예요.</p>
+        <div class="chart tall" id="h-cum"></div>
+        <p class="mini-title">구간별 수지 차이</p>
+        <div class="chart" id="h-imb"></div>
+      </section>
+      <section class="panel">
+        <h3 class="sec-title">계열별 합계</h3>
+        <div class="table-scroll"><table class="stat-table" id="h-totals"></table></div>
+      </section>
+    </div>
+  </div>
 </main>
 
 <div class="bottom">
   <button class="btn" id="main-btn" type="button" disabled>데이터를 넣어주세요</button>
   <button class="btn" id="batch-btn" type="button" disabled hidden>강번별 파일을 넣어주세요</button>
+  <button class="btn" id="bal-btn" type="button" disabled hidden>유량·레벨 파일을 넣어주세요</button>
 </div>
 
 <div class="tip" id="tip" hidden></div>
@@ -289,7 +371,9 @@ D24101	12800	251
 <script src="regression.js"></script>
 <script src="control.js"></script>
 <script src="batch.js"></script>
+<script src="balance.js"></script>
 <script src="app.js"></script>
 <script src="batch-ui.js"></script>
+<script src="balance-ui.js"></script>
 </body>
 </html>

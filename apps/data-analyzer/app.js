@@ -245,10 +245,11 @@ function drawChart(canvas, spec, opt = {}) {
     ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
   }
   for (const l of lines) {
-    ctx.strokeStyle = l.flag ? th.warn : th.point; ctx.globalAlpha = l.flag ? .8 : .28; ctx.lineWidth = l.flag ? 1.6 : 1.1; ctx.lineJoin = 'round';
+    ctx.strokeStyle = l.flag ? th.warn : th.point; ctx.globalAlpha = l.label ? .9 : l.flag ? .8 : .28; ctx.lineWidth = l.label ? 2 : l.flag ? 1.6 : 1.1; ctx.lineJoin = 'round';
+    ctx.setLineDash(l.dash ? [6, 4] : []);
     ctx.beginPath(); l.p.forEach(([a, b], i) => i ? ctx.lineTo(px(a), py(b)) : ctx.moveTo(px(a), py(b))); ctx.stroke();
   }
-  ctx.globalAlpha = 1;
+  ctx.globalAlpha = 1; ctx.setLineDash([]);
   if (spec.line) {
     ctx.strokeStyle = th.point; ctx.globalAlpha = .35; ctx.lineWidth = 1.5; ctx.lineJoin = 'round';
     ctx.beginPath(); sorted.forEach(([a, b], i) => i ? ctx.lineTo(px(a), py(b)) : ctx.moveTo(px(a), py(b))); ctx.stroke();
@@ -272,7 +273,8 @@ function drawChart(canvas, spec, opt = {}) {
 
   if (opt.legend) {
     ctx.font = font(400); ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-    const items = [...(spec.hidePoints ? [] : [[spec.pointLabel || '측정값', th.point, 'dot']]), ...(lines.length ? [[spec.linesLabel || '각 강번', th.point, 'line']] : []), ...(lines.some(l => l.flag) ? [['이상 강번', th.warn, 'line']] : []), ...(spec.fn ? [[spec.fitLabel || '회귀 함수', th.fit, 'line']] : []), ...(ov.length ? [[spec.overlayLabel || '예측', th.fit, 'line']] : []), ...(band.length ? [[spec.bandLabel || '95% 예측 범위', th.fit, 'band']] : [])];
+    const items = [...(spec.hidePoints ? [] : [[spec.pointLabel || '측정값', th.point, 'dot']]), ...(lines.some(l => l.label) ? lines.filter(l => l.label).map(l => [l.label, l.flag ? th.warn : th.point, 'line'])
+      : [...(lines.length ? [[spec.linesLabel || '각 강번', th.point, 'line']] : []), ...(lines.some(l => l.flag) ? [['이상 강번', th.warn, 'line']] : [])]), ...(spec.fn ? [[spec.fitLabel || '회귀 함수', th.fit, 'line']] : []), ...(ov.length ? [[spec.overlayLabel || '예측', th.fit, 'line']] : []), ...(band.length ? [[spec.bandLabel || '95% 예측 범위', th.fit, 'band']] : [])];
     let lx = L + pw - sum(items.map(([t]) => ctx.measureText(t).width + 34)), ly = spec.title ? 10 + fs / 2 : top + 8;
     for (const [t, c, k] of items) {
       ctx.fillStyle = c;
@@ -1107,10 +1109,11 @@ async function exportExcel() {
         return;
       }
       const f = fr.best;
-      const row = put([yName, xName, f.name, formulaTextX(f, xSym), +fmtR2(f.r2), quality(f.r2).label, says, +xDefault.toPrecision(6)], null, { border: true, wrap: true });
+      const xw = +xDefault.toPrecision(6); // 엑셀에 적는 값 그대로 계산해야 미리 계산한 결과가 엑셀 재계산과 같다
+      const row = put([yName, xName, f.name, formulaTextX(f, xSym), +fmtR2(f.r2), quality(f.r2).label, says, xw], null, { border: true, wrap: true });
       const xc = `H${r - 1}`;
       row.getCell(8).fill = XL.input.fill;
-      row.getCell(9).value = { formula: excelFormula(f, xc), result: f.predict(xDefault) };
+      row.getCell(9).value = { formula: excelFormula(f, xc), result: f.predict(xw) };
       row.getCell(9).border = XL.border; row.getCell(9).numFmt = '0.####';
       row.getCell(5).numFmt = '0.000';
       if (f.validation) { row.getCell(10).value = +f.validation.rmse.toPrecision(4); }
@@ -1177,7 +1180,7 @@ async function exportExcel() {
         });
         const endR = r - 1;
         const row = put([`계산된 ${M.yName}`, '', '', ''], XL.sub);
-        row.getCell(4).value = { formula: `B${startR}+SUMPRODUCT(B${startR + 1}:B${endR},D${startR + 1}:D${endR})`, result: M.b0 + sum(M.terms.map(t => t.coef * t.mean)) };
+        row.getCell(4).value = { formula: `B${startR}+SUMPRODUCT(B${startR + 1}:B${endR},D${startR + 1}:D${endR})`, result: +num(M.b0) + sum(M.terms.map(t => +num(t.coef) * +t.mean.toPrecision(6))) };
         row.getCell(4).numFmt = '0.####';
         note('노란 칸(값 넣기)에 각 항목 값을 넣으면 맨 아래에 계산된 값이 나와요. 처음엔 각 항목의 평균이 들어 있어요.');
         note('영향 크기: 단위를 맞춰 비교한 값(표준화 계수). 클수록 결과에 미치는 영향이 커요.');

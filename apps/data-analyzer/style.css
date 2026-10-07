@@ -212,7 +212,7 @@ details.more table { margin-top: 6px; }
 .rec-why { font-size: 13.5px; color: var(--text-2); }
 .rec-why.warn { color: var(--warn); }
 
-.modes { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+.modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
 .modes button { min-height: 44px; border-radius: 11px; font-weight: 700; font-size: 15px; color: var(--text-2); }
 .modes button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
 .src-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; max-height: 260px; overflow: auto; }
@@ -226,3 +226,12 @@ input.num { min-height: 46px; border-radius: 12px; border: 1px solid var(--line-
 .heat-table tr.off td { color: var(--text-3); text-decoration: line-through; }
 .heat-table button { min-height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line-2); font-size: 13px; color: var(--text-2); text-decoration: none; }
 #b-attrs { min-height: 110px; margin-top: 4px; }
+
+.role-table select { min-height: 38px; font-size: 14px; padding: 0 6px; width: auto; min-width: 110px; }
+.role-table td { vertical-align: middle; }
+.role-table td:first-child { white-space: normal; min-width: 0; }
+.role-table small { display: block; font-size: 12px; margin: 0; }
+.role-table select { min-width: 0; max-width: 130px; }
+.stat-table td.flag, .stat-table td.flag { color: var(--neg); font-weight: 650; }
+.stat-table tr.sum td { font-weight: 750; background: var(--bg); }
+#h-results { margin: 0; }
