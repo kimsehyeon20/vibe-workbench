@@ -9,7 +9,8 @@
 const KEY = 'data-analyzer';
 const store = {
   get(k, d) { try { const v = localStorage.getItem(`${KEY}:${k}`); return v == null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) { try { localStorage.setItem(`${KEY}:${k}`, JSON.stringify(v)); } catch { /* 저장 불가 환경 */ } },
+  // 저장에 실패하면(용량 초과 등) 예전 값이 남아 나중에 되살아나지 않도록 지운다
+  set(k, v) { try { localStorage.setItem(`${KEY}:${k}`, JSON.stringify(v)); } catch { try { localStorage.removeItem(`${KEY}:${k}`); } catch { /* 저장 불가 환경 */ } } },
 };
 
 const $ = id => document.getElementById(id);
