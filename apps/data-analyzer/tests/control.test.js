@@ -156,4 +156,10 @@ test('하루치 1분 데이터×여러 날도 빨리 끝난다', () => {
   assert.ok(Date.now() - t0 < 20000, `${Date.now() - t0} ms`);
 });
 
+test('최소 폭을 조작 단위(1)와 같게 넣어도 1만큼의 조작을 센다', () => {
+  const a = C.learn(simulate(), opt), b = C.learn(simulate(), { ...opt, deadband: 1 });
+  assert.ok(!b.error, b.error);
+  assert.equal(b.stats.up + b.stats.down, a.stats.up + a.stats.down);
+});
+
 console.log(`\n${pass}개 모두 통과`);

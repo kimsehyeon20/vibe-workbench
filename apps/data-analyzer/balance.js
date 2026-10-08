@@ -43,6 +43,11 @@
     const scale = /^(k|천)\s*(N|S)?m[3³]$|^km[3³]$|^kL$/i.test(u) ? 1000 : /^(M|백만)\s*(N|S)?m[3³]$/.test(u) ? 1e6 : 1;
     return { unit, scale };
   }
+  /** 저장량 계열의 배수: "(kNm3)", "(천Nm3)" → 1000 (유량과 같은 기본 단위로 맞추려고) */
+  function volumeScaleOf(name = '') {
+    const u = (String(name).match(/[(\[]\s*([^()\[\]/]+?)\s*[)\]]\s*$/) || [])[1] || '';
+    return /^(k|천)\s*(N|S)?m[3³]$|^km[3³]$|^kL$/i.test(u) ? 1000 : /^(M|백만)\s*(N|S)?m[3³]$/.test(u) ? 1e6 : 1;
+  }
   /** 합계의 단위 글자: Nm3/h → Nm3, kNm3/h → Nm3, kW → kWh */
   function amountUnitOf(name = '') {
     const s = String(name);
@@ -129,7 +134,7 @@
       s.dt = median(s.t.slice(1).map((v, i) => v - s.t[i]));
       s.role = guessRole(`${s.name} ${s.hint || ''}`);
       const u = flowUnitOf(`${s.name} ${s.hint || ''}`);
-      s.unit = u.unit; s.scale = u.scale;
+      s.unit = u.unit; s.scale = s.role === 'volume' ? volumeScaleOf(`${s.name} ${s.hint || ''}`) : u.scale;
       if (s.dup > Math.max(2, s.t.length * 0.01)) warnings.push(`${s.name}: 같은 시각이 ${s.dup}번 겹쳐요. 시각 칸에 날짜만 있거나 초가 빠졌는지 확인해주세요`);
     });
     const kinds = new Set(srcInfo.map(i => i.kind));
@@ -294,7 +299,9 @@
     const sign = s => (s.role === 'in' ? 1 : -1);
     const us = s => UNIT_SEC[s.unit || 'h'], sc = s => s.scale || 1;
     const tol = cfg.tol ?? 0.01;
-    const au = amountUnitOf(`${flows[0].name} ${flows[0].hint || ''}`) || '';
+    // 합계 단위: 이름의 단위에서 배수(k·천)를 뺀 것. 사용자가 배수를 ×1로 바꿨으면 이름에 적힌 단위 그대로
+    const nm0 = `${flows[0].name} ${flows[0].hint || ''}`;
+    const au = (flowUnitOf(nm0).scale === (flows[0].scale || 1) ? amountUnitOf(nm0) : ((nm0.match(/[(\[]\s*([^()\[\]/]+?)\s*\//) || [])[1] || '')) || '';
     const warnings = [];
 
     // 전체 기간 합계 (계열마다 빈틈 표시)
@@ -309,7 +316,8 @@
     if (!holders.length) return { ...base, note: '저장소 레벨(또는 저장량) 계열이 없어서 합계만 계산했어요' };
 
     // 저장소마다 1단위당 부피: 저장량이면 1, 레벨이면 계열에 넣은 값 → 레벨이 하나면 cfg.levelFactor
-    const factors = holders.map(h => (h.role === 'volume' ? 1 : +h.factor > 0 ? +h.factor : holders.length === 1 && cfg.levelFactor > 0 ? +cfg.levelFactor : null));
+    // 저장량 계열은 배수(kNm3 → ×1000)를 곱해 유량과 같은 단위로
+    const factors = holders.map(h => (h.role === 'volume' ? h.scale || 1 : +h.factor > 0 ? +h.factor : holders.length === 1 && cfg.levelFactor > 0 ? +cfg.levelFactor : null));
     const unknown = factors.filter(f => f == null).length;
     if (unknown && holders.length > 1) return { ...base, regError: '저장소(레벨) 계열이 2개 이상이면 레벨마다 "1단위당 부피"를 넣어주세요. 그래야 저장량을 더할 수 있어요' };
 
@@ -436,6 +444,10 @@
         free.forEach(b => { if (b.verdict === 'bias') b.verdict = 'common'; });
       }
     }
+    // β가 모두 1000배·1/1000배 근처면 계열마다 단위 배수(k·천)가 다른 것
+    const allB = E.beta.filter(b => !b.fixed && !b.ref).map(b => b.est);
+    const mB = allB.length ? median(allB) : NaN;
+    if ([1000, 1e-3, 1e6, 1e-6].some(k => mB > k * 0.8 && mB < k * 1.25)) notes.push(`보정계수가 모두 약 ${+mB.toPrecision(2)}배예요. 계측기 오차가 아니라 단위 배수(k·천, Nm3 ↔ kNm3)가 계열마다 다른 것 같아요. 계열 표의 배수나 "1단위당 부피"의 단위를 맞춰 주세요`);
     // DW가 2보다 큰 것(번갈아 나타남)은 이웃 구간이 레벨 끝점을 나눠 쓰는 잡음 때문이라 자연스럽다. 작을 때만 알린다
     if (Number.isFinite(E.m.dw) && E.m.dw < 1.2) notes.push(`구간별 차이가 무작위가 아니라 이어서 나타나요 (DW ${E.m.dw.toFixed(2)}). 시간 지연이나 계측 안 되는 양의 변동이 있으면 보정계수 범위가 실제보다 좁게 나올 수 있어요`);
     // 구간 길이를 바꿔도 결과가 비슷한지 (편차 없음 쪽 판정끼리 바뀌는 것은 괜찮다)
@@ -551,7 +563,7 @@
     return { sources: [{ name: '물탱크_3일.csv', text: rows.join('\n') }], levelFactor: null, truth: { area: AREA, bias: BIAS, loss: 1.5 } };
   }
 
-  const Balance = { ROLE_LABEL, UNIT_SEC, extract, guessRole, flowUnitOf, amountUnitOf, valueAt, integrate, levelDelta, ols, analyze, pickWindow, commonGrid, demo, demoTank };
+  const Balance = { ROLE_LABEL, UNIT_SEC, extract, guessRole, flowUnitOf, volumeScaleOf, amountUnitOf, valueAt, integrate, levelDelta, ols, analyze, pickWindow, commonGrid, demo, demoTank };
   if (typeof module !== 'undefined' && module.exports) module.exports = Balance;
   else root.Balance = Balance;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

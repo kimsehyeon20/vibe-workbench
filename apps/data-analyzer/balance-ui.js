@@ -12,24 +12,40 @@ function hMsg(text, cls = '') { const m = $('h-msg'); m.textContent = text; m.cl
 
 // 계열 설정은 "파일 이름::계열 이름"으로 저장한다 (다른 파일의 같은 이름 계열에 예시 설정이 옮겨 가지 않게)
 const roleKey = s => `${s.src}::${s.name}`;
+const DEMO_SRC = ['전로회수.csv', '사용처유량.csv', '홀더레벨.csv', '물탱크_3일.csv'];
 function hSave() {
-  const size = hstate.sources.reduce((a, s) => a + s.text.length, 0);
-  store.set('bal:sources', size < 3_000_000 ? hstate.sources : []);
-  store.set('bal:cfg', { ...hstate.cfg, roles: Object.fromEntries(hstate.series.map(s => [roleKey(s), [s.role, s.unit, s.scale, s.factor || '']])) });
+  // 저장 크기는 JSON으로 바꾼 길이로 잰다 (탭·줄바꿈이 늘어남). 못 저장하면 새로고침 때 사라진다고 알린다
+  const json = JSON.stringify(hstate.sources);
+  const ok = json.length < 3_000_000 && store.set('bal:sources', hstate.sources);
+  if (!ok) store.set('bal:sources', []);
+  hstate.unsaved = !ok && hstate.sources.length > 0;
+  // 이름만으로 찾는 설정(*::이름)은 예시 파일 것은 남기지 않는다 (예시의 레벨 환산값이 사용자 파일로 옮겨 가지 않게)
+  store.set('bal:cfg', { ...hstate.cfg, roles: Object.fromEntries(hstate.series.flatMap(s => { const v = [s.role, s.unit, s.scale, s.factor || '']; return DEMO_SRC.some(d => s.src.includes(d)) ? [[roleKey(s), v]] : [[roleKey(s), v], [`*::${s.name}`, v]]; })) });
 }
 
 function hSetSources(list, msg) {
   hstate.sources = list;
   const ex = Balance.extract(list);
   const saved = store.get('bal:cfg', null);
+  // 설정 되살리기: 지금 화면의 같은 이름·같은 파일 계열 → 저장한 "파일::이름" → 저장한 이름만
+  // (다음 날 파일을 더해 계열이 이어 붙어도 설정이 유지되게. 다른 파일의 같은 이름에는 옮기지 않음)
+  const shareSrc = (a, b) => a.split(' + ').some(x => b.split(' + ').includes(x));
+  const bare = n => n.replace(/ \([^()]*\)$/, '');
   ex.series.forEach(s => {
-    const r = saved && saved.roles && saved.roles[roleKey(s)];
+    const c = hstate.series.find(o => (o.name === s.name || bare(o.name) === bare(s.name)) && shareSrc(o.src, s.src));
+    const r = c ? [c.role, c.unit, c.scale, c.factor] : saved && saved.roles && (saved.roles[roleKey(s)] || saved.roles[`*::${s.name}`]);
     if (r) { s.role = r[0]; s.unit = r[1]; s.scale = r[2] || 1; s.factor = r[3] || ''; }
   });
   hstate.series = ex.series; hstate.warnings = ex.warnings; hstate.result = null;
   hSave();
   hRenderSources(); hRenderSetup();
   if (msg) hMsg(msg, 'ok');
+  if (hstate.unsaved) toast('데이터가 커서 이 기기에 저장하지 못했어요. 새로고침하면 파일을 다시 넣어야 해요', 4500);
+}
+/** 추가 결과 알림: 쓸 수 있는 계열이 하나도 없으면 이유를 보여준다 */
+function hAddedMsg(n, errs) {
+  if (!hstate.series.length) { hMsg(`쓸 수 있는 계열을 찾지 못했어요: ${[...errs, ...hstate.warnings].join(' / ') || '시각 칸과 숫자 칸이 있는지 확인해주세요'}`, 'err'); return; }
+  hMsg(`${n}개를 추가했어요.${errs.length ? ' 읽지 못한 파일: ' + errs.join(' / ') : ''}${hstate.warnings.length ? ` · 알림: ${hstate.warnings.slice(0, 3).join(' / ')}` : ''}`, errs.length ? 'err' : 'ok');
 }
 
 function hRenderSources() {
@@ -53,18 +69,18 @@ $('h-files').onchange = async e => {
   }
   try {
     hSetSources([...hstate.sources, ...add]);
-    hMsg(`${add.length}개를 추가했어요.${errs.length ? ' 읽지 못한 파일: ' + errs.join(' / ') : ''}`, errs.length ? 'err' : 'ok');
+    hAddedMsg(add.length, errs);
   } catch (err) { console.error(err); hMsg(`파일을 정리하다 문제가 생겼어요: ${err.message}`, 'err'); }
 };
 $('h-paste-add').onclick = () => {
   const t = $('h-paste').value;
   if (!t.trim()) { hMsg('붙여넣은 표가 없어요', 'err'); return; }
-  hSetSources([...hstate.sources, { name: `붙여넣기 ${hstate.sources.length + 1}`, text: t }]);
-  $('h-paste').value = ''; hMsg('표를 추가했어요', 'ok');
+  hSetSources([...hstate.sources, { name: nextPasteName(hstate.sources), text: t }]);
+  $('h-paste').value = ''; hAddedMsg(1, []);
 };
 function hLoadDemo(d, msg) {
   store.set('bal:cfg', null);
-  hstate.cfg = { ...H_CFG0 };
+  hstate.cfg = { ...H_CFG0 }; hstate.series = [];
   hSetSources(d.sources);
   // 예시의 레벨 환산값은 예시 파일의 레벨 계열에만 넣는다
   if (d.levelFactor) hstate.series.filter(s => s.role === 'level').forEach(s => { s.factor = String(d.levelFactor); });
@@ -73,7 +89,7 @@ function hLoadDemo(d, msg) {
 }
 $('h-demo').onclick = () => hLoadDemo(Balance.demo(), '예시: 가스 홀더 24시간. 회수 5초, 사용처 1분, 레벨 30초 간격으로 시간축이 모두 달라요. 발전소 +4%, 가열로 −3% 계측 오차와 시간당 500 Nm³ 손실을 넣어 두었어요');
 $('h-demo2').onclick = () => hLoadDemo(Balance.demoTank(), '예시: 물탱크 3일 (1분 기록). 탱크 크기를 모르는 경우예요. 2번 펌프 −5%, 세척 라인 +6% 계측 오차와 시간당 1.5 m³ 누수를 넣어 두었어요');
-$('h-clear').onclick = () => { hstate.cfg = { ...H_CFG0 }; store.set('bal:cfg', null); hSetSources([]); };
+$('h-clear').onclick = () => { hstate.cfg = { ...H_CFG0 }; store.set('bal:cfg', null); hstate.series = []; hSetSources([]); };
 
 /* ---------- 설정 ---------- */
 const fmtClock = sec => {
@@ -101,6 +117,8 @@ function hRenderSetup() {
   if (!has) { if (hstate.warnings.length) hMsg(hstate.warnings.join(' / '), 'err'); return; }
   const t = $('h-series'); t.innerHTML = '';
   t.append(el('tr', {}, ...['계열', '역할', '단위 · 환산'].map(h => el('th', { text: h }))));
+  const f0 = hstate.series.find(isFlow);
+  const au = f0 ? Balance.amountUnitOf(`${f0.name} ${f0.hint || ''}`) : '';
   hstate.series.forEach(s => {
     const role = el('select', { 'aria-label': `${s.name} 역할` });
     Object.entries(Balance.ROLE_LABEL).forEach(([k, v]) => role.append(el('option', { value: k, text: v })));
@@ -116,10 +134,16 @@ function hRenderSetup() {
       scale.value = String(s.scale || 1); scale.onchange = () => { s.scale = +scale.value; hChanged(); };
       cell.append(el('div', { class: 'unit-cell' }, unit, scale));
     } else if (s.role === 'level') {
-      const f = el('input', { class: 'num', type: 'number', inputmode: 'decimal', step: 'any', min: '0', placeholder: '1단위당 부피 (모름)', value: s.factor || '', 'aria-label': `${s.name} 1단위당 부피` });
+      const f = el('input', { class: 'num', type: 'number', inputmode: 'decimal', step: 'any', min: '0', placeholder: `1단위당 부피${au ? ` (${au})` : ''} 모름`, value: s.factor || '', 'aria-label': `${s.name} 1단위당 부피` });
       f.onchange = () => { s.factor = toNumber(f.value) > 0 ? f.value : ''; hChanged(); };
       cell.append(f);
-    } else cell.append(el('small', { class: 'hint', text: s.role === 'volume' ? '부피 그대로' : '-' }));
+    } else if (s.role === 'volume') {
+      // 저장량 단위가 유량과 다르면(kNm3 ↔ Nm3/h) 배수로 맞춘다
+      const scale = el('select', { 'aria-label': `${s.name} 배수` });
+      [[1, '×1'], [1000, '×1000 (k·천)'], [1e6, '×100만 (M)']].forEach(([k, v]) => scale.append(el('option', { value: String(k), text: v })));
+      scale.value = String(s.scale || 1); scale.onchange = () => { s.scale = +scale.value; hChanged(); };
+      cell.append(scale);
+    } else cell.append(el('small', { class: 'hint', text: '-' }));
     t.append(el('tr', {}, el('td', {}, el('div', { text: s.name }), el('small', { class: 'hint', text: `${s.t.length}개 · ${fmtDur(s.dt)}마다` })), el('td', {}, role), cell));
   });
   const holders = hstate.series.filter(s => s.role === 'volume' || s.role === 'level');

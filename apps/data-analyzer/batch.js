@@ -197,7 +197,8 @@
   }
 
   /* ---------- 2. 배치 나누기 ---------- */
-  const baseName = n => String(n || '').replace(/\.[^.]+$/, '').trim();
+  // 파일 확장자만 뗀다 (시트 이름 "10.05", "Run 1.2" 의 점 뒤는 지우지 않음)
+  const baseName = n => String(n || '').replace(/\.(csv|tsv|txt|xlsx|xlsm|xls|dat|prn)$/i, '').trim();
 
   /** 파일 하나의 시간(초) */
   function timeOf(tb, cfg, srcName, warnings) {
@@ -272,11 +273,9 @@
     const single = ids.filter(k => parts.get(k).length === 1).length;
     const idle = ids.filter(k => parts.get(k).length >= 3 && single >= (ids.length - 1) * 0.8 && ids.length > 2);
     const placeholders = [...new Set(key.filter(k => k && PLACEHOLDER_RE.test(k)))];
+    // 같은 번호의 줄은 모두 한 묶음 (다른 배치와 시간이 겹쳐 줄이 섞여 있어도). 오래 떨어진 재사용 번호는 시간을 보고 나눈다(extract)
     const groups = [];
-    for (const [k, rs] of parts) {
-      if (idle.includes(k)) continue;
-      rs.forEach((idx, r) => groups.push({ id: rs.length > 1 ? `${k} #${r + 1}` : k, idx }));
-    }
+    for (const [k, rs] of parts) if (!idle.includes(k)) groups.push({ id: k, idx: rs.flat().sort((a, b) => a - b) });
     return { groups, ffill, idle: [...placeholders, ...idle] };
   }
 
@@ -371,7 +370,16 @@
         heats.push(h);
       }
     }
-    for (const [id, m] of longMap) heats.push(makeHeat(id, m.src, m.t, m.q, m.label, { abs: m.abs }));
+    // 같은 번호가 오래 떨어져 다시 나오면(매일 1, 2, 3 … 처럼 번호를 다시 씀) 따로 나눈다:
+    // 그 번호의 기록 사이에 2시간과 보통 간격의 50배 중 큰 시간보다 긴 빈틈이 있으면 다른 배치
+    for (const [id, m] of longMap) {
+      const ord = m.t.map((t, i) => i).filter(i => Number.isFinite(m.t[i])).sort((a, b) => m.t[a] - m.t[b]);
+      const dts = ord.slice(1).map((i, k) => m.t[i] - m.t[ord[k]]).filter(d => d > 0);
+      const lim = Math.max(7200, 50 * (median(dts) || 1));
+      const parts = [[]];
+      ord.forEach((i, k) => { if (k && m.t[i] - m.t[ord[k - 1]] > lim) parts.push([]); parts[parts.length - 1].push(i); });
+      parts.forEach((p, r) => heats.push(makeHeat(parts.length > 1 ? `${id} #${r + 1}` : id, m.src, p.map(i => m.t[i]), p.map(i => m.q[i]), p.map(i => m.label[i]), { abs: m.abs })));
+    }
     if (conts.length) {
       // 날짜가 있는 시각이면 파일들을 이어 붙여서 나눈다 (파일 경계에 걸친 배치도 하나로)
       const groups = conts.every(cc => cc.abs) && conts.length > 1
@@ -389,6 +397,7 @@
     const sig = h => `${h.t.length}|${h.t[0]}|${h.t[h.t.length - 1]}|${h.q.reduce((a, b) => a + b, 0)}`;
     const seenSig = new Map();
     heats = heats.filter(h => { const s = sig(h); if (seenSig.has(s)) { warnings.push(`${h.id}: ${seenSig.get(s)}와(과) 기록이 똑같아서 한 번만 셌어요`); return false; } seenSig.set(s, h.id); return true; });
+    if (flip) heats.forEach(h => { h.flip = true; });
     const spread = heats.filter(h => h.spread).length;
     if (spread) warnings.push(`시각에 초가 없어서 같은 시각인 줄이 많아요. 배치 ${spread}개에서 같은 시각 줄들을 그 1분 안에 고르게 나눠 계산했어요`);
     // 같은 이름이 겹치면 구분
@@ -443,7 +452,9 @@
     // 구간 안에서 기준 아래로 떨어진 시간 (작업 중단 의심)
     let dip = 0;
     if (thr > 0) for (let i = 1; i < t.length; i++) if (q[i] < th && q[i - 1] < th) dip += t[i] - t[i - 1];
-    return { ...h, t, q, label: h.label.slice(a, b + 1), start: h.label[a], t0, cut: { before: a, after: h.q.length - 1 - b }, th, dip, fixed: ds.fixed };
+    // 원래 기록(부호를 바꾸기 전·튀는 값을 고치기 전, 작업 구간 밖 포함)도 남겨 엑셀 '원본 순시값'에 쓴다
+    const raw = { t: h.t.map(v => v - t0), q: h.q.map(v => (h.flip ? -v : v)), used: q0, label: h.label, a, b };
+    return { ...h, t, q, label: h.label.slice(a, b + 1), start: h.label[a], t0, cut: { before: a, after: h.q.length - 1 - b }, th, dip, fixed: ds.fixed, raw };
   }
 
   // 사다리꼴 적분: Σ (q_i + q_{i+1}) / 2 × Δt  (÷ unitSec)

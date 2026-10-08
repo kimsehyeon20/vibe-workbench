@@ -21,7 +21,9 @@
   const { mean, sum, minOf, maxOf } = Reg;
   const median = a => { if (!a.length) return NaN; const s = Float64Array.from(a).sort(); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
   const rmse = (a, b) => (a.length ? Math.sqrt(mean(a.map((v, i) => (v - b[i]) ** 2))) : NaN);
-  const dirOf = (d, db) => (d > db ? 1 : d < -db ? -1 : 0);
+  // 최소 폭과 같은 변화도 조작으로 본다 (밸브를 1%씩 움직일 때 1을 넣으면 1% 조작이 세어지게)
+  const dirOf = (d, db) => (d >= db ? 1 : d <= -db ? -1 : 0);
+  const isAct = (d, db) => Math.abs(d) >= db;
 
   /* ---------- 1. 학습용 표 ----------
    * series: [{ name, values }] (시간 순서), mv: 조작 항목 번호, inputs: 판단 근거 항목 번호들
@@ -85,14 +87,14 @@
   function fitTree(F, rows, { maxDepth = 3, minLeaf, db } = {}) {
     rows = rows || F.y.map((_, i) => i);
     const X = F.X, y = F.y, p = F.defs.length;
-    const acts = rows.filter(i => Math.abs(y[i]) > db).length;
+    const acts = rows.filter(i => isAct(y[i], db)).length;
     // 잎의 최소 크기: 조작 횟수에 맞춰 (드문 조작이 큰 잎에 묻히지 않게)
     const ml = minLeaf || Math.max(5, Math.round(Math.min(rows.length * 0.05, Math.max(5, acts * 0.5))));
     const sseOf = idx => { let s = 0, s2 = 0; for (const i of idx) { s += y[i]; s2 += y[i] * y[i]; } return s2 - s * s / (idx.length || 1); };
     const importance = new Array(p).fill(0);
     function leafInfo(idx) {
       let s = 0, s2 = 0; const ups = [], downs = [];
-      for (const i of idx) { s += y[i]; s2 += y[i] * y[i]; if (y[i] > db) ups.push(y[i]); else if (y[i] < -db) downs.push(y[i]); }
+      for (const i of idx) { s += y[i]; s2 += y[i] * y[i]; if (y[i] >= db) ups.push(y[i]); else if (y[i] <= -db) downs.push(y[i]); }
       const m = s / idx.length;
       return { n: idx.length, value: m, sd: Math.sqrt(Math.max(0, s2 / idx.length - m * m)), up: ups.length / idx.length, down: downs.length / idx.length, upStep: ups.length ? median(ups) : 0, downStep: downs.length ? median(downs) : 0, nUp: ups.length, nDown: downs.length };
     }
@@ -218,7 +220,7 @@
       const train = [...Array(bounds[k]).keys()], test = [];
       for (let i = bounds[k]; i < bounds[k + 1]; i++) test.push(i);
       if (train.length < 20 || !test.length) continue;
-      const trainActs = train.filter(i => Math.abs(F.y[i]) > db).length;
+      const trainActs = train.filter(i => isAct(F.y[i], db)).length;
       if (trainActs < 3) continue;
       const tree = fitTree(F, train, { ...opts, db });
       const lin = fitLinear(F, train, opts);
@@ -257,14 +259,15 @@
     if (sparse.length && sparse.length < opts.inputs.length) warnings.push(`값이 있는 줄이 절반도 안 되는 항목(${sparse.join(', ')})은 빼고 계산했어요`);
     if (F.gapRows) warnings.push(`기록이 끊긴 곳에 걸친 ${F.gapRows}줄은 쓰지 않았어요`);
     if (F.y.length < 20) {
-      const low = probe.coverage.slice().sort((a, b) => a.frac - b.frac).slice(0, 2).map(c => `${c.name} ${Math.round(c.frac * 100)}%`);
-      return { error: `조작 판단을 배우려면 쓸 수 있는 줄이 20줄 이상 필요해요 (지금 ${F.y.length}줄). 값이 비어 있는 항목: ${low.join(', ')}`, warnings };
+      // 값이 빈 항목이 원인일 때만 그 항목을 알린다
+      const low = probe.coverage.filter(c => c.frac < 0.9).sort((a, b) => a.frac - b.frac).slice(0, 2).map(c => `${c.name} ${Math.round(c.frac * 100)}%`);
+      return { error: `조작 판단을 배우려면 쓸 수 있는 줄이 20줄 이상 필요해요 (지금 ${F.y.length}줄).${low.length ? ` 값이 있는 줄이 적은 항목: ${low.join(', ')}` : ' 더 긴 기록을 넣어주세요.'}`, warnings };
     }
     if (!F.defs.length) return { error: '판단 근거로 쓸 항목이 변하지 않아요', warnings };
     const db = Number.isFinite(opts.deadband) && opts.deadband > 0 ? opts.deadband : deadbandOf(F.y);
     const acts = F.y.map(v => dirOf(v, db));
     const up = acts.filter(a => a > 0).length, down = acts.filter(a => a < 0).length;
-    if (up + down === 0) return { error: `${F.mvName}이(가) 기록 기간 동안 (${+db.toPrecision(3)}보다 크게) 한 번도 바뀌지 않아서 판단을 배울 수 없어요. 다른 조작 항목을 고르거나 더 긴 기록을 넣어주세요.`, warnings, deadband: db };
+    if (up + down === 0) return { error: `${F.mvName}이(가) 기록 기간 동안 (${+db.toPrecision(3)} 이상) 한 번도 바뀌지 않아서 판단을 배울 수 없어요. 다른 조작 항목을 고르거나 더 긴 기록을 넣어주세요.`, warnings, deadband: db };
     if (up + down < 5) return { error: `${F.mvName}을(를) 조작한 기록이 ${up + down}번뿐이라 판단을 배우기 어려워요 (최소 5번, 10번 이상 권장). 더 긴 기록을 넣어주세요.`, warnings, deadband: db };
     if (up + down < 10) warnings.push(`조작 기록이 ${up + down}번뿐이라 규칙을 믿기 어려워요 (10번 이상 권장)`);
     // 조작 항목이 계속 흔들리면: 잡음·보간값·자동 제어 출력일 수 있다
@@ -284,10 +287,10 @@
     // 추천에 쓸 쪽: 기본은 규칙(판단을 그대로 보여줄 수 있음). 선형 식이 실제 조작 방향을 확실히 더 잘 맞히면 선형
     let pick = 'tree';
     if (ev && linear && Number.isFinite(ev.actedDirection.linear) && ev.actedDirection.linear > (ev.actedDirection.tree || 0) + 0.1 && ev.rmse.linear < ev.rmse.tree) pick = 'linear';
-    const absD = F.y.map(Math.abs).filter(v => v > db);
+    const absD = F.y.map(Math.abs).filter(v => v >= db);
     const mvAll = series[opts.mv].values.filter(Number.isFinite);
     const actions = [];
-    F.y.forEach((v, i) => { if (Math.abs(v) > db && actions.length < 500) actions.push({ at: F.at[i], delta: v, before: F.prev[i], after: F.prev[i] + v, x: F.X[i] }); });
+    F.y.forEach((v, i) => { if (isAct(v, db) && actions.length < 500) actions.push({ at: F.at[i], delta: v, before: F.prev[i], after: F.prev[i] + v, x: F.X[i] }); });
     return {
       F, linear, tree, rules: treeRules(tree), evaluation: ev, pick, learned, deadband: db, discrete, warnings, actions,
       dropped: sparse.length && sparse.length < opts.inputs.length ? sparse : [],

@@ -31,8 +31,9 @@ document.querySelectorAll('.modes button').forEach(b => { b.onclick = () => { se
 function bMsg(text, cls = '') { const m = $('b-msg'); m.textContent = text; m.className = 'msg ' + cls; }
 
 function saveSources() {
-  const size = bstate.sources.reduce((a, s) => a + s.text.length, 0);
-  store.set('batch:sources', size < 1_500_000 ? bstate.sources : []);
+  // 저장 크기는 JSON 길이로 잰다. 못 저장하면 새로고침 때 사라진다고 알린다
+  const ok = JSON.stringify(bstate.sources).length < 3_000_000 && store.set('batch:sources', bstate.sources);
+  if (!ok) { store.set('batch:sources', []); if (bstate.sources.length) toast('데이터가 커서 이 기기에 저장하지 못했어요. 새로고침하면 파일을 다시 넣어야 해요', 4500); }
 }
 
 /** 새 목록으로 바꾼다. 이미 있는 것과 내용이 똑같은 파일은 빼고 몇 개 뺐는지 돌려준다 */
@@ -44,8 +45,12 @@ function setSources(list, { keepCfg = false } = {}) {
   bstate.read = uniq.map(Batch.readSource);
   bstate.result = null;
   saveSources();
-  if (!keepCfg || !bstate.cfg) bstate.cfg = uniq.length ? Batch.guess(bstate.read) : null;
-  else bstate.cfg = Batch.normalizeCfg(bstate.cfg);
+  // 설정은 남은 표에 그 칸들이 아직 있을 때만 유지한다 (설정을 짐작한 파일을 빼면 다시 짐작)
+  const tb0 = (bstate.read.find(r => r.tb) || {}).tb;
+  const c0 = bstate.cfg && Batch.normalizeCfg(bstate.cfg);
+  const fits = c0 && tb0 && (c0.shape === 'wide' || tb0.headers.includes(c0.valCol)) && (!c0.timeCol || tb0.headers.includes(c0.timeCol)) && (c0.shape !== 'long' || tb0.headers.includes(c0.heatCol));
+  if (!keepCfg || !fits) bstate.cfg = uniq.length ? Batch.guess(bstate.read) : null;
+  else bstate.cfg = c0;
   store.set('batch:cfg', bstate.cfg);
   renderSources();
   renderBatchSetup();
@@ -77,7 +82,9 @@ $('b-files').onchange = async e => {
   }
   try {
     const dup = setSources([...bstate.sources, ...add], { keepCfg: bstate.sources.length > 0 });
-    bMsg(`${add.length - dup}개를 추가했어요.${dup ? ` 이미 넣은 것과 똑같은 ${dup}개는 뺐어요.` : ''}${errs.length ? ' 읽지 못한 파일: ' + errs.join(' / ') : ''}`, errs.length ? 'err' : 'ok');
+    // 열리긴 했지만 표로 읽을 수 없는 것(이름 줄만 있는 빈 파일 등)도 알린다
+    add.forEach(a => { const r = bstate.read.find(x => x.name === a.name && x.text === a.text); if (r && !r.tb) errs.push(`${a.name}: ${r.error || '표를 읽을 수 없어요'}`); });
+    bMsg(`${add.length - dup}개를 추가했어요.${dup ? ` 이미 넣은 것과 똑같은 ${dup}개는 뺐어요.` : ''}${errs.length ? ' 문제 있는 파일: ' + errs.join(' / ') : ''}`, errs.length ? 'err' : 'ok');
   } catch (err) {
     console.error(err);
     bMsg(`파일을 정리하다 문제가 생겼어요: ${err.message}`, 'err');
@@ -87,10 +94,13 @@ $('b-files').onchange = async e => {
 $('b-paste-add').onclick = () => {
   const t = $('b-paste').value;
   if (!t.trim()) { bMsg('붙여넣은 표가 없어요', 'err'); return; }
-  const dup = setSources([...bstate.sources, { name: `붙여넣기 ${bstate.sources.length + 1}`, text: t }], { keepCfg: bstate.sources.length > 0 });
+  const dup = setSources([...bstate.sources, { name: nextPasteName(bstate.sources), text: t }], { keepCfg: bstate.sources.length > 0 });
   $('b-paste').value = '';
   bMsg(dup ? '이미 넣은 표와 똑같아서 추가하지 않았어요' : '표를 추가했어요', dup ? 'err' : 'ok');
 };
+
+// 붙여넣기 이름: 지금 있는 "붙여넣기 N" 중 가장 큰 번호 + 1 (하나를 빼도 이름이 겹치지 않게)
+const nextPasteName = list => `붙여넣기 ${1 + list.reduce((m, s) => { const k = /^붙여넣기 (\d+)$/.exec(s.name); return k ? Math.max(m, +k[1]) : m; }, 0)}`;
 
 function loadDemo(d, msg) {
   $('b-attrs').value = d.attrs; store.set('batch:attrs', d.attrs);
@@ -114,8 +124,8 @@ function renderBatchSetup() {
   const tb = headersOf(), c = bstate.cfg;
   $('b-setup').hidden = !tb || !c;
   $('b-results').hidden = true;
+  if (!tb || !c) { bstate.found = 0; updateBatchButton(); return; }
   updateBatchButton();
-  if (!tb || !c) return;
   const opt = (sel, list, val, none) => {
     const s = $(sel); s.innerHTML = '';
     if (none) s.append(el('option', { value: '', text: none }));
@@ -209,6 +219,7 @@ function batchWords(R) {
 }
 
 function runBatch() {
+  if (!bstate.cfg) { bstate.result = null; updateBatchButton(); return; }
   let res = Batch.analyze(bstate.read, bstate.cfg);
   // 빼기를 너무 많이 해서 2개 미만이 되면 뺀 것을 모두 되돌린다 (결과 화면이 사라져 되돌릴 수 없게 되지 않도록)
   if (res.error && res.excluded && res.excluded.length) {
@@ -216,7 +227,7 @@ function runBatch() {
     res = Batch.analyze(bstate.read, bstate.cfg);
     toast('비교하려면 배치가 2개 이상 있어야 해서, 뺀 배치를 모두 다시 넣었어요', 4000);
   }
-  bstate.result = res;
+  bstate.result = res; bstate.earlyPick = null;
   if (res.error) { toast(res.error, 4000); $('b-results').hidden = true; updateBatchButton(); return; }
   res.at = new Date();
   res.w = batchWords(res);
@@ -350,7 +361,8 @@ function renderEarly() {
 
   const sel = el('select', { 'aria-label': '예측 시점' });
   R.early.forEach((e, i) => sel.append(el('option', { value: String(i), text: `시작 후 ${fmt(mins(e.sec), 3)}분까지 값으로` })));
-  sel.value = String(R.early.indexOf(pick));
+  sel.value = String(Number.isInteger(bstate.earlyPick) && R.early[bstate.earlyPick] ? bstate.earlyPick : R.early.indexOf(pick));
+  bstate.earlyPick = +sel.value; // 엑셀도 화면에서 고른 시점을 쓴다
   const detail = el('div');
   const draw = () => {
     const e = R.early[+sel.value], m = e.model;
@@ -365,7 +377,7 @@ function renderEarly() {
     }));
     detail.append(predictBox(m, xl, Regression.mean(e.x)));
   };
-  sel.onchange = draw;
+  sel.onchange = () => { bstate.earlyPick = +sel.value; draw(); };
   box.append(el('label', { class: 'field' }, el('span', { text: '예측에 쓸 시점' }), sel), detail);
   draw();
 }
@@ -444,7 +456,8 @@ $('b-to-single').onclick = () => {
   const vi = tb ? tb.headers.indexOf(head[1]) : -1;
   if (vi >= 0) {
     state.cfg.timeCol = -1; state.cfg.target = vi;
-    state.cfg.vars = tb.headers.map((h, j) => j).filter(j => tb.kinds[j] === 'number' && !derived.has(tb.headers[j]));
+    // 첫 칸(배치 번호)은 숫자여도 측정값이 아니므로 뺀다
+    state.cfg.vars = tb.headers.map((h, j) => j).filter(j => j !== 0 && tb.kinds[j] === 'number' && !derived.has(tb.headers[j]));
     saveCfg(); renderSetup();
   }
   analyze();
@@ -465,9 +478,10 @@ $('b-model-btn').onclick = () => {
       valueColumn: W.vName, valueUnit: W.vu, valueKind: R.cfg.kind, rateUnit: R.cfg.kind === 'rate' ? R.cfg.rateUnit : null,
       metric: R.cfg.metric, metricName: W.mName, metricUnit: W.mu, amountUnit: W.au || null,
       threshold: R.cfg.thr, align: R.cfg.align, order: R.order,
-      method: R.cfg.kind === 'rate' ? 'total = trapezoid integration of value over time' : 'mean = time-weighted mean (trapezoid area / duration)',
+      method: { total: 'total = trapezoid integration of value over time (÷ rate unit seconds)', mean: 'mean = time-weighted mean (trapezoid area / duration)', peak: 'peak = maximum value in the work interval', last: 'last = value at the end of the work interval', duration: 'duration = work interval length in minutes' }[R.cfg.metric],
     },
-    stats: R.stats,
+    // 통계: 비교할 값은 metricUnit, 길이는 분
+    stats: { ...R.stats, durMean: undefined, durMin: undefined, durMax: undefined, durMeanMin: R.stats.durMean / 60, durMinMin: R.stats.durMin / 60, durMaxMin: R.stats.durMax / 60, valueUnit: W.mu || null },
     typicalCurve: { x: isPct ? 'progress %' : 'minutes from start', grid: r6(al.grid.map(g => (isPct ? g : g / 60))), mean: r6(al.mean), median: r6(al.median), p10: r6(al.p10), p90: r6(al.p90), active: al.active },
     typicalFit: R.typical && R.typical.best ? Regression.serialize(R.typical.best) : null,
     early: R.early.map(e => ({ minutes: e.sec / 60, n: e.n, validationRmse: e.err, model: Regression.serialize(e.model, { x: `${e.sec / 60}분까지 ${W.mName}`, y: `최종 ${W.mName}` }) })),
@@ -511,8 +525,10 @@ async function exportBatchExcel() {
       for (let c = 3; c < heads.length; c++) {
         const L = colL(c - 1), vals = rows.map(r => r[c - 2]).filter(Number.isFinite).map(v => +v.toPrecision(10));
         if (!vals.length) continue;
-        const res = fn === 'AVERAGE' ? mean(vals) : fn === 'STDEV' ? (vals.length > 1 ? sd(vals) : 0) : fn === 'MIN' ? minOf(vals) : fn === 'MAX' ? maxOf(vals) : Batch.quantile([...vals].sort((a, b) => a - b), 0.5);
-        row.getCell(c).value = { formula: `${fn}(${L}2:${L}${last})`, result: res };
+        // 값이 1개뿐이면 표준편차는 엑셀도 #DIV/0! → '-'
+        const need = fn === 'STDEV' ? 1 : 0, rg = `${L}2:${L}${last}`;
+        const res = vals.length <= need ? '-' : fn === 'AVERAGE' ? mean(vals) : fn === 'STDEV' ? sd(vals) : fn === 'MIN' ? minOf(vals) : fn === 'MAX' ? maxOf(vals) : Batch.quantile([...vals].sort((a, b) => a - b), 0.5);
+        row.getCell(c).value = { formula: need ? `IF(COUNT(${rg})>${need},${fn}(${rg}),"-")` : `${fn}(${rg})`, result: res };
         row.getCell(c).numFmt = '#,##0.0##';
       }
       styleRow(row, XL.sub, 1, heads.length);
@@ -534,13 +550,14 @@ async function exportBatchExcel() {
     ws1.columns.forEach((c, i) => { c.width = i < 6 ? 14 : 11; });
     for (let c = 2; c <= 5; c++) ws1.getColumn(c).font = { bold: true };
 
-    /* 원본 순시값 (긴 표) */
-    const total = R.heats.reduce((a, h) => a + h.t.length, 0);
+    /* 원본 순시값 (긴 표): 파일에 있던 값 그대로 + 계산에 쓴 값(부호·튀는 값 고친 뒤, 작업 구간 안만) */
+    const total = R.heats.reduce((a, h) => a + h.raw.t.length, 0);
     if (total < 300_000) {
       const ws4 = wb.addWorksheet(S4, { views: [{ state: 'frozen', ySplit: 1 }] });
-      ws4.addRow(['배치', '원래 시각', '시작 후(초)', W.vName]); styleRow(ws4.getRow(1), XL.head, 1, 4);
-      R.heats.forEach(h => h.t.forEach((t, i) => ws4.addRow([h.id, h.label[i], +t.toPrecision(8), h.q[i]])));
-      ws4.columns = [{ width: 14 }, { width: 20 }, { width: 16 }, { width: 18 }];
+      const h4 = ['배치', '원래 시각', '작업 시작 후(초)', `원래 값 ${W.vName}`, '계산에 쓴 값', '작업 구간'];
+      ws4.addRow(h4); styleRow(ws4.getRow(1), XL.head, 1, h4.length);
+      R.heats.forEach(h => { const w = h.raw; w.t.forEach((t, i) => { const inW = i >= w.a && i <= w.b; ws4.addRow([h.id, w.label[i], +t.toPrecision(8), w.q[i], inW ? w.used[i] : null, inW ? 'O' : '']); }); });
+      ws4.columns = [{ width: 14 }, { width: 20 }, { width: 16 }, { width: 18 }, { width: 14 }, { width: 10 }];
     }
 
     /* 그래프 */
@@ -557,7 +574,7 @@ async function exportBatchExcel() {
       x: R.heats.map((_, i) => i + 1), y: R.heats.map(h => h.sum.value), line: true, fn: () => R.stats.mean, fitLabel: '평균', pointLabel: W.mName,
       flagged: R.heats.map(h => h.flags.length > 0), xLabel: '배치 순서', yLabel: W.m, title: `배치별 ${W.mName}`, subtitle: `평균 ${fmt(R.stats.mean, 5)}`,
     }];
-    const ep = R.early.find(e => e.gain >= 0.5) || R.early[R.early.length - 1];
+    const ep = (Number.isInteger(bstate.earlyPick) && R.early[bstate.earlyPick]) || R.early.find(e => e.gain >= 0.5) || R.early[R.early.length - 1];
     if (ep) charts.push({ x: ep.x, y: ep.y, fn: ep.model.predict, band: ep.model.interval, pointLabel: '배치', xLabel: `${fmt(ep.sec / 60, 3)}분까지 ${W.mName}`, yLabel: `최종 ${W.m}`, title: `중간 ${W.mName} → 최종 ${W.mName}`, subtitle: `R² = ${fmtR2(ep.model.r2)}` });
     const F = bstate.factors && !bstate.factors.error ? bstate.factors : null;
     const topF = F && F.rel.find(a => a.model);
@@ -616,7 +633,7 @@ async function exportBatchExcel() {
       R.early.forEach(e => put([+(e.sec / 60).toPrecision(4), e.n, +fmtR2(e.model.r2), +e.err.toPrecision(4), Number.isFinite(e.sdY) ? +e.sdY.toPrecision(4) : '-', `${formulaTextX(e.model, 'x').replace(/^y =/, '최종 =')}  (x = ${fmt(e.sec / 60, 3)}분까지 ${W.mName})`], null, { border: true }));
       if (ep) {
         r++;
-        const xw = +mean(ep.x).toPrecision(6);
+        const xw = dflt(mean(ep.x));
         put([`${fmt(ep.sec / 60, 3)}분까지 ${W.mName} 넣기 →`, xw, `최종 ${W.mName} →`, ''], XL.sub);
         const cell = ws3.getRow(r - 1).getCell(4);
         cell.value = { formula: excelFormula(ep.model, `B${r - 1}`), result: ep.model.predict(xw) }; cell.numFmt = '#,##0.0##';
