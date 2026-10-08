@@ -114,9 +114,22 @@ function excelFormula(fit, X) {
 
 /* ---------------- 4. 쉬운 해석 문장 ---------------- */
 
+/** 받침에 맞는 조사: jo('총량(Nm3)', '은는') → '총량(Nm3)은'. 모르면 '은(는)' */
+function jo(word, pair) {
+  const w = String(word), s = w.replace(/\s*[(\[（][^()\[\]（）]*[)\]）]\s*$/, '').trim();
+  const ch = s.charCodeAt(s.length - 1);
+  let has = null, rieul = false;
+  if (ch >= 0xac00 && ch <= 0xd7a3) { const f = (ch - 0xac00) % 28; has = f > 0; rieul = f === 8; }
+  else if (/[0-9]$/.test(s)) { has = /[013678]$/.test(s); rieul = /[178]$/.test(s); }
+  const [a, b] = { 은는: ['은', '는'], 이가: ['이', '가'], 을를: ['을', '를'], 과와: ['과', '와'], 으로: ['으로', '로'] }[pair];
+  if (has == null) return `${w}${a}(${b})`;
+  if (pair === '으로') return w + (has && !rieul ? a : b);
+  return w + (has ? a : b);
+}
+
 function trendSentence(name, fr, xName, unitWord) {
   if (fr.error) return `${name}: ${fr.error}.`;
-  if (fr.constant != null) return `${name}은(는) 처음부터 끝까지 ${fmt(fr.constant)}으로 변하지 않았어요.`;
+  if (fr.constant != null) return `${jo(name, '은는')} 처음부터 끝까지 ${jo(fmt(fr.constant), '으로')} 변하지 않았어요.`;
   const { best, linear, x, y } = fr;
   const x0 = minOf(x), x1 = maxOf(x);
   const range = maxOf(y) - minOf(y);
@@ -127,10 +140,11 @@ function trendSentence(name, fr, xName, unitWord) {
   const hi = maxOf(grid), lo = minOf(grid);
   if (Math.abs(b - a) < range * 0.1 && hi - lo > range * 0.3) {
     const up = hi - Math.max(a, b) > Math.min(a, b) - lo;
-    parts.push(`${name}은(는) 중간에 ${up ? `올라갔다가(최고 약 ${fmt(hi)}) 다시 내려와요` : `내려갔다가(최저 약 ${fmt(lo)}) 다시 올라와요`}`);
-  } else if (Math.abs(b - a) < range * 0.1) parts.push(`${name}은(는) 전체적으로 큰 변화 없이 ${fmt(a)} 근처에 머물러요`);
-  else parts.push(`${name}은(는) 전체적으로 ${b > a ? '늘어나요' : '줄어들어요'} (${fmt(a)} → ${fmt(b)})`);
-  if (linear && unitWord && Math.abs(b - a) >= range * 0.1)
+    parts.push(`${jo(name, '은는')} 중간에 ${up ? `올라갔다가(최고 약 ${fmt(hi)}) 다시 내려와요` : `내려갔다가(최저 약 ${fmt(lo)}) 다시 올라와요`}`);
+  } else if (Math.abs(b - a) < range * 0.1) parts.push(`${jo(name, '은는')} 전체적으로 큰 변화 없이 ${fmt(a)} 근처에 머물러요`);
+  else parts.push(`${jo(name, '은는')} 전체적으로 ${b > a ? '늘어나요' : '줄어들어요'} (${fmt(a)} → ${fmt(b)})`);
+  // 직선 기울기는 곡선의 처음→끝 방향과 같을 때만 덧붙인다 (반대면 "늘어나요 … 줄어요"처럼 모순됨)
+  if (linear && unitWord && Math.abs(b - a) >= range * 0.1 && Math.sign(linear.params[1]) === Math.sign(b - a))
     parts.push(`평균적으로 ${unitWord}마다 약 ${fmt(Math.abs(linear.params[1]), 3)}씩 ${linear.params[1] > 0 ? '늘어요' : '줄어요'}`);
   if (best.id === 'quad' && !/중간에/.test(parts[0])) {
     const v = (best.x0 || 0) - best.params[1] / (2 * best.params[2]);
@@ -151,7 +165,10 @@ function corrWords(r) {
 /* ---------------- 5. 그래프 (캔버스) ---------------- */
 
 function niceTicks(min, max, count = 5) {
-  if (min === max) { min -= 1; max += 1; }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) { min = 0; max = 1; }
+  // 폭이 값에 비해 거의 0이면(같은 값 + 반올림 오차) 눈금 간격이 0에 가까워져 끝없이 돈다 → 넓힌다
+  const tiny = Math.max(Math.abs(min), Math.abs(max)) * 1e-9;
+  if (max - min <= tiny) { const c = (min + max) / 2, h = c ? Math.abs(c) * 0.01 : 1; min = c - h; max = c + h; }
   const step0 = (max - min) / count;
   const mag = 10 ** Math.floor(Math.log10(step0));
   const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= step0);
