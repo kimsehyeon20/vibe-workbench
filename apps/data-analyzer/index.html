@@ -78,6 +78,7 @@
       <span>시간이 적힌 칸</span>
       <select id="time-col"></select>
     </label>
+    <p class="hint" id="time-preview"></p>
     <label class="field" id="unit-field">
       <span>시간 단위</span>
       <select id="time-unit">
@@ -138,10 +139,7 @@
       <label class="field"><span>조작 항목 <small class="hint">(운전자가 바꾼 값: 밸브 개도, 설정값 등)</small></span><select id="ctrl-mv"></select></label>
       <div class="field"><span>판단 근거 항목 <small class="hint">(운전자가 보고 판단한 값)</small></span><div class="chips" id="ctrl-inputs"></div></div>
       <label class="field"><span>추세를 볼 시간 <small class="hint">(이만큼 전과 비교해 오르는지 내리는지)</small></span><select id="ctrl-window"></select></label>
-      <label class="field"><span>배울 대상</span><select id="ctrl-target">
-        <option value="delta">조작량: 얼마나 바꿨나 (추천)</option>
-        <option value="level">조작 값: 얼마로 맞췄나</option>
-      </select></label>
+      <label class="field"><span>조작으로 볼 최소 폭 <small class="hint">(이보다 작은 변화는 잡음으로 봄. 비우면 자동)</small></span><input id="ctrl-db" type="number" inputmode="decimal" step="any" min="0" placeholder="자동"></label>
       <div id="ctrl-out"></div>
     </section>
 

@@ -100,7 +100,7 @@ function hRenderSetup() {
   hstate.cfg.reference = rs.value;
   $('h-window').value = String(hstate.cfg.window); $('h-tol').value = String(hstate.cfg.tol);
   const used = hstate.series.filter(s => s.role !== 'ignore');
-  const T0 = Math.max(...used.map(s => s.t[0])), T1 = Math.min(...used.map(s => s.t[s.t.length - 1]));
+  const T0 = maxOf(used.map(s => s.t[0])), T1 = minOf(used.map(s => s.t[s.t.length - 1]));
   $('h-found').textContent = `${!flows.length ? '⚠ 유량 계열이 없어요. ' : ''}${!holder ? '홀더 레벨 계열이 없으면 합계만 계산해요. ' : ''}함께 기록된 기간: ${T1 > T0 ? `${fmtClock(T0)} ~ ${fmtClock(T1)} (${fmtDur(T1 - T0)})` : '없음'}${hstate.warnings.length ? ` · ⚠ ${hstate.warnings.join(' / ')}` : ''}`;
   hUpdateButton();
 }

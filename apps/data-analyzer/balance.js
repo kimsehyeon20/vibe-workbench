@@ -18,6 +18,8 @@
   'use strict';
   const Reader = root.Reader || (typeof require === 'function' ? require('./reader.js') : null);
   const Reg = root.Regression || (typeof require === 'function' ? require('./regression.js') : null);
+  const minOf = a => { let m = Infinity; for (const v of a) if (v < m) m = v; return m; };
+  const maxOf = a => { let m = -Infinity; for (const v of a) if (v > m) m = v; return m; };
   const { mean } = Reg;
   const UNIT_SEC = { s: 1, min: 60, h: 3600 };
   const median = a => { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : NaN; };
@@ -121,7 +123,7 @@
     const flows = used.filter(s => s.role === 'in' || s.role === 'out');
     const holder = used.find(s => s.role === 'volume') || used.find(s => s.role === 'level');
     if (!flows.length) return { error: '유입이나 사용처(유량) 계열이 하나도 없어요' };
-    const T0 = Math.max(...used.map(s => s.t[0])), T1 = Math.min(...used.map(s => s.t[s.t.length - 1]));
+    const T0 = maxOf(used.map(s => s.t[0])), T1 = minOf(used.map(s => s.t[s.t.length - 1]));
     if (!(T1 > T0)) return { error: '모든 계열이 함께 기록된 시간이 없어요. 시각이 겹치는지 확인해주세요' };
     const sign = s => (s.role === 'in' ? 1 : -1);
     const us = s => UNIT_SEC[s.unit || 'h'];
@@ -222,7 +224,7 @@
   /* ---------- 4. 공통 시간축 표 ---------- */
   function commonGrid(all, T0, T1, maxRows = 20000) {
     const used = all.filter(s => s.role !== 'ignore');
-    let step = Math.max(10, Math.min(600, Math.max(...used.map(s => s.dt || 60))));
+    let step = Math.max(10, Math.min(600, maxOf(used.map(s => s.dt || 60))));
     while ((T1 - T0) / step > maxRows) step *= 2;
     const grid = []; for (let x = T0; x <= T1 + 1e-9; x += step) grid.push(x);
     return { step, grid, cols: used.map(s => ({ name: s.name, role: s.role, unit: s.unit, v: grid.map(x => valueAt(s, x)) })) };

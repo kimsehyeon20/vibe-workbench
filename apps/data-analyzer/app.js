@@ -28,7 +28,7 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;'
 
 /* ---------------- 1. 입력 읽기: reader.js (Reader) ---------------- */
 
-const { parseText, toNumber, parseTimeCell, columnKind, buildTable, guessTimeCol, buildDataset, prepareGrid, transpose, UNITS, TIME_NAME_RE } = Reader;
+const { parseText, toNumber, parseTimeCell, columnKind, buildTable, guessTimeCol, buildDataset, prepareGrid, transpose, UNITS, isTimeName, minOf, maxOf } = Reader;
 
 /* ---------------- 2. 통계 계산: regression.js (Regression) ---------------- */
 
@@ -80,15 +80,18 @@ function joinTerms(terms, f) {
   return out;
 }
 
-// 화면/엑셀용 식 글자
+// 화면/엑셀용 식 글자. x가 0에서 멀면 기준점 x0 둘레로 쓴다: y = a + b·(t − 1600) …
+const x0txt = v => String(+(+v).toPrecision(10));
 function formulaText(fit, xs, f = fmt) {
-  const p = fit.params;
+  const p = fit.params, x0 = fit.x0 || 0;
+  const lin = x0 ? `(${xs} − ${x0txt(x0)})` : xs;
+  const rat = x0 && x0 !== 1 ? `(${xs}/${x0txt(x0)})` : xs;
   switch (fit.id) {
     case 'linear': case 'quad': case 'cubic':
-      return 'y = ' + joinTerms(p.map((c, k) => [c, k === 0 ? '' : k === 1 ? xs : `${xs}${SUP[k]}`]), f);
-    case 'exp': return `y = ${f(p[0])} × e^(${f(p[1])} × ${xs})`;
-    case 'log': return 'y = ' + joinTerms([[p[0], ''], [p[1], `ln(${xs})`]], f);
-    case 'power': return `y = ${f(p[0])} × ${xs}^${f(p[1])}`;
+      return 'y = ' + joinTerms(p.map((c, k) => [c, k === 0 ? '' : k === 1 ? lin : `${lin}${SUP[k]}`]), f);
+    case 'exp': return `y = ${f(p[0])} × e^(${f(p[1])} × ${lin})`;
+    case 'log': return 'y = ' + joinTerms([[p[0], ''], [p[1], `ln${rat.startsWith('(') ? rat : `(${rat})`}`]], f);
+    case 'power': return `y = ${f(p[0])} × ${rat}^${f(p[1])}`;
   }
   return '';
 }
@@ -96,14 +99,16 @@ const formulaTextX = (fit, xs) => formulaText(fit, xs, fmtX).replace(/×/g, '*')
 
 // 엑셀 수식 (= 없이). X는 셀 주소
 function excelFormula(fit, X) {
-  const p = fit.params.map(num);
+  const p = fit.params.map(num), x0 = fit.x0 || 0;
+  const L = x0 ? `(${X}-(${num(x0)}))` : X;
+  const Q = x0 && x0 !== 1 ? `(${X}/(${num(x0)}))` : X;
   switch (fit.id) {
-    case 'linear': return `${p[0]}+(${p[1]})*${X}`;
-    case 'quad': return `${p[0]}+(${p[1]})*${X}+(${p[2]})*${X}^2`;
-    case 'cubic': return `${p[0]}+(${p[1]})*${X}+(${p[2]})*${X}^2+(${p[3]})*${X}^3`;
-    case 'exp': return `(${p[0]})*EXP((${p[1]})*${X})`;
-    case 'log': return `${p[0]}+(${p[1]})*LN(${X})`;
-    case 'power': return `(${p[0]})*${X}^(${p[1]})`;
+    case 'linear': return `${p[0]}+(${p[1]})*${L}`;
+    case 'quad': return `${p[0]}+(${p[1]})*${L}+(${p[2]})*${L}^2`;
+    case 'cubic': return `${p[0]}+(${p[1]})*${L}+(${p[2]})*${L}^2+(${p[3]})*${L}^3`;
+    case 'exp': return `(${p[0]})*EXP((${p[1]})*${L})`;
+    case 'log': return `${p[0]}+(${p[1]})*LN(${Q})`;
+    case 'power': return `(${p[0]})*${Q}^(${p[1]})`;
   }
 }
 
@@ -113,13 +118,13 @@ function trendSentence(name, fr, xName, unitWord) {
   if (fr.error) return `${name}: ${fr.error}.`;
   if (fr.constant != null) return `${name}은(는) 처음부터 끝까지 ${fmt(fr.constant)}으로 변하지 않았어요.`;
   const { best, linear, x, y } = fr;
-  const x0 = Math.min(...x), x1 = Math.max(...x);
-  const range = Math.max(...y) - Math.min(...y);
+  const x0 = minOf(x), x1 = maxOf(x);
+  const range = maxOf(y) - minOf(y);
   const snap = v => (Math.abs(v) < range * 1e-9 ? 0 : v);
   const a = snap(best.predict(x0)), b = snap(best.predict(x1));
   const parts = [];
   const grid = Array.from({ length: 101 }, (_, i) => best.predict(x0 + (x1 - x0) * i / 100));
-  const hi = Math.max(...grid), lo = Math.min(...grid);
+  const hi = maxOf(grid), lo = minOf(grid);
   if (Math.abs(b - a) < range * 0.1 && hi - lo > range * 0.3) {
     const up = hi - Math.max(a, b) > Math.min(a, b) - lo;
     parts.push(`${name}은(는) 중간에 ${up ? `올라갔다가(최고 약 ${fmt(hi)}) 다시 내려와요` : `내려갔다가(최저 약 ${fmt(lo)}) 다시 올라와요`}`);
@@ -128,7 +133,7 @@ function trendSentence(name, fr, xName, unitWord) {
   if (linear && unitWord && Math.abs(b - a) >= range * 0.1)
     parts.push(`평균적으로 ${unitWord}마다 약 ${fmt(Math.abs(linear.params[1]), 3)}씩 ${linear.params[1] > 0 ? '늘어요' : '줄어요'}`);
   if (best.id === 'quad' && !/중간에/.test(parts[0])) {
-    const v = -best.params[1] / (2 * best.params[2]);
+    const v = (best.x0 || 0) - best.params[1] / (2 * best.params[2]);
     if (v > x0 + (x1 - x0) * 0.1 && v < x1 - (x1 - x0) * 0.1)
       parts.push(`${xName} ${fmt(v, 3)} 무렵에 가장 ${best.params[2] < 0 ? '높았다가 다시 내려가요' : '낮았다가 다시 올라가요'}`);
   }
@@ -183,23 +188,23 @@ function drawChart(canvas, spec, opt = {}) {
   if (!pts.length && !lines.length) return null;
   const linePts = lines.flatMap(l => l.p);
   const xs = [...pts.map(p => p[0]), ...linePts.map(p => p[0])], ys = [...pts.map(p => p[1]), ...linePts.map(p => p[1])];
-  let xmin = Math.min(...xs), xmax = Math.max(...xs);
+  let xmin = minOf(xs), xmax = maxOf(xs);
   const curve = [], bx = Array.from({ length: 161 }, (_, i) => xmin + (xmax - xmin) * i / 160);
   if (spec.fn) for (const xv of bx) { const yv = spec.fn(xv); if (Number.isFinite(yv)) curve.push([xv, yv]); }
   // 곡선이 데이터 범위를 크게 벗어나면 축은 데이터 기준으로
-  const yr = Math.max(...ys) - Math.min(...ys) || 1;
+  const yr = maxOf(ys) - minOf(ys) || 1;
   const band = [];
   if (spec.band) for (const xv of bx) { const [lo, hi] = spec.band(xv); if (Number.isFinite(lo) && Number.isFinite(hi)) band.push([xv, lo, hi]); }
-  const inView = v => v > Math.min(...ys) - yr * 0.5 && v < Math.max(...ys) + yr * 0.5;
+  const inView = v => v > minOf(ys) - yr * 0.5 && v < maxOf(ys) + yr * 0.5;
   const ov = spec.overlay ? spec.overlay.x.map((xv, i) => [xv, spec.overlay.y[i]]).filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b)) : [];
   const cys = [...curve.map(p => p[1]), ...band.flatMap(b => [b[1], b[2]]), ...ov.map(p => p[1])].filter(inView);
   const xt = niceTicks(xmin, xmax, opt.xTicks || 5);
-  const yt = niceTicks(Math.min(...ys, ...cys), Math.max(...ys, ...cys), opt.yTicks || 4);
+  const yt = niceTicks(minOf([...ys, ...cys]), maxOf([...ys, ...cys]), opt.yTicks || 4);
 
   let top = 10;
   if (spec.title) top += fs * 1.6 + 6;
   ctx.font = font(400);
-  const yLabW = Math.max(...yt.ticks.map(v => ctx.measureText(fmt(v)).width));
+  const yLabW = maxOf(yt.ticks.map(v => ctx.measureText(fmt(v)).width));
   const L = Math.ceil(yLabW) + 12 + (spec.yLabel && opt.axisTitles ? fs + 8 : 0);
   const R = 14, B = fs * 2 + 16 + (opt.axisTitles ? fs + 6 : 0);
   const pw = W - L - R, ph = H - top - B;
@@ -339,6 +344,7 @@ function chartPNG(spec) {
 const state = {
   table: null, prep: null, sheets: null, sheetIdx: 0,
   layout: store.get('layout', 'auto'),
+  layoutSig: store.get('layoutSig', ''), loadNote: '',
   cfg: { timeCol: -1, unit: 'auto', vars: [], target: -1 },
   result: null,
 };
@@ -353,34 +359,62 @@ function toast(msg, ms = 2600) {
 
 function setMsg(text, cls = '') { const m = $('parse-msg'); m.textContent = text; m.className = 'msg ' + cls; }
 
+// 저장해 둔 설정을 지금 표에 맞게 고친다 (없는 칸·글자 칸·옛 버전 설정)
+function sanitizeCfg(c, tb) {
+  const okNum = i => Number.isInteger(i) && i >= 0 && i < tb.headers.length && tb.kinds[i] === 'number';
+  const out = { unit: 'auto', override: {}, multiExclude: [], multiTime: false, ...c };
+  if (!(out.timeCol === -1 || (Number.isInteger(out.timeCol) && out.timeCol < tb.headers.length && tb.kinds[out.timeCol] !== 'text'))) out.timeCol = guessTimeCol(tb);
+  out.vars = (Array.isArray(out.vars) ? out.vars : []).filter(i => okNum(i) && i !== out.timeCol);
+  if (!out.vars.includes(out.target)) out.target = out.vars[out.vars.length - 1] ?? -1;
+  if (!['auto', 's', 'min', 'h', 'd'].includes(out.unit)) out.unit = 'auto';
+  if (typeof out.override !== 'object' || !out.override) out.override = {};
+  if (!Array.isArray(out.multiExclude)) out.multiExclude = [];
+  return out;
+}
+
+function defaultCfg(tb) {
+  const tc = guessTimeCol(tb);
+  let vars = tb.kinds.map((k, i) => (k === 'number' && i !== tc ? i : -1)).filter(i => i >= 0);
+  // 시간 칸이 따로 있으면 '경과 시간' 같은 칸은 기본으로 뺀다
+  if (tc >= 0) { const rest = vars.filter(i => !isTimeName(tb.headers[i])); if (rest.length) vars = rest; }
+  return sanitizeCfg({ timeCol: tc, unit: 'auto', vars, target: vars[vars.length - 1] ?? -1 }, tb);
+}
+
+function clearTable(msg, cls = '') {
+  state.table = null; state.prep = null; state.result = null;
+  $('setup').hidden = true; $('results').hidden = true;
+  setMsg(msg, cls); updateButton();
+}
+
 function onInput() {
   store.set('text', input.value.length < 800_000 ? input.value : '');
   state.result = null;
   $('results').hidden = true;
-  const prep = prepareGrid(parseText(input.value), state.layout);
-  state.prep = prep;
-  const rows = prep.rows;
-  if (!rows.length) { state.table = null; $('setup').hidden = true; setMsg(''); updateButton(); return; }
-  const tb = buildTable(rows);
-  if (tb.error) { state.table = null; $('setup').hidden = true; setMsg(tb.error, 'err'); updateButton(); return; }
-  const prevHeaders = state.table?.headers.join('\u0001');
-  state.table = tb;
-  // 같은 표 모양이면 설정 유지, 아니면 새로 추측
-  const saved = store.get('cfg', null);
-  if (prevHeaders !== tb.headers.join('\u0001')) {
-    if (saved && saved.headers === tb.headers.join('\u0001')) state.cfg = { ...saved.cfg };
-    else {
-      const tc = guessTimeCol(tb);
-      let vars = tb.kinds.map((k, i) => (k === 'number' && i !== tc ? i : -1)).filter(i => i >= 0);
-      // 시간 칸이 따로 있으면 '경과 시간' 같은 칸은 기본으로 뺀다
-      if (tc >= 0) { const rest = vars.filter(i => !TIME_NAME_RE.test(tb.headers[i])); if (rest.length) vars = rest; }
-      state.cfg = { timeCol: tc, unit: 'auto', vars, target: vars[vars.length - 1] ?? -1 };
-    }
+  // 직접 고른 가로/세로는 그 표에만: 첫 줄이 바뀌면 다시 자동
+  const sig = input.value.slice(0, input.value.indexOf('\n') >>> 0).slice(0, 300);
+  if (state.layout !== 'auto' && state.layoutSig !== sig) { state.layout = 'auto'; store.set('layout', 'auto'); }
+  try {
+    const prep = prepareGrid(parseText(input.value), state.layout);
+    state.prep = prep;
+    const rows = prep.rows;
+    if (!rows.length) { clearTable(''); return; }
+    const tb = buildTable(rows);
+    if (tb.error) { clearTable(tb.error, 'err'); return; }
+    const prevHeaders = state.table?.headers.join('\u0001');
+    state.table = tb;
+    // 같은 표 모양이면 설정 유지, 아니면 새로 추측
+    const saved = store.get('cfg', null);
+    if (prevHeaders !== tb.headers.join('\u0001')) {
+      state.cfg = saved && saved.headers === tb.headers.join('\u0001') && saved.cfg ? sanitizeCfg(saved.cfg, tb) : defaultCfg(tb);
+    } else state.cfg = sanitizeCfg(state.cfg, tb);
+    const numCols = tb.kinds.filter(k => k === 'number').length;
+    const dir = prep.layout === 'rows' ? '가로 표(항목이 행)' : '세로 표(항목이 열)';
+    setMsg(`${dir}로 읽었어요: 항목 ${tb.headers.length}개 · 각각 값 ${tb.body.length}개${tb.hasHeader ? '' : ' (이름이 없어서 항목1, 항목2…로 불러요)'}.`, numCols ? 'ok' : 'err');
+    renderSetup();
+  } catch (err) {
+    console.error(err);
+    clearTable(`표를 읽지 못했어요: ${err.message}`, 'err');
   }
-  const numCols = tb.kinds.filter(k => k === 'number').length;
-  const dir = prep.layout === 'rows' ? '가로 표(항목이 행)' : '세로 표(항목이 열)';
-  setMsg(`${dir}로 읽었어요: 항목 ${tb.headers.length}개 · 각각 값 ${tb.body.length}개${tb.hasHeader ? '' : ' (이름이 없어서 항목1, 항목2…로 불러요)'}.`, numCols ? 'ok' : 'err');
-  renderSetup();
 }
 
 function saveCfg() {
@@ -401,7 +435,17 @@ function renderSetup() {
     state.sheets.forEach((sh, i) => ss.append(el('option', { value: String(i), text: sh.name })));
     ss.value = String(state.sheetIdx || 0);
   }
-  $('prep-notes').textContent = state.prep.notes.join(' · ');
+  // 데이터 점검: 정리한 내용, 숫자가 아닌 값, 분석에서 빠진 칸
+  const qn = [];
+  tb.headers.forEach((h, i) => {
+    const q = tb.quality && tb.quality[i];
+    if (!q) return;
+    const bad = q.bad + (tb.kinds[i] === 'number' ? q.text : 0);
+    if (tb.kinds[i] === 'text' && i !== cfg.timeCol) qn.push(`'${h}'은(는) 글자 칸이라 분석에서 뺐어요${q.examples.length ? ` (예: ${q.examples.join(', ')})` : ''}`);
+    else if (bad) qn.push(`'${h}': 숫자가 아닌 값 ${bad}칸${q.examples.length ? `(${q.examples.join(', ')})` : ''}은 빈 값으로 처리`);
+  });
+  const allNotes = [...(state.loadNote ? [state.loadNote] : []), ...state.prep.notes, ...(tb.notes || []), ...qn];
+  $('prep-notes').textContent = allNotes.join(' · ');
 
   // 미리보기 (앞 5줄)
   const pv = $('preview'); pv.innerHTML = '';
@@ -421,6 +465,17 @@ function renderSetup() {
   ts.value = String(cfg.timeCol);
   $('unit-field').hidden = !(cfg.timeCol >= 0 && tb.kinds[cfg.timeCol] === 'time');
   $('time-unit').value = cfg.unit;
+  // 읽은 시각 미리보기: 처음·끝, 길이, 보통 간격
+  const tp = $('time-preview');
+  if (cfg.timeCol >= 0) {
+    try {
+      const d = buildDataset(tb, { ...cfg, vars: [] });
+      const ti = d.timeInfo, u = d.unit ? UNITS[d.unit].label : '';
+      const odd = !(ti.medStep > 0) || (d.t.length > 2 && ti.span / ((d.t.length - 1) * ti.medStep) > 3);
+      tp.textContent = d.t.length ? `읽은 시각: ${ti.first} ~ ${ti.last} · 길이 ${+ti.span.toPrecision(4)}${u} · 보통 ${+(ti.medStep || 0).toPrecision(3)}${u} 간격${d.dropped ? ` · 시각을 못 읽은 ${d.dropped}줄` : ''}${d.notes.length ? ' · ' + d.notes.join(' · ') : ''}` : '시각을 하나도 읽지 못했어요';
+      tp.className = 'hint' + (odd || !d.t.length ? ' warn' : '');
+    } catch (err) { tp.textContent = ''; }
+  } else tp.textContent = '';
 
   // 항목 칩
   const chips = $('var-chips'); chips.innerHTML = '';
@@ -459,9 +514,13 @@ $('time-col').onchange = e => {
   if (!c.vars.includes(c.target)) c.target = c.vars[c.vars.length - 1] ?? -1;
   changed();
 };
-$('layout').onchange = e => { state.layout = e.target.value; store.set('layout', state.layout); state.table = null; onInput(); };
+$('layout').onchange = e => {
+  state.layout = e.target.value; store.set('layout', state.layout);
+  state.layoutSig = input.value.slice(0, input.value.indexOf('\n') >>> 0).slice(0, 300); store.set('layoutSig', state.layoutSig);
+  state.table = null; onInput();
+};
 $('sheet').onchange = e => {
-  state.sheetIdx = +e.target.value; input.value = state.sheets[state.sheetIdx].text;
+  state.sheetIdx = +e.target.value; input.value = state.sheets[state.sheetIdx].text; state.loadNote = state.sheets[state.sheetIdx].note;
   state.table = null; state.layout = 'auto'; store.set('layout', 'auto'); onInput();
 };
 $('time-unit').onchange = e => { state.cfg.unit = e.target.value; changed(); };
@@ -487,13 +546,14 @@ function analyze() {
   const unitWord = ds.unit ? UNITS[ds.unit].label.replace('시간', '1시간').replace(/^(초|분|일)$/, '1$1') : ds.kind === 'index' ? '한 번 잴 때' : null;
 
   const ov = state.cfg.override || {};
-  const timeFits = ds.vars.map(v => ({ v, key: `t:${v.col}`, fr: bestFit(ds.t, v.values, { validate: 'tail', prefer: ov[`t:${v.col}`] }) }));
+  const timeFits = ds.vars.map(v => ({ v, key: `t:${v.col}`, fr: bestFit(ds.t, v.values, { validate: 'tail', timeOrdered: true, prefer: ov[`t:${v.col}`] }) }));
   const corr = ds.vars.map(a => ds.vars.map(b => pearson(a.values, b.values)));
   const target = ds.vars.find(v => v.col === state.cfg.target) || ds.vars[ds.vars.length - 1];
   const others = ds.vars.filter(v => v !== target);
   const pairFits = others.map(v => {
     const key = `p:${v.col}:${target.col}`;
-    return { v, key, fr: bestFit(v.values, target.values, { validate: 'spread', prefer: ov[key] }), r: pearson(v.values, target.values).r };
+    // 시간 순 자료: 마지막 20%(시간)로 검증하고, 잔차 자기상관도 시간 순서로 본다
+    return { v, key, fr: bestFit(v.values, target.values, { validate: ds.kind === 'index' ? 'spread' : 'time', timeOrdered: ds.kind !== 'index', prefer: ov[key] }), r: pearson(v.values, target.values).r };
   });
   const ex = new Set(state.cfg.multiExclude || []);
   const multiPreds = [
@@ -510,19 +570,19 @@ function analyze() {
 
 function badge(r2) { const q = quality(r2); return el('span', { class: `badge ${q.cls}`, text: `정확도 ${fmtR2(r2)} · ${q.label}` }); }
 
-const VALID_WORD = { tail: '뒤쪽 20%를 숨기고 식을 만든 뒤 숨긴 값을 맞혀보니', spread: '5개 중 1개를 숨기고 식을 만든 뒤 숨긴 값을 맞혀보니' };
+const VALID_WORD = { tail: '뒤쪽 20%를 숨기고 식을 만든 뒤 숨긴 값을 맞혀보니', time: '시간상 마지막 20%를 숨기고 식을 만든 뒤 숨긴 값을 맞혀보니', spread: '5개 중 1개를 숨기고 식을 만든 뒤 숨긴 값을 맞혀보니' };
 
 function validationText(v) {
   if (!v) return '';
   const warn = v.rmse > v.trainRmse * 2 && v.rmse > 0;
   return `검증: ${VALID_WORD[v.mode]} 평균 오차 ${fmt(v.rmse, 3)} (식을 만들 때 오차 ${fmt(v.trainRmse, 3)}), 숨긴 값 ${v.nTest}개 중 ${Math.round(v.coverage * v.nTest)}개가 예측 범위 안에 들어왔어요.` +
-    (warn ? ` ⚠ 새 값을 맞힐 때 오차가 꽤 커져요. ${v.mode === 'tail' ? '측정 범위 밖(미래) 예측은 조심하세요.' : '다른 함수도 비교해보세요.'}` : '');
+    (warn ? ` ⚠ 새 값을 맞힐 때 오차가 꽤 커져요. ${v.mode === 'spread' ? '다른 함수도 비교해보세요.' : '측정 범위 밖(미래) 예측은 조심하세요.'}` : '');
 }
 
 // 값 넣어서 예측해보기
 function predictBox(model, xLabel, x0, xUnitHint) {
   const box = el('div', { class: 'predict' });
-  const inp = el('input', { type: 'number', inputmode: 'decimal', step: 'any', value: String(+x0.toPrecision(6)), 'aria-label': xLabel });
+  const inp = el('input', { type: 'number', inputmode: 'decimal', step: 'any', value: Number.isFinite(x0) ? String(+x0.toPrecision(Math.abs(x0) >= 1e4 ? 10 : 6)) : '', 'aria-label': xLabel });
   const out = el('p', { class: 'predict-out' });
   const upd = () => {
     const x = toNumber(inp.value);
@@ -548,15 +608,23 @@ const sigMark = p => (!Number.isFinite(p) ? '' : p < 0.05 ? '✓ 의미 있음' 
 function diagnosis(det, { orderWord = '시간 순서', isMulti = false, xLabel = 'x' } = {}) {
   const out = [];
   const a = det.anova;
+  if (det.exact) {
+    out.push({ ok: null, text: '오차가 사실상 0이에요: 이 값은 다른 값으로 정확히 계산되는 값이에요 (단위 환산이나 계산 태그). 통계 검정·잔차 진단은 의미가 없어서 생략했어요.' });
+    return out;
+  }
   out.push(a.p < 0.05
     ? { ok: true, text: `F 검정: F = ${fmt(a.F, 4)}, p ${fmtP(a.p).startsWith('<') ? fmtP(a.p) : '= ' + fmtP(a.p)} → 이 식은 우연히 맞은 게 아니에요 (기준 p < 0.05).` }
     : { ok: false, text: `F 검정: F = ${fmt(a.F, 4)}, p = ${fmtP(a.p)} → 식이 "그냥 평균"보다 낫다고 보기 어려워요.` });
   const weak = det.coefs.slice(1).filter(c => Number.isFinite(c.p) && c.p >= 0.05);
   if (weak.length) out.push({ ok: false, text: `p값이 0.05 이상인 항(${weak.map(c => c.name).join(', ')})은 없어도 정확도가 비슷할 수 있어요. ${isMulti ? '그 항목을 빼고 다시 계산해 보세요.' : '더 단순한 함수를 고려해 보세요.'}` });
-  if (Number.isFinite(det.dw)) {
-    if (det.dw < 1.5) out.push({ ok: false, text: `더빈-왓슨 ${fmt(det.dw, 3)}: ${orderWord}대로 오차가 비슷하게 이어져요(자기상관). 식이 놓친 흐름이 있거나, 예측 범위가 실제보다 좁을 수 있어요.` });
-    else if (det.dw > 2.5) out.push({ ok: false, text: `더빈-왓슨 ${fmt(det.dw, 3)}: ${orderWord}대로 오차가 번갈아 튀어요. 측정 방식에 규칙적인 흔들림이 있는지 확인해 보세요.` });
-    else out.push({ ok: true, text: `더빈-왓슨 ${fmt(det.dw, 3)}: ${orderWord}대로 오차가 서로 독립적이에요 (기준 1.5 ~ 2.5).` });
+  if (Number.isFinite(det.dw) && det.orderKind === 'x') {
+    out.push(det.dw < 1.5
+      ? { ok: false, text: `더빈-왓슨 ${fmt(det.dw, 3)} (${orderWord}): ${xLabel}이(가) 커지는 순서로 오차가 한쪽으로 몰려요. 곡선 모양이 맞지 않을 수 있어요 (다른 함수와 비교해보세요).` }
+      : { ok: true, text: `더빈-왓슨 ${fmt(det.dw, 3)} (${orderWord}): 곡선 모양은 무리 없어요.` });
+  } else if (Number.isFinite(det.dw)) {
+    if (det.dw < 1.5) out.push({ ok: false, text: `더빈-왓슨 ${fmt(det.dw, 3)}: 시간 순서대로 오차가 비슷하게 이어져요(자기상관). 실제로 독립적인 자료는 ${det.n}개가 아니라 약 ${Math.round(det.nEff)}개 수준이라, p값과 예측 범위가 실제보다 낙관적일 수 있어요.` });
+    else if (det.dw > 2.5) out.push({ ok: false, text: `더빈-왓슨 ${fmt(det.dw, 3)}: 시간 순서대로 오차가 번갈아 튀어요. 측정 방식에 규칙적인 흔들림이 있는지 확인해 보세요.` });
+    else out.push({ ok: true, text: `더빈-왓슨 ${fmt(det.dw, 3)}: 시간 순서대로 오차가 서로 독립적이에요 (기준 1.5 ~ 2.5).` });
   }
   out.push(det.jbP < 0.05
     ? { ok: false, text: `정규성(자크-베라) p = ${fmtP(det.jbP)}: 오차 분포가 한쪽으로 치우쳤거나 튀는 값이 있어요. p값·예측 범위는 참고용으로 보세요.` }
@@ -643,9 +711,9 @@ function fitBlock({ title, fr, key, xLabel, yLabel, xSym, line, says, x0 }) {
   box.append(predictBox(best, xLabel, x0 ?? mean(fr.x)));
 
   const d = el('details', { class: 'more' }, el('summary', { text: '다른 함수와 비교 · 직접 고르기' }));
-  const t = el('table', {}, el('tr', {}, el('th', { text: '함수' }), el('th', { text: 'R²' }), el('th', { text: '수정 R²' }), el('th', { text: '오차' }), el('th', { text: '검증 오차' }), el('th', { text: 'AIC' })));
-  const minAic = Math.min(...fr.all.map(f => f.aic));
-  fr.all.forEach(f => t.append(el('tr', {}, el('td', { text: f.name + (f === best ? ' ✓' : '') }), el('td', { text: fmtR2(f.r2) }), el('td', { text: fmtR2(f.adj) }), el('td', { text: fmt(f.rmse, 3) }), el('td', { text: f.validation ? fmt(f.validation.rmse, 3) : '-' }), el('td', { text: fmt(f.aic, 4) + (f.aic === minAic ? ' ★' : '') }))));
+  const t = el('table', {}, el('tr', {}, el('th', { text: '함수' }), el('th', { text: 'R²' }), el('th', { text: '수정 R²' }), el('th', { text: '오차' }), el('th', { text: '검증 오차' }), el('th', { text: 'AICc' })));
+  const minAic = minOf(fr.all.map(f => f.aicc));
+  fr.all.forEach(f => t.append(el('tr', {}, el('td', { text: f.name + (f === best ? ' ✓' : '') }), el('td', { text: fmtR2(f.r2) }), el('td', { text: fmtR2(f.adj) }), el('td', { text: fmt(f.rmse, 3) }), el('td', { text: f.validation ? fmt(f.validation.rmse, 3) : '-' }), el('td', { text: Number.isFinite(f.aicc) ? fmt(f.aicc, 4) + (f.aicc === minAic ? ' ★' : '') : '자료 부족' }))));
   d.append(el('div', { class: 'table-scroll' }, t));
   const sel = el('select', { 'aria-label': '사용할 함수' });
   sel.append(el('option', { value: '', text: `자동 (${fr.auto.name})` }));
@@ -657,7 +725,7 @@ function fitBlock({ title, fr, key, xLabel, yLabel, xSym, line, says, x0 }) {
     saveCfg(); const y0 = scrollY; analyze(); scrollTo(0, y0);
   };
   d.append(el('label', { class: 'field' }, el('span', { text: '사용할 함수' }), sel));
-  d.append(el('p', { class: 'hint', text: '자동 선택: 수정 R²가 거의 같으면(0.01 이내) 더 단순한 함수를 골라요. AIC는 정확도와 복잡도를 함께 따진 점수로 작을수록(★) 좋아요. 예측에 쓸 거라면 "검증 오차"가 작은 함수가 더 믿을 만해요. 고른 함수는 엑셀과 모델 파일에도 그대로 들어가요.' }));
+  d.append(el('p', { class: 'hint', text: '자동 선택: AICc(정확도와 복잡도를 함께 따진 점수, 작을수록 좋음 ★)가 가장 좋은 함수와 2 이내로 비슷하면 더 단순한 함수를 골라요. 자료가 적을수록 복잡한 함수에 벌점이 커요. 예측에 쓸 거라면 "검증 오차"가 작은 함수가 더 믿을 만해요. 고른 함수는 엑셀과 모델 파일에도 그대로 들어가요.' }));
   box.append(d);
   const ds2 = el('details', { class: 'more' }, el('summary', { text: '상세 통계 보기 (계수 검정 · 분산분석 · 잔차 진단)' }));
   ds2.addEventListener('toggle', () => {
@@ -757,7 +825,7 @@ function renderResults() {
     const txt = `${M.yName} = ` + joinTerms([[M.b0, ''], ...M.terms.map(t => [t.coef, t.name])], fmt);
     mu.append(el('div', { class: 'formula wrap', html: `${esc(txt)}<small>측정값 ${M.n}개 사용</small>` }));
     mu.append(el('p', {}, badge(M.r2)));
-    const maxB = Math.max(...M.terms.map(t => Math.abs(t.beta)));
+    const maxB = maxOf(M.terms.map(t => Math.abs(t.beta)));
     const t = el('table', { class: 'coef-table' }, el('tr', {}, el('th', { text: '항목' }), el('th', { text: '1 늘면' }), el('th', { text: '영향 크기' })));
     [...M.terms].sort((a, b) => Math.abs(b.beta) - Math.abs(a.beta)).forEach(term => {
       const w = Math.round(Math.abs(term.beta) / maxB * 70);
@@ -798,26 +866,55 @@ function renderResults() {
 
 /* ---------------- 7-2. 운전 조작 판단 (control.js) ---------------- */
 
-const MV_NAME_RE = /개도|밸브|valve|설정|SP\b|조작|출력|대수|rpm|댐퍼|damper|베인|vane|스트로크|열림|부하율/i;
+// 조작 항목 이름 후보: 밸브·개도 같은 실제 조작 신호를 먼저, 설정값(SP)은 그다음
+const MV_NAME_RES = [
+  /개도|밸브|valve|댐퍼|damper|베인|vane|스트로크|열림|조작/i,
+  /\bOUT\b|\bMV\b|\.OP\b/,
+  /설정|\bSP\b|setpoint|대수|rpm/i,
+];
 
 function ctrlCfg() {
   const R = state.result, vars = R.ds.vars;
   const c = state.cfg.ctrl = { ...(state.cfg.ctrl || {}) };
   if (!vars.some(v => v.col === c.mv)) {
-    const byName = vars.find(v => MV_NAME_RE.test(v.name));
+    const byName = MV_NAME_RES.map(re => vars.find(v => re.test(v.name))).find(Boolean);
     c.mv = (byName || R.target).col;
   }
   c.exclude = (c.exclude || []).filter(col => vars.some(v => v.col === col));
-  c.window = c.window || 0; // 0 = 자동
-  c.target = c.target || 'delta';
+  c.window = Number(c.window) || 0; // 0 = 자동 (칸 수)
+  c.db = Number(c.db) > 0 ? Number(c.db) : 0; // 0 = 자동
+  delete c.target;
   return c;
 }
 
-function stepInfo(ds) {
+// 초 → "30초", "5분", "1.5시간", "2일"
+function durText(s) {
+  if (s < 60) return `${fmt(s, 3)}초`;
+  if (s < 7200) return `${fmt(s / 60, 3)}분`;
+  if (s < 2 * 86400) return `${fmt(s / 3600, 3)}시간`;
+  return `${fmt(s / 86400, 3)}일`;
+}
+
+/** 추세 창 후보: 사람이 읽기 좋은 시간 길이를 칸 수로 바꾼다 (같은 칸 수는 하나만) */
+function windowChoices(ds) {
+  const n = ds.t.length;
   const d = ds.t.slice(1).map((v, i) => v - ds.t[i]).filter(v => v > 0).sort((a, b) => a - b);
-  const dt = d.length ? d[d.length >> 1] : 1;
-  const unit = ds.unit ? UNITS[ds.unit].label : ds.kind === 'index' ? '칸' : '';
-  return { dt, unit, label: k => (ds.kind === 'index' ? `${k}칸` : `${fmt(k * dt, 3)}${unit}`) };
+  const dtU = d.length ? d[d.length >> 1] : 1;
+  const maxK = Math.max(1, Math.floor(n / 6));
+  const out = [];
+  const add = (k, short) => { if (k >= 1 && k <= maxK && !out.some(o => o.k === k)) out.push({ k, short, label: k > 1 ? `${short} (${k}칸)` : `${short} (바로 앞 칸)` }); };
+  if (ds.kind === 'time') {
+    const dt = dtU * UNITS[ds.unit].sec;
+    [5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 21600, 86400].forEach(s => { const k = Math.max(1, Math.round(s / dt)); add(k, durText(k * dt)); });
+    [2, 3, 5, 7, 10, 14, 30].forEach(k => { if (out.length < 4) add(k, durText(k * dt)); });
+  } else {
+    [1, 2, 3, 5, 10, 15, 30, 60].forEach(k => add(k, ds.kind === 'index' ? `${k}칸` : `${fmt(k * dtU, 3)}`));
+  }
+  out.sort((a, b) => a.k - b.k);
+  // 자동: 시각이면 5분에 가장 가까운 것, 아니면 5칸에 가장 가까운 것
+  const goal = ds.kind === 'time' ? 300 / (dtU * UNITS[ds.unit].sec) : 5;
+  const auto = out.reduce((b, o) => (Math.abs(Math.log(o.k / goal)) < Math.abs(Math.log(b.k / goal)) ? o : b), out[0]);
+  return { list: out, auto };
 }
 
 function renderControlSetup() {
@@ -836,50 +933,67 @@ function renderControlSetup() {
     b.onclick = () => { c.exclude = on ? [...c.exclude, v.col] : c.exclude.filter(x => x !== v.col); saveCfg(); renderControlSetup(); };
     chips.append(b);
   });
-  const si = stepInfo(ds), n = ds.t.length;
+  const wc = windowChoices(ds);
   const ws = $('ctrl-window'); ws.innerHTML = '';
-  const steps = [1, 2, 3, 5, 10, 15, 30, 60].filter(k => k <= Math.max(1, Math.floor(n / 6)));
-  const auto = steps.includes(5) ? 5 : steps[steps.length - 1];
-  ws.append(el('option', { value: '0', text: `자동 (${si.label(auto)})` }));
-  steps.forEach(k => ws.append(el('option', { value: String(k), text: si.label(k) })));
-  ws.value = String(steps.includes(c.window) ? c.window : 0);
-  $('ctrl-target').value = c.target;
-  renderControl(steps.includes(c.window) ? c.window : auto, si);
+  ws.append(el('option', { value: '0', text: `자동 (${wc.auto.label})` }));
+  wc.list.forEach(o => ws.append(el('option', { value: String(o.k), text: o.label })));
+  const chosen = wc.list.find(o => o.k === c.window);
+  ws.value = String(chosen ? c.window : 0);
+  $('ctrl-db').value = c.db ? String(c.db) : '';
+  renderControl(chosen || wc.auto);
 }
 
-$('ctrl-mv').onchange = e => { state.cfg.ctrl.mv = +e.target.value; saveCfg(); renderControlSetup(); };
+$('ctrl-mv').onchange = e => { state.cfg.ctrl.mv = +e.target.value; state.cfg.ctrl.db = 0; saveCfg(); renderControlSetup(); };
 $('ctrl-window').onchange = e => { state.cfg.ctrl.window = +e.target.value; saveCfg(); renderControlSetup(); };
-$('ctrl-target').onchange = e => { state.cfg.ctrl.target = e.target.value; saveCfg(); renderControlSetup(); };
+$('ctrl-db').onchange = e => { const v = toNumber(e.target.value); state.cfg.ctrl.db = v > 0 ? v : 0; saveCfg(); renderControlSetup(); };
 
 const dirWord = d => (d > 0 ? '올림' : d < 0 ? '내림' : '유지');
 const signed = (v, sig = 3) => (v > 0 ? '+' : v < 0 ? '−' : '') + fmt(Math.abs(v), sig);
 const pct = v => (Number.isFinite(v) ? `${Math.round(v * 100)}%` : '-');
 
+/** 조건 글: 기준값은 기록 범위에 비해 구분될 만큼의 자릿수로 */
 function condText(F, c) {
-  const name = F.defs[c.j].label;
-  if (Number.isFinite(c.lo) && Number.isFinite(c.hi)) return `${fmt(c.lo, 4)} ≤ ${name} < ${fmt(c.hi, 4)}`;
-  if (Number.isFinite(c.hi)) return `${name} < ${fmt(c.hi, 4)}`;
-  return `${name} ≥ ${fmt(c.lo, 4)}`;
+  const name = F.defs[c.j].label, r = F.ranges[c.j] || [0, 0];
+  const big = Math.max(Number.isFinite(c.lo) ? Math.abs(c.lo) : 0, Number.isFinite(c.hi) ? Math.abs(c.hi) : 0);
+  const res = (r[1] - r[0]) / 200;
+  let sig = big > 0 && res > 0 ? Math.min(8, Math.max(3, Math.ceil(Math.log10(big / res)))) : 4;
+  while (sig < 8 && Number.isFinite(c.lo) && Number.isFinite(c.hi) && fmt(c.lo, sig) === fmt(c.hi, sig)) sig++;
+  if (Number.isFinite(c.lo) && Number.isFinite(c.hi)) return `${fmt(c.lo, sig)} ≤ ${name} < ${fmt(c.hi, sig)}`;
+  if (Number.isFinite(c.hi)) return `${name} < ${fmt(c.hi, sig)}`;
+  return `${name} ≥ ${fmt(c.lo, sig)}`;
 }
 
+/** 규칙 한 줄: 결론은 "그 상황에서 조작한 비율"이 다른 상황보다 뚜렷이 높은지로 정해진다 (Control.decide) */
 function ruleText(L, r) {
-  const F = L.F, mv = F.mvName;
+  const F = L.F, mv = F.mvName, d = r.decision, B = L.tree.base;
   const when = r.conds.length ? r.conds.map(c => condText(F, c)).join(' 이고 ') : '항상';
-  const d = F.target === 'delta' ? r.value : NaN;
-  const act = r.up >= 0.5 ? `${mv} 올림 (${pct(r.up)}의 경우)` : r.down >= 0.5 ? `${mv} 내림 (${pct(r.down)}의 경우)`
-    : r.up + r.down < 0.3 ? `대체로 그대로 둠 (조작한 경우 ${pct(r.up + r.down)})` : `올림 ${pct(r.up)} · 내림 ${pct(r.down)} (판단이 엇갈림)`;
-  return { when, act, avg: F.target === 'delta' ? `평균 ${signed(d)}` : `평균 ${fmt(r.value, 4)}로 맞춤`, n: r.n };
+  const restRate = dir => (B.N > r.n ? ((dir > 0 ? B.nUp - r.nUp : B.nDown - r.nDown) / (B.N - r.n)) : NaN);
+  let act;
+  if (d.dir) {
+    const rate = d.dir > 0 ? r.up : r.down, rest = restRate(d.dir);
+    const lift = rest > 0 ? `다른 때의 ${fmt(rate / rest, 2)}배` : Number.isFinite(rest) ? '다른 때는 거의 안 함' : '';
+    act = `${mv} ${dirWord(d.dir)} ${signed(d.delta)} (이런 때 ${pct(rate)} 조작${lift ? ` · ${lift}` : ''})`;
+  } else if (Math.min(r.up, r.down) >= 0.15) act = `판단이 엇갈림 (올림 ${pct(r.up)} · 내림 ${pct(r.down)}) → 추천은 유지`;
+  else if (r.up + r.down >= 0.15) act = `뚜렷한 경향 없음 (올림 ${pct(r.up)} · 내림 ${pct(r.down)}, 다른 때와 비슷) → 유지`;
+  else act = `대체로 그대로 둠 (조작 ${pct(r.up + r.down)})`;
+  return { when, act, n: r.n };
 }
 
-function renderControl(window, si) {
+function renderControl(win) {
   const R = state.result, ds = R.ds, c = state.cfg.ctrl;
   const out = $('ctrl-out'); out.innerHTML = '';
+  R.control = null;
   const series = ds.vars.map(v => ({ name: v.name, values: v.values }));
   const mvIdx = ds.vars.findIndex(v => v.col === c.mv);
   const inputs = ds.vars.map((v, i) => i).filter(i => i !== mvIdx && !c.exclude.includes(ds.vars[i].col));
-  if (!inputs.length) { out.append(el('p', { class: 'says', text: '판단 근거 항목을 1개 이상 골라주세요.' })); R.control = null; return; }
-  const L = Control.learn(series, { mv: mvIdx, inputs, window, target: c.target, windowLabel: si.label(window) });
-  R.control = L; R.controlWindow = window;
+  if (!inputs.length) { out.append(el('p', { class: 'says', text: '판단 근거 항목을 1개 이상 골라주세요.' })); return; }
+  // 시각을 초로 넘기면 기록이 끊긴 곳을 건너뛰고, 모델 파일에 실제 시간 길이가 남는다
+  const isTime = ds.kind === 'time';
+  const tIn = isTime ? ds.t.map(v => v * UNITS[ds.unit].sec) : ds.t;
+  const L = Control.learn(series, { mv: mvIdx, inputs, window: win.k, windowLabel: win.short, t: tIn, deadband: c.db || undefined });
+  R.control = L; R.controlMeta = { timeIsSeconds: isTime };
+  $('ctrl-db').placeholder = Number.isFinite(L.deadband) ? `자동 (${fmt(L.deadband, 3)})` : '자동';
+  (L.warnings || []).forEach(w => out.append(el('p', { class: 'hint warn', text: `⚠ ${w}` })));
   if (L.error) { out.append(el('p', { class: 'says', text: L.error })); return; }
   const F = L.F, mv = F.mvName, ev = L.evaluation, st = L.stats;
 
@@ -887,24 +1001,39 @@ function renderControl(window, si) {
 
   // 운전자 조작 통계
   out.append(el('p', { class: 'mini-title', text: '운전자는 어떻게 조작했나' }));
-  out.append(el('p', { class: 'says', text: `${st.n}번의 시점 중 올림 ${st.up}번 · 내림 ${st.down}번 · 그대로 ${st.hold}번. 한 번에 보통 ${fmt(st.stepMedian, 3)}만큼, 가장 크게는 ${fmt(st.stepMax, 3)}만큼 바꿨어요. (${fmt(L.deadband, 3)}보다 작은 변화는 "그대로"로 봤어요)` }));
+  out.append(el('p', { class: 'says', text: `${st.n}번의 시점 중 올림 ${st.up}번 · 내림 ${st.down}번 · 그대로 ${st.hold}번. 한 번에 보통 ${fmt(st.stepMedian, 3)}만큼, 가장 크게는 ${fmt(st.stepMax, 3)}만큼 바꿨어요. (${fmt(L.deadband, 3)}보다 작은 변화는 "그대로"로 봤어요${c.db ? ' — 직접 넣은 값' : ''})` }));
+  if (L.discrete) out.append(el('p', { class: 'hint', text: `${mv}은(는) ${L.discrete.map(v => fmt(v, 4)).join(' / ')} 중 하나만 가져요 (기동/정지·대수 같은 단계 조작). 추천도 이 값 중 하나로 맞춰요.` }));
+  if (L.actions.length) {
+    const tb = el('table', { class: 'stat-table' }, el('tr', {}, ...['시각', '바꾸기 전 → 후', '조작량'].map(h => el('th', { text: h }))));
+    L.actions.slice(0, 200).forEach(a => tb.append(el('tr', {}, el('td', { text: String(ds.tRaw[a.at]) }), el('td', { text: `${fmt(a.before, 5)} → ${fmt(a.after, 5)}` }), el('td', { text: signed(a.delta) }))));
+    const more = st.up + st.down > 200 ? ` (앞 200개만 표시)` : '';
+    out.append(el('details', { class: 'more' }, el('summary', { text: `조작으로 본 시점 ${st.up + st.down}개 보기${more}` }), el('div', { class: 'table-scroll' }, tb)));
+  }
 
   // 검증
   if (ev) {
-    const t = el('table', { class: 'stat-table' }, el('tr', {}, ...['방법', '오차', '방향 맞힘', '실제 조작 때 방향'].map(h => el('th', { text: h }))));
+    const t = el('table', { class: 'stat-table' }, el('tr', {}, ...['방법', '오차', '방향 맞힘', '실제 조작 때 방향', '조작하라고 할 때 맞음'].map(h => el('th', { text: h }))));
     [['조작 안 함 (기준)', 'base'], ['판단 규칙', 'tree'], ['선형 식', 'linear']].forEach(([name, k]) => t.append(el('tr', {},
-      el('td', { text: name + (L.pick === k ? ' ✓' : '') }), el('td', { text: fmt(ev.rmse[k], 3) }), el('td', { text: pct(ev.direction[k]) }), el('td', { text: pct(ev.actedDirection[k]) }))));
-    out.append(el('p', { class: 'mini-title', text: `검증: 앞 75%로 배우고 뒤 25%(${ev.nTest}개, 실제 조작 ${ev.acted}번)를 맞혀봄` }), el('div', { class: 'table-scroll' }, t));
-    const best = Math.min(ev.rmse.tree, Number.isFinite(ev.rmse.linear) ? ev.rmse.linear : Infinity);
-    const gain = 1 - best / ev.rmse.base;
-    out.append(el('p', { class: `valid ${L.learned ? '' : 'bad'}`, text: L.learned
-      ? `"조작 안 함"보다 오차가 ${pct(gain)} 작아요 → 운전자의 판단 기준을 어느 정도 배웠어요. 추천에는 ${L.pick === 'tree' ? '판단 규칙' : '선형 식'}을 써요.`
-      : '"조작 안 함"과 비교해 나아진 게 거의 없어요. 판단 근거 항목이 부족하거나, 운전자가 표에 없는 정보(경보, 지시, 계획, 소리·냄새 등)를 보고 조작했을 수 있어요.' }));
+      el('td', { text: name + (L.pick === k ? ' ✓' : '') }), el('td', { text: fmt(ev.rmse[k], 3) }), el('td', { text: pct(ev.direction[k]) }),
+      el('td', { text: pct(ev.actedDirection[k]) }), el('td', { text: k === 'base' ? '-' : pct(ev.precision[k]) }))));
+    out.append(el('p', { class: 'mini-title', text: `검증: 기록을 시간 순서로 4토막 내고, 앞 토막들로 배워 바로 다음 토막을 맞혀봄 (${ev.folds}번 · ${ev.nTest}개 시점 · 실제 조작 ${ev.acted}번)` }), el('div', { class: 'table-scroll' }, t));
+    const bestRmse = Math.min(ev.rmse.tree, Number.isFinite(ev.rmse.linear) ? ev.rmse.linear : Infinity);
+    const gain = ev.rmse.base > 0 ? 1 - bestRmse / ev.rmse.base : NaN;
+    const ad = Math.max(ev.actedDirection.tree || 0, ev.actedDirection.linear || 0);
+    const useWord = L.pick === 'tree' ? '판단 규칙' : '선형 식';
+    const verdict = L.learned === null
+      ? { cls: '', text: '검증 구간에 실제 조작이 없어서 배웠는지 판정할 수 없어요. 조작이 더 많이 담긴 기록을 넣어주세요.' }
+      : L.learned
+        ? { cls: '', text: `실제로 조작한 때의 방향을 ${pct(ad)} 맞혔어요${gain > 0 ? `. "조작 안 함"보다 오차도 ${pct(gain)} 작아요` : ''} → 운전자의 판단 기준을 어느 정도 배웠어요. 추천에는 ${useWord}을 써요.` }
+        : { cls: 'bad', text: '"조작 안 함"과 비교해 나아진 게 거의 없어요. 판단 근거 항목이 부족하거나, 운전자가 표에 없는 정보(경보, 지시, 계획, 소리·냄새 등)를 보고 조작했을 수 있어요.' };
+    out.append(el('p', { class: `valid ${verdict.cls}`, text: verdict.text }));
     if (ev.acted < 5) out.append(el('p', { class: 'hint', text: `⚠ 검증 구간에서 실제 조작이 ${ev.acted}번뿐이라 "실제 조작 때 방향" 값은 믿기 어려워요. 더 긴 기간의 기록이 필요해요.` }));
     const wrap = el('div', { class: 'chart' });
-    out.append(el('p', { class: 'says', text: `검증 구간: 실제 ${F.target === 'delta' ? '조작량' : mv}(점)과 ${L.pick === 'tree' ? '규칙' : '식'}이 판단한 값(선)` }), wrap);
+    out.append(el('p', { class: 'says', text: `검증 구간: 실제 조작량(점)과 ${L.pick === 'tree' ? '규칙' : '식'}이 판단한 조작량(선)` }), wrap);
     const xs = ev.series.at.map(i => ds.t[i]);
-    requestAnimationFrame(() => mountChart(wrap, { x: xs, y: ev.series.truth, overlay: { x: xs, y: ev.series[L.pick] || ev.series.tree }, overlayLabel: '판단 결과', pointLabel: '실제', xLabel: ds.tLabel, yLabel: F.target === 'delta' ? `${mv} 조작량` : mv, line: false }));
+    requestAnimationFrame(() => mountChart(wrap, { x: xs, y: ev.series.truth, overlay: { x: xs, y: ev.series[L.pick] }, overlayLabel: '판단 결과', pointLabel: '실제', xLabel: ds.tLabel, yLabel: `${mv} 조작량`, line: false }));
+  } else {
+    out.append(el('p', { class: 'hint warn', text: '⚠ 기록이 짧거나 앞부분에 조작이 3번 미만이라 검증(앞으로 배워 뒤를 맞혀보기)을 못 했어요. 아래 규칙은 참고만 하세요.' }));
   }
 
   // 판단 규칙
@@ -912,40 +1041,48 @@ function renderControl(window, si) {
   const ul = el('ul', { class: 'rules' });
   L.rules.forEach(r => {
     const t = ruleText(L, r);
-    ul.append(el('li', { html: `<span class="if">만약 ${esc(t.when)}</span><span class="then">→ ${esc(t.act)} · ${esc(t.avg)}</span><span class="n">근거 ${t.n}건${t.n < 10 ? ' · ⚠ 근거 적음' : ''}</span>` }));
+    ul.append(el('li', { html: `<span class="if">만약 ${esc(t.when)}</span><span class="then">→ ${esc(t.act)}</span><span class="n">근거 ${t.n}건${t.n < 10 ? ' · ⚠ 근거 적음' : ''}</span>` }));
   });
   out.append(ul);
   const imp = L.tree.importance.map((v, j) => [F.defs[j].label, v]).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-  if (imp.length) out.append(el('p', { class: 'hint', text: `판단에 가장 많이 쓰인 항목: ${imp.map(([n, v]) => `${n} ${pct(v)}`).join(', ')}. 규칙의 기준값(예: 압력 4.92)은 운전자에게 맞는지 꼭 확인하세요. 우연히 생긴 조건이 섞일 수 있어요.` }));
+  if (imp.length) out.append(el('p', { class: 'hint', text: `판단에 가장 많이 쓰인 항목: ${imp.map(([n, v]) => `${n} ${pct(v)}`).join(', ')}. 규칙의 기준값은 운전자에게 맞는지 꼭 확인하세요. 우연히 생긴 조건이 섞일 수 있어요.` }));
+  else out.append(el('p', { class: 'hint', text: '상황을 나눠도 조작 비율이 뚜렷하게 달라지지 않아서 조건 없는 규칙 하나만 남았어요.' }));
 
   // 선형 식
   if (L.linear) {
     const M = L.linear.model;
-    const y = F.target === 'delta' ? `${mv} 조작량` : mv;
     out.append(el('p', { class: 'mini-title', text: '선형 식 (의미 있는 항만 남김)' }));
-    out.append(el('div', { class: 'formula wrap', html: `${esc(y)} = ${esc(joinTerms([[M.b0, ''], ...M.terms.map(t => [t.coef, t.name])], fmt))}<small>R² ${fmtR2(M.r2)} · p값 0.05 넘는 항은 하나씩 뺐어요. 상태는 직전 값, ${esc(F.windowLabel)} 변화는 그 사이 바뀐 양이에요.</small>` }));
+    const removed = L.linear.removed.length ? ` 다른 항목과 겹쳐서 뺀 항목: ${L.linear.removed.map(x => x.name).join(', ')}.` : '';
+    out.append(el('div', { class: 'formula wrap', html: `${esc(mv)} 조작량 = ${esc(joinTerms([[M.b0, ''], ...M.terms.map(t => [t.coef, t.name])], fmt))}<small>R² ${fmtR2(M.r2)} · p값 0.05 넘는 항은 하나씩 뺐어요. 상태는 직전 값, ${esc(F.windowLabel)} 변화는 그 사이 바뀐 양이에요.${esc(removed)}</small>` }));
   }
 
   // 추천
   out.append(el('p', { class: 'mini-title', text: '지금 상태를 넣으면 조작 추천' }));
   const form = el('div', { class: 'predict ctrl' });
   const used = [...new Set(F.defs.filter(d => d.key !== 'MV').map(d => d.var))];
-  const last = ds.t.length - 1, back = Math.max(0, last - F.window);
-  const inp = (val, label) => el('input', { type: 'number', inputmode: 'decimal', step: 'any', value: Number.isFinite(val) ? String(+val.toPrecision(6)) : '', 'aria-label': label });
+  const colOf = name => ds.vars.find(x => x.name === name).values;
+  const mvVals = ds.vars[mvIdx].values;
+  // 처음 값: 쓰는 항목이 모두 채워진 가장 마지막 줄 (그 줄과 추세 창만큼 앞 줄)
+  let k0 = ds.t.length - 1;
+  const okAt = k => k - F.window >= 0 && Number.isFinite(mvVals[k]) && used.every(nm => Number.isFinite(colOf(nm)[k]) && Number.isFinite(colOf(nm)[k - F.window]));
+  while (k0 > 0 && !okAt(k0)) k0--;
+  const back = Math.max(0, k0 - F.window);
+  const inp = (val, label) => el('input', { type: 'number', inputmode: 'decimal', step: 'any', value: Number.isFinite(val) ? String(+val.toPrecision(Math.abs(val) >= 1e4 ? 10 : 6)) : '', 'aria-label': label });
+  form.append(el('p', { class: 'hint', text: `처음 값은 기록의 ${String(ds.tRaw[k0])} 시점이에요. 지금 값으로 바꿔 넣으세요.` }));
   const fields = {};
   used.forEach(name => {
-    const v = ds.vars.find(x => x.name === name).values;
-    fields[name] = { now: inp(v[last], `${name} 지금`), before: inp(v[back], `${name} ${F.windowLabel} 전`) };
+    const v = colOf(name);
+    fields[name] = { now: inp(v[k0], `${name} 지금`), before: inp(v[back], `${name} ${F.windowLabel} 전`) };
     form.append(el('div', { class: 'pair-row' }, el('span', { text: name }), el('label', {}, el('small', { text: '지금' }), fields[name].now), el('label', {}, el('small', { text: `${F.windowLabel} 전` }), fields[name].before)));
   });
-  const mvNow = inp(ds.vars[mvIdx].values[last], `현재 ${mv}`);
+  const mvNow = inp(mvVals[k0], `현재 ${mv}`);
   form.append(el('div', { class: 'pair-row' }, el('span', { text: `현재 ${mv}` }), el('label', {}, el('small', { text: '지금' }), mvNow), el('span')));
   // 기본 한계: %면 0~100, 아니면 기록 범위에서 위아래로 20% 넓힌 값. 실제 설비 한계로 바꿔 넣어야 한다
   const span = st.mvMax - st.mvMin || Math.abs(st.mvMax) || 1;
   const isPct = /%/.test(mv);
   const lim = {
-    min: inp(isPct ? Math.max(0, st.mvMin - span * 0.2) : st.mvMin - span * 0.2, '최소'),
-    max: inp(isPct ? Math.min(100, st.mvMax + span * 0.2) : st.mvMax + span * 0.2, '최대'),
+    min: inp(L.discrete ? st.mvMin : isPct ? Math.max(0, st.mvMin - span * 0.2) : st.mvMin - span * 0.2, '최소'),
+    max: inp(L.discrete ? st.mvMax : isPct ? Math.min(100, st.mvMax + span * 0.2) : st.mvMax + span * 0.2, '최대'),
     maxStep: inp(st.stepMax, '한 번 최대'),
   };
   form.append(el('div', { class: 'pair-row limits' }, el('span', { text: '안전 한계' }),
@@ -956,12 +1093,16 @@ function renderControl(window, si) {
     const stIn = { inputs: {}, mvNow: toNumber(mvNow.value) };
     used.forEach(n => { stIn.inputs[n] = { now: toNumber(fields[n].now.value), before: toNumber(fields[n].before.value) }; });
     const r = Control.recommend(L, stIn, { min: toNumber(lim.min.value), max: toNumber(lim.max.value), maxStep: toNumber(lim.maxStep.value) });
-    if (r.error) { res.textContent = r.error; return; }
+    if (r.error) { res.innerHTML = `<p class="rec-why warn">${esc(r.error)}</p>`; return; }
     const cond = r.tree.conds.map(cc => condText(F, cc)).join(' 이고 ') || '모든 경우';
-    res.innerHTML = `<p class="rec-main ${r.dir > 0 ? 'up' : r.dir < 0 ? 'down' : ''}">추천: <b>${dirWord(r.dir)}</b> ${r.dir ? `${signed(r.delta)} → ${fmt(r.next, 5)}` : `(${fmt(stIn.mvNow, 5)} 유지)`}</p>` +
-      `<p class="rec-why">근거 규칙: 만약 ${esc(cond)} → 이 경우 운전자는 올림 ${pct(r.tree.leaf.up)} · 내림 ${pct(r.tree.leaf.down)} (근거 ${r.tree.leaf.n}건)</p>` +
-      (r.linear ? `<p class="rec-why">선형 식으로는 ${signed(r.linear.delta)} (95% 범위 ${signed(r.linear.range[0])} ~ ${signed(r.linear.range[1])})</p>` : '') +
-      (r.clipped.length ? `<p class="rec-why warn">⚠ ${r.clipped.join(', ')} 한계에 걸려서 줄였어요 (원래 ${signed(r.raw)})</p>` : '');
+    const lf = r.tree.leaf;
+    const word = L.discrete && L.discrete.length === 2 && L.discrete[0] === 0 && r.dir ? (r.dir > 0 ? '기동' : '정지') : dirWord(r.dir);
+    res.innerHTML = `<p class="rec-main ${r.dir > 0 ? 'up' : r.dir < 0 ? 'down' : ''}">추천: <b>${word}</b> ${r.dir ? `${signed(r.delta)} → ${fmt(r.next, 5)}` : `(${fmt(stIn.mvNow, 5)} 유지)`}</p>` +
+      `<p class="rec-why">근거 규칙: 만약 ${esc(cond)} → 이런 때 운전자는 올림 ${pct(lf.up)} · 내림 ${pct(lf.down)} (근거 ${lf.n}건)</p>` +
+      (r.linear ? `<p class="rec-why">선형 식으로는 ${signed(r.linear.delta)} (95% 범위 ${signed(r.linear.range[0])} ~ ${signed(r.linear.range[1])})${L.pick === 'linear' ? ' — 추천에 사용' : ''}</p>` : '') +
+      (r.clipped.length ? `<p class="rec-why warn">⚠ ${esc(r.clipped.join(', '))} 한계에 걸려서 줄였어요 (원래 ${signed(r.raw)})</p>` : '') +
+      (r.note ? `<p class="rec-why warn">⚠ ${esc(r.note)}</p>` : '') +
+      (r.outside.length ? `<p class="rec-why warn">⚠ 기록에 없던 범위라 운전자 판단을 배운 적이 없어요: ${esc(r.outside.map(o => `${o.label} ${fmt(o.value, 4)} (기록 ${fmt(o.range[0], 4)}~${fmt(o.range[1], 4)})`).join(', '))}</p>` : '');
   };
   form.querySelectorAll('input').forEach(i => i.addEventListener('input', upd));
   form.append(el('p', { class: 'hint', text: '안전 한계의 처음 값은 기록에서 정한 임시값이에요. 실제 설비의 운전 한계로 바꿔 넣으세요.' }));
@@ -1060,8 +1201,8 @@ async function exportExcel() {
       const L = R.control, ev = L.evaluation, xs = ev.series.at.map(i => ds.t[i]);
       charts.push({
         x: xs, y: ev.series.truth, overlay: { x: xs, y: ev.series[L.pick] || ev.series.tree }, overlayLabel: '판단 결과', pointLabel: '실제 조작',
-        xLabel: ds.tLabel, yLabel: L.F.target === 'delta' ? `${L.F.mvName} 조작량` : L.F.mvName,
-        title: `조작 판단 검증: ${L.F.mvName}`, subtitle: `뒤 25% 구간, ${L.pick === 'tree' ? '판단 규칙' : '선형 식'}`,
+        xLabel: ds.tLabel, yLabel: `${L.F.mvName} 조작량`,
+        title: `조작 판단 검증: ${L.F.mvName}`, subtitle: `시간 블록 검증 ${ev.folds}번, ${L.pick === 'tree' ? '판단 규칙' : '선형 식'}`,
       });
     }
     charts.forEach((spec, k) => {
@@ -1075,7 +1216,8 @@ async function exportExcel() {
     let r = 1;
     const put = (vals, style, opts = {}) => {
       const row = ws3.getRow(r);
-      vals.forEach((v, i) => { if (v !== undefined) row.getCell(i + 1).value = v; });
+      // 무한대·NaN은 엑셀 숫자로 쓰면 파일이 깨지므로 '-'로
+      vals.forEach((v, i) => { if (v !== undefined) row.getCell(i + 1).value = typeof v === 'number' && !Number.isFinite(v) ? '-' : v; });
       if (style) styleRow(row, style, 1, opts.to || vals.length);
       else if (opts.border) for (let c = 1; c <= vals.length; c++) row.getCell(c).border = XL.border;
       if (opts.wrap) row.eachCell(c => { c.alignment = { wrapText: true, vertical: 'top' }; });
@@ -1098,7 +1240,7 @@ async function exportExcel() {
       ['검증 오차', '일부 값을 숨기고 나머지로 식을 만든 뒤 숨긴 값을 맞혀본 오차. 시간 변화는 뒤쪽 20%(미래), 항목 관계는 5개 중 1개를 숨김. 예측에 쓸 때는 이 값이 더 현실적인 오차.'],
       ['예측 범위 ±', '"x 값 넣기"의 처음 값에서 새로 잰 값이 약 95% 확률로 들어올 범위의 절반 폭. 예측값 ± 이 값.'],
       ['t', ds.tLabel + (ds.kind === 'time' ? ' — 첫 측정 시각을 0으로 한 시간' : '')],
-      ['함수 고르는 방법', '직선·지수·로그·거듭제곱·2차·3차 함수를 모두 계산한 뒤, 정확도가 비슷하면(0.01 이내) 가장 단순한 함수를 골랐어요.'],
+      ['함수 고르는 방법', '직선·지수·로그·거듭제곱·2차·3차 함수를 모두 계산한 뒤, AICc(정확도와 복잡도를 함께 따진 점수)가 가장 좋은 함수와 2 이내로 비슷하면 가장 단순한 함수를 골랐어요.'],
     ].forEach(([a, b]) => { const row = put([a, b]); row.getCell(1).font = { bold: true }; ws3.mergeCells(r - 1, 2, r - 1, 7); row.getCell(2).alignment = { wrapText: true }; row.height = 30; });
     r++;
 
@@ -1124,7 +1266,7 @@ async function exportExcel() {
 
     title('2. 시간에 따른 변화 (t = ' + ds.tLabel + ')');
     put(fitHeader, XL.head);
-    R.timeFits.forEach(({ v, fr }) => fitRow(v.name, ds.tLabel, fr, trendSentence(v.name, fr, ds.tLabel, R.unitWord), fr.x ? (Math.max(...fr.x) + (fr.x.length > 1 ? fr.x[fr.x.length - 1] - fr.x[fr.x.length - 2] : 1)) : 0, 't'));
+    R.timeFits.forEach(({ v, fr }) => fitRow(v.name, ds.tLabel, fr, trendSentence(v.name, fr, ds.tLabel, R.unitWord), fr.x ? (maxOf(fr.x) + (fr.x.length > 1 ? fr.x[fr.x.length - 1] - fr.x[fr.x.length - 2] : 1)) : 0, 't'));
     note('"x 값 넣기"에는 마지막 측정 다음 시점을 미리 넣어 두었어요 (다음 값 예측). 측정 범위를 많이 벗어나면 예측이 부정확해져요.');
     r++;
 
@@ -1196,8 +1338,8 @@ async function exportExcel() {
       const row = put([v.name,
         { formula: `COUNT(${c})`, result: vals.length },
         { formula: `AVERAGE(${c})`, result: vals.length ? mean(vals) : 0 },
-        { formula: `MIN(${c})`, result: vals.length ? Math.min(...vals) : 0 },
-        { formula: `MAX(${c})`, result: vals.length ? Math.max(...vals) : 0 },
+        { formula: `MIN(${c})`, result: vals.length ? minOf(vals) : 0 },
+        { formula: `MAX(${c})`, result: vals.length ? maxOf(vals) : 0 },
         { formula: `STDEV(${c})`, result: vals.length > 1 ? sd(vals) : 0 },
       ], null, { border: true });
       for (let k = 3; k <= 6; k++) row.getCell(k).numFmt = '0.####';
@@ -1244,23 +1386,29 @@ async function exportExcel() {
       r++;
       title(`9. 운전 조작 판단: ${L.F.mvName} (운전자의 감 → 규칙·식)`);
       note('운전 보조(추천)용. 운전자의 과거 판단을 따라 하므로 실수·습관도 함께 배움. 안전 인터록·한계값은 별도로 두고, 자동 제어 연결 전 운전자 검토와 시운전 검증 필요.');
-      note(`가정: 직전 상태(t−1)를 보고 다음 조작(t)을 함. 배운 대상: ${L.F.target === 'delta' ? '조작량(바꾼 양)' : '조작 값'}. 추세 = 최근 ${L.F.windowLabel} 변화.`);
+      note(`가정: 직전 상태(t−1)를 보고 다음 조작(t)을 함. 배운 대상: 조작량(바꾼 양). 추세 = 최근 ${L.F.windowLabel} 변화.`);
+      (L.warnings || []).forEach(w => note(`! ${w}`));
       const st = L.stats;
-      note(`운전자 조작: ${st.n}번 중 올림 ${st.up} · 내림 ${st.down} · 그대로 ${st.hold}. 보통 한 번에 ${fmtX(st.stepMedian)}, 최대 ${fmtX(st.stepMax)}. ${fmtX(L.deadband)} 미만 변화는 "그대로".`);
+      note(`운전자 조작: ${st.n}번 중 올림 ${st.up} · 내림 ${st.down} · 그대로 ${st.hold}. 보통 한 번에 ${fmtX(st.stepMedian)}, 최대 ${fmtX(st.stepMax)}. ${fmtX(L.deadband)} 이하 변화는 "그대로".`);
+      if (L.discrete) note(`단계 조작: ${L.discrete.map(v => fmtX(v)).join(' / ')} 중 하나만 가짐.`);
       const ev = L.evaluation;
       if (ev) {
-        put(['검증 (앞 75% 학습 → 뒤 25%)', '오차 RMSE', '방향 맞힘', '실제 조작 때 방향'], XL.head);
+        put([`검증 (시간 블록 ${ev.folds}번: 앞으로 배워 다음 토막 맞힘)`, '오차 RMSE', '방향 맞힘', '실제 조작 때 방향', '조작하라고 할 때 맞음'], XL.head);
+        const pc = v => (Number.isFinite(v) ? v : '-');
         [['조작 안 함 (기준)', 'base'], ['판단 규칙', 'tree'], ['선형 식', 'linear']].forEach(([name, k]) => {
-          const row = put([name + (L.pick === k ? ' (추천에 사용)' : ''), Number.isFinite(ev.rmse[k]) ? +ev.rmse[k].toPrecision(4) : '-', Number.isFinite(ev.direction[k]) ? ev.direction[k] : '-', Number.isFinite(ev.actedDirection[k]) ? ev.actedDirection[k] : '-'], null, { border: true });
-          row.getCell(3).numFmt = '0%'; row.getCell(4).numFmt = '0%';
+          const row = put([name + (L.pick === k ? ' (추천에 사용)' : ''), Number.isFinite(ev.rmse[k]) ? +ev.rmse[k].toPrecision(4) : '-', pc(ev.direction[k]), pc(ev.actedDirection[k]), k === 'base' ? '-' : pc(ev.precision[k])], null, { border: true });
+          [3, 4, 5].forEach(ci => { row.getCell(ci).numFmt = '0%'; });
         });
-        note(L.learned ? '→ "조작 안 함"보다 오차가 작음: 판단 기준을 어느 정도 배웠음.' : '→ "조작 안 함"보다 나아지지 않음: 표에 없는 정보로 판단했을 가능성.');
+        note(`검증 시점 ${ev.nTest}개, 실제 조작 ${ev.acted}번.`);
+        note(L.learned === null ? '→ 검증 구간에 실제 조작이 없어 판정 보류.' : L.learned ? '→ 실제 조작 방향을 맞히거나 "조작 안 함"보다 오차가 작음: 판단 기준을 어느 정도 배웠음.' : '→ "조작 안 함"보다 나아지지 않음: 표에 없는 정보로 판단했을 가능성.');
+      } else {
+        note('검증 못 함 (기록이 짧거나 앞부분 조작이 3번 미만). 규칙은 참고용.');
       }
       r++;
-      put(['만약 (조건)', '', '', '그러면 (운전자 판단)', '올림 비율', '내림 비율', '평균', '근거 수'], XL.head);
+      put(['만약 (조건)', '', '', '그러면 (운전자 판단)', '올림 비율', '내림 비율', '추천 조작량', '근거 수'], XL.head);
       L.rules.forEach(rule => {
         const t = ruleText(L, rule);
-        const row = put([t.when, undefined, undefined, t.act, rule.up, rule.down, +rule.value.toPrecision(4), rule.n], null, { border: true, wrap: true });
+        const row = put([t.when, undefined, undefined, t.act, rule.up, rule.down, +rule.decision.delta.toPrecision(4), rule.n], null, { border: true, wrap: true });
         ws3.mergeCells(r - 1, 1, r - 1, 3);
         row.getCell(5).numFmt = '0%'; row.getCell(6).numFmt = '0%';
         row.height = 32;
@@ -1268,7 +1416,7 @@ async function exportExcel() {
       if (L.linear) {
         const M = L.linear.model;
         r++;
-        note(`선형 식: ${L.F.target === 'delta' ? `${L.F.mvName} 조작량` : L.F.mvName} = ` + joinTerms([[M.b0, ''], ...M.terms.map(t2 => [t2.coef, t2.name])], fmtX).replace(/−/g, '-') + `   (R² ${fmtR2(M.r2)})`);
+        note(`선형 식: ${L.F.mvName} 조작량 = ` + joinTerms([[M.b0, ''], ...M.terms.map(t2 => [t2.coef, t2.name])], fmtX).replace(/−/g, '-') + `   (R² ${fmtR2(M.r2)})`);
       }
     }
 
@@ -1308,7 +1456,7 @@ function buildModelBundle(R) {
     ...R.pairFits.map(({ v, fr }) => single(fr, 'pair', R.target.name, v.name, 'x')),
   ].filter(Boolean);
   if (R.multi && !R.multi.error) models.push(Regression.serialize(R.multi, { role: 'multi' }));
-  if (R.control && !R.control.error) models.push(Control.serialize(R.control, { role: 'control', windowTime: R.controlWindow }));
+  if (R.control && !R.control.error) models.push(Control.serialize(R.control, { role: 'control', timeIsSeconds: !!(R.controlMeta && R.controlMeta.timeIsSeconds) }));
   return {
     format: 'data-analyzer/model', version: Regression.VERSION,
     createdAt: R.at.toISOString(),
@@ -1322,7 +1470,7 @@ function buildModelBundle(R) {
     },
     variables: ds.vars.map(v => {
       const vals = v.values.filter(Number.isFinite);
-      return { name: v.name, n: vals.length, mean: vals.length ? mean(vals) : null, min: vals.length ? Math.min(...vals) : null, max: vals.length ? Math.max(...vals) : null };
+      return { name: v.name, n: vals.length, mean: vals.length ? mean(vals) : null, min: vals.length ? minOf(vals) : null, max: vals.length ? maxOf(vals) : null };
     }),
     target: R.target.name,
     correlation: { names: ds.vars.map(v => v.name), r: R.corr.map(row => row.map(c => (Number.isFinite(c.r) ? +c.r.toFixed(6) : null))) },
@@ -1342,17 +1490,21 @@ $('model-btn').onclick = () => {
 function cellToText(v) {
   if (v == null) return '';
   if (v instanceof Date) {
-    const p = n => String(n).padStart(2, '0');
-    const hms = `${p(v.getUTCHours())}:${p(v.getUTCMinutes())}:${p(v.getUTCSeconds())}`;
-    return v.getUTCFullYear() < 1901 ? hms : `${v.getUTCFullYear()}-${p(v.getUTCMonth() + 1)}-${p(v.getUTCDate())} ${hms}`;
+    const p = (n, k = 2) => String(n).padStart(k, '0');
+    const ms = v.getUTCMilliseconds();
+    const hms = `${p(v.getUTCHours())}:${p(v.getUTCMinutes())}:${p(v.getUTCSeconds())}${ms ? `.${p(ms, 3)}` : ''}`;
+    if (v.getUTCFullYear() < 1901) return hms;
+    const ymd = `${v.getUTCFullYear()}-${p(v.getUTCMonth() + 1)}-${p(v.getUTCDate())}`;
+    return v.getTime() % 86400000 === 0 ? ymd : `${ymd} ${hms}`;
   }
   if (typeof v === 'object') {
+    if ('error' in v) return String(v.error);
     if ('result' in v) return cellToText(v.result);
-    if (v.richText) return v.richText.map(t => t.text).join('');
-    if ('text' in v) return String(v.text);
+    if (v.richText) return cellToText(v.richText.map(t => t.text).join(''));
+    if ('text' in v) return cellToText(String(v.text));
     return '';
   }
-  return String(v).replace(/[\t\n\r]+/g, ' ');
+  return String(v).replace(/[\t\n\r]+/g, ' ').trim();
 }
 
 /** 파일 하나 → [{ name, text, size }] (엑셀은 시트마다 하나). 읽을 수 없으면 오류 */
@@ -1364,20 +1516,43 @@ async function fileToSheets(f) {
     await wb.xlsx.load(await f.arrayBuffer());
     return wb.worksheets.map(ws => {
       const lines = [];
+      const nc = ws.columnCount; // 매번 계산하면 느리다 (모든 줄을 다시 훑음)
+      const shownCols = [];
+      for (let c = 1; c <= nc; c++) if (!ws.getColumn(c).hidden) shownCols.push(c);
+      let hidden = 0;
       ws.eachRow({ includeEmpty: false }, row => {
-        const vals = [];
-        for (let c = 1; c <= ws.columnCount; c++) vals.push(cellToText(row.getCell(c).value));
+        if (row.hidden) { hidden++; return; } // 필터로 숨긴 줄은 복사할 때처럼 뺀다
+        const vals = shownCols.map(c => cellToText(row.getCell(c).value));
         if (vals.some(v => v !== '')) lines.push(vals.join('\t'));
       });
-      return { name: ws.name, text: lines.join('\n'), size: lines.length };
+      const hiddenCols = nc - shownCols.length;
+      const note = [hidden ? `숨긴 줄 ${hidden}개` : '', hiddenCols ? `숨긴 열 ${hiddenCols}개` : ''].filter(Boolean).join('·');
+      return { name: ws.name, text: lines.join('\n'), size: lines.length, note: note ? `엑셀에서 ${note}는 뺐어요` : '' };
     }).filter(sh => sh.size > 0);
   }
-  const buf = await f.arrayBuffer();
+  return [{ name: f.name, ...decodeText(await f.arrayBuffer()) }];
+}
+
+// 글자 파일 → 글자 (UTF-8, UTF-16 'Unicode 텍스트', 한글 윈도우 EUC-KR)
+function decodeText(buf) {
+  const b = new Uint8Array(buf);
+  let enc = 'utf-8';
+  if (b[0] === 0xFF && b[1] === 0xFE) enc = 'utf-16le';
+  else if (b[0] === 0xFE && b[1] === 0xFF) enc = 'utf-16be';
+  else {
+    // BOM이 없어도 짝수/홀수 자리에 0이 많으면 UTF-16
+    let ze = 0, zo = 0; const n = Math.min(b.length, 4000);
+    for (let i = 0; i < n; i++) if (!b[i]) (i % 2 ? zo++ : ze++);
+    if (zo > n / 8) enc = 'utf-16le'; else if (ze > n / 8) enc = 'utf-16be';
+  }
   let text;
-  try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
-  catch { text = new TextDecoder('euc-kr').decode(buf); } // 한글 윈도우 엑셀 CSV
+  if (enc !== 'utf-8') text = new TextDecoder(enc).decode(buf);
+  else {
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+    catch { text = new TextDecoder('euc-kr').decode(buf); }
+  }
   text = text.replace(/^\uFEFF/, '');
-  return [{ name: f.name, text, size: text.split('\n').length }];
+  return { text, size: text.split('\n').length, note: enc !== 'utf-8' ? '유니코드(UTF-16) 글자 파일로 읽었어요' : '' };
 }
 
 $('file').onchange = async e => {
@@ -1392,16 +1567,18 @@ $('file').onchange = async e => {
       state.sheets = sheets;
       state.sheetIdx = Math.max(0, sheets.findIndex(sh => sh.size > 1));
       input.value = sheets[state.sheetIdx].text;
+      state.loadNote = sheets[state.sheetIdx].note;
       state.layout = 'auto'; store.set('layout', 'auto');
       if (sheets.length > 1) toast(`시트 ${sheets.length}개 중 "${sheets[state.sheetIdx].name}"을(를) 읽었어요. 다른 시트는 아래에서 고를 수 있어요`, 4000);
     } else {
-      input.value = (await fileToSheets(f))[0].text;
+      const sh = (await fileToSheets(f))[0];
+      input.value = sh.text; state.loadNote = sh.note;
       state.sheets = null; state.layout = 'auto'; store.set('layout', 'auto');
     }
     onInput();
   } catch (err) {
     console.error(err);
-    setMsg('파일을 읽지 못했어요. 표를 복사해서 붙여넣어 보세요.', 'err');
+    clearTable(`파일을 읽지 못했어요: ${err.message}`, 'err');
   }
 };
 
@@ -1447,10 +1624,10 @@ function gasSampleData() {
   return lines.join('\n');
 }
 
-const loadSample = (text, msg) => { input.value = text; state.table = null; state.sheets = null; state.layout = 'auto'; onInput(); toast(msg, 3500); };
+const loadSample = (text, msg) => { input.value = text; state.table = null; state.sheets = null; state.loadNote = ''; state.layout = 'auto'; onInput(); toast(msg, 3500); };
 $('sample-btn').onclick = () => loadSample(sampleData(), '예시: 냉방 중인 방을 2시간 동안 5분마다 잰 값이에요');
 $('gas-btn').onclick = () => loadSample(gasSampleData(), '예시: 가스 공급 3시간, 1분마다. 운전자가 압력·수요를 보고 밸브를 조절했어요');
-$('clear-btn').onclick = () => { input.value = ''; state.table = null; state.sheets = null; state.layout = 'auto'; store.set('layout', 'auto'); store.set('cfg', null); onInput(); input.focus(); };
+$('clear-btn').onclick = () => { input.value = ''; state.table = null; state.sheets = null; state.loadNote = ''; state.layout = 'auto'; store.set('layout', 'auto'); store.set('cfg', null); onInput(); input.focus(); };
 
 let inputTimer;
 input.addEventListener('input', () => { clearTimeout(inputTimer); inputTimer = setTimeout(onInput, 250); });

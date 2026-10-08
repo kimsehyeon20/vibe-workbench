@@ -22,11 +22,110 @@ test('정확한 데이터는 계수를 그대로 찾는다', () => {
     ['power', v => 0.7 * v ** 1.3, [0.7, 1.3]],
   ];
   for (const [id, f, want] of cases) {
+    // 0 근처 데이터: 계수가 그대로
+    const x1 = range(20, i => i * 3 + 1);
+    const m1 = R.fitModel(id, x1, x1.map(f));
+    assert.equal(m1.x0, id === 'log' || id === 'power' ? 1 : 0);
+    want.forEach((w, k) => near(m1.params[k], w, 1e-6, `${id} 계수 ${k}`));
+    // 0에서 먼 데이터: 기준점 x0 둘레로 쓴 식이 예측과 같다
     const m = R.fitModel(id, x, x.map(f));
-    want.forEach((w, k) => near(m.params[k], w, 1e-6, `${id} 계수 ${k}`));
     near(m.r2, 1, 1e-9, `${id} R²`);
     near(m.predict(250), f(250), 1e-6, `${id} 예측`);
+    near(evalParams(m, 250), f(250), 1e-6, `${id} 식으로 계산`);
   }
+});
+
+// 화면·엑셀에 쓰는 식(params, x0)으로 직접 계산
+function evalParams(m, v) {
+  const p = m.params, x0 = m.x0 || 0;
+  if (m.id === 'exp') return p[0] * Math.exp(p[1] * (v - x0));
+  if (m.id === 'log') return p[0] + p[1] * Math.log(v / (x0 || 1));
+  if (m.id === 'power') return p[0] * (v / (x0 || 1)) ** p[1];
+  return p.reduce((s, a, k) => s + a * (v - x0) ** k, 0);
+}
+
+test('x가 0에서 먼 데이터(온도 1550~1650, 엑셀 날짜 숫자)도 식을 그대로 계산하면 맞는다', () => {
+  let sd2 = 9; const r = () => { sd2 = (sd2 * 16807) % 2147483647; return sd2 / 2147483647 - 0.5; };
+  const T = range(40, i => 1550 + i * 2.5);
+  for (const id of ['quad', 'cubic', 'exp', 'power', 'log']) {
+    const m = R.fitModel(id, T, T.map(v => 30 + 0.002 * (v - 1600) ** 2 + 0.05 * (v - 1600) + r()));
+    if (!m) continue;
+    T.forEach(v => near(evalParams(m, v), m.predict(v), 1e-7, `${id} @${v}`));
+  }
+  const S = range(30, i => 45937 + i / 24); // 엑셀 날짜 숫자 (1시간 간격)
+  for (const id of ['linear', 'quad', 'exp']) {
+    const m = R.fitModel(id, S, S.map((v, i) => 5 + 0.3 * i + r()));
+    assert.ok(m.params.every(Number.isFinite), id);
+    S.forEach(v => near(evalParams(m, v), m.predict(v), 1e-7, `${id} serial`));
+  }
+});
+
+test('기준점(x0)이 있어도 상세 통계(F·잔차)는 그대로', () => {
+  let sd5 = 7; const r = () => { sd5 = (sd5 * 16807) % 2147483647; return sd5 / 2147483647 - 0.5; };
+  const x = range(40, i => 1550 + i * 2.5), y = x.map(v => 0.002 * (v - 1600) ** 2 + r());
+  const m = R.fitModel('quad', x, y);
+  assert.ok(m.x0 !== 0);
+  const d = R.details(m, 'T');
+  const mm = R.multiRegression('y', y, [{ name: 'a', values: x }, { name: 'b', values: x.map(v => v * v) }]);
+  near(d.anova.F, R.details(mm).anova.F, 1e-6, 'F');
+  near(d.anova.sse, R.details(mm).anova.sse, 1e-6, 'SSE');
+});
+
+test('변하지 않는 값: R²=1로 나오지 않고 오류', () => {
+  const x = range(10, i => i);
+  assert.equal(R.bestFit(x, x.map(() => 62.4)).constant, 62.4);
+  const mm = R.multiRegression('y', x.map(() => 62.4), [{ name: 'a', values: x }, { name: 'b', values: x.map(v => v * v) }]);
+  assert.ok(mm.error && mm.error.includes('변하지'));
+  const mc = R.multiRegression('y', x.map(v => v + (v % 3)), [{ name: 'a', values: x }, { name: '고정', values: x.map(() => 0.1 + 0.2) }]);
+  assert.ok(mc.error && mc.error.includes('고정'));
+});
+
+test('겹치는 항목 이름을 알려준다', () => {
+  const a = range(20, i => i), b = range(20, i => (i * 7) % 5);
+  const m = R.multiRegression('y', a.map((v, i) => v + b[i]), [{ name: 'f1', values: a }, { name: 'f2', values: b }, { name: 'total', values: a.map((v, i) => v + b[i]) }]);
+  assert.ok(m.error);
+  assert.deepEqual(m.overlap.sort(), ['f1', 'f2', 'total']);
+});
+
+test('null·빈 값 입력은 0이 아니라 계산 불가', () => {
+  const a = range(20, i => i), b = range(20, i => (i * 7) % 5);
+  const m = R.multiRegression('y', a.map((v, i) => 1 + v + b[i]), [{ name: 'a', values: a }, { name: 'b', values: b }]);
+  assert.ok(Number.isNaN(m.predict({ a: null, b: 1 })));
+  assert.ok(Number.isNaN(m.predict(['', 1])));
+  near(m.predict(['3', '2']), 6, 1e-9, '숫자 글자');
+  const s = R.fitModel('linear', a, a.map(v => 2 * v));
+  assert.ok(Number.isNaN(s.predict(null)));
+  near(s.predict('3'), 6, 1e-9, '단일 숫자 글자');
+});
+
+test('정확한 관계(단위 환산)는 F=∞, 잔차 진단 생략', () => {
+  const c = range(20, i => i * 1.7 - 5);
+  const m = R.fitModel('linear', c, c.map(v => v * 9 / 5 + 32));
+  const d = R.details(m, 'x');
+  assert.equal(d.exact, true);
+  assert.equal(d.anova.p, 0);
+});
+
+test('자료가 적을 때 직선 데이터에 3차 곡선을 고르지 않는다', () => {
+  let sd3 = 3; const r = () => { sd3 = (sd3 * 16807) % 2147483647; return sd3 / 2147483647 - 0.5; };
+  let cubic = 0;
+  for (let rep = 0; rep < 300; rep++) {
+    const x = range(8, i => i);
+    const fr = R.bestFit(x, x.map(v => 1 + 0.5 * v + r() * 4));
+    if (fr.best && fr.best.id === 'cubic') cubic++;
+  }
+  assert.ok(cubic / 300 < 0.08, `3차 선택 ${cubic}/300`);
+});
+
+test('시간 순서 자기상관은 시간 순서로 검사', () => {
+  let sd4 = 11; const r = () => { sd4 = (sd4 * 16807) % 2147483647; return sd4 / 2147483647 - 0.5; };
+  // 서로 무관한 두 AR(1) 계열
+  let a = 0, b = 0; const A = [], B = [];
+  for (let i = 0; i < 300; i++) { a = 0.97 * a + r(); b = 0.97 * b + r(); A.push(a); B.push(b); }
+  const fr = R.bestFit(A, B, { timeOrdered: true });
+  const d = R.details(fr.linear, 'x');
+  assert.ok(d.dw < 1.0, `DW ${d.dw}`);
+  assert.ok(d.nEff < 50, `nEff ${d.nEff}`);
 });
 
 test('bestFit: 직선 데이터에는 직선, 정확도가 비슷하면 단순한 함수', () => {

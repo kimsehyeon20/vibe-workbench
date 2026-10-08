@@ -180,7 +180,7 @@ function renderBatch() {
   }
   const good = R.early.find(e => e.model.r2 >= 0.7);
   if (good) add(`회수 시작 후 <b>${fmt(mins(good.sec), 3)}분</b>까지 모인 양으로 최종 회수량을 예측할 수 있어요 (정확도 ${fmtR2(good.model.r2)}, 오차 약 ±${fmt(good.model.rmse, 3)} ${esc(vu)}).`);
-  else if (R.early.length) add(`중간 회수량만으로는 최종 회수량을 정확히 예측하기 어려워요 (가장 좋을 때 정확도 ${fmtR2(Math.max(...R.early.map(e => e.model.r2)))}). 조업 정보를 함께 쓰면 나아질 수 있어요.`);
+  else if (R.early.length) add(`중간 회수량만으로는 최종 회수량을 정확히 예측하기 어려워요 (가장 좋을 때 정확도 ${fmtR2(maxOf(R.early.map(e => e.model.r2)))}). 조업 정보를 함께 쓰면 나아질 수 있어요.`);
   const F = bstate.factors;
   if (F && !F.error) {
     const top = F.rel.find(a => a.model);
@@ -267,7 +267,7 @@ function renderEarly() {
   const draw = () => {
     const e = R.early[+sel.value], m = e.model;
     detail.innerHTML = '';
-    detail.append(el('div', { class: 'formula wrap', html: `최종 회수량 = ${esc(joinTerms([[m.params[0], ''], [m.params[1], `(${fmt(mins(e.sec), 3)}분까지 회수량)`]], fmt))}<small>정확도 ${fmtR2(m.r2)} · 단위 ${esc(vu)}</small>` }));
+    detail.append(el('div', { class: 'formula wrap', html: `${esc(formulaText(m, 'x').replace(/^y =/, '최종 회수량 ='))}<small>x = ${fmt(mins(e.sec), 3)}분까지 회수량 · 정확도 ${fmtR2(m.r2)} · 단위 ${esc(vu)}</small>` }));
     const wrap = el('div', { class: 'chart' });
     detail.append(wrap);
     requestAnimationFrame(() => mountChart(wrap, {
@@ -307,7 +307,7 @@ function renderFactors() {
   }
   if (F.intensity) {
     const v = F.intensity.filter(Number.isFinite);
-    if (v.length) box.append(el('p', { class: 'says', text: `회수 원단위(회수량 ÷ ${F.tonName}): 평균 ${fmt(Regression.mean(v), 4)} ${vu}/t, 범위 ${fmt(Math.min(...v), 4)} ~ ${fmt(Math.max(...v), 4)}` }));
+    if (v.length) box.append(el('p', { class: 'says', text: `회수 원단위(회수량 ÷ ${F.tonName}): 평균 ${fmt(Regression.mean(v), 4)} ${vu}/t, 범위 ${fmt(minOf(v), 4)} ~ ${fmt(maxOf(v), 4)}` }));
   }
 }
 
@@ -399,7 +399,7 @@ async function exportBatchExcel() {
       statRow[fn] = row.number;
       for (let c = 3; c < heads.length; c++) {
         const L = colL(c - 1), vals = rows.map(r => r[c - 2]).filter(Number.isFinite);
-        const res = !vals.length ? 0 : fn === 'AVERAGE' ? mean(vals) : fn === 'STDEV' ? (vals.length > 1 ? sd(vals) : 0) : fn === 'MIN' ? Math.min(...vals) : fn === 'MAX' ? Math.max(...vals) : Batch.quantile([...vals].sort((a, b) => a - b), 0.5);
+        const res = !vals.length ? 0 : fn === 'AVERAGE' ? mean(vals) : fn === 'STDEV' ? (vals.length > 1 ? sd(vals) : 0) : fn === 'MIN' ? minOf(vals) : fn === 'MAX' ? maxOf(vals) : Batch.quantile([...vals].sort((a, b) => a - b), 0.5);
         row.getCell(c).value = { formula: `${fn}(${L}2:${L}${last})`, result: res };
         row.getCell(c).numFmt = '#,##0.0##';
       }
@@ -461,7 +461,7 @@ async function exportBatchExcel() {
     let r = 1;
     const put = (vals, style, o = {}) => {
       const row = ws3.getRow(r);
-      vals.forEach((v, i) => { if (v !== undefined) row.getCell(i + 1).value = v; });
+      vals.forEach((v, i) => { if (v !== undefined) row.getCell(i + 1).value = typeof v === 'number' && !Number.isFinite(v) ? '-' : v; });
       if (style) styleRow(row, style, 1, vals.length); else if (o.border) for (let c = 1; c <= vals.length; c++) row.getCell(c).border = XL.border;
       r++; return row;
     };
@@ -496,7 +496,7 @@ async function exportBatchExcel() {
     if (R.early.length) {
       title('4. 중간 회수량으로 최종 회수량 예측');
       put(['시작 후(분)', '강번 수', 'R²', '예측 오차(±)', '검증 오차(±)', '식'], XL.head);
-      R.early.forEach(e => put([+(e.sec / 60).toPrecision(4), e.n, +fmtR2(e.model.r2), +e.model.rmse.toPrecision(4), e.model.validation ? +e.model.validation.rmse.toPrecision(4) : '-', `최종 = ${fmtX(e.model.params[0], 6)} + ${fmtX(e.model.params[1], 6)} × (c분까지 회수량)`], null, { border: true }));
+      R.early.forEach(e => put([+(e.sec / 60).toPrecision(4), e.n, +fmtR2(e.model.r2), +e.model.rmse.toPrecision(4), e.model.validation ? +e.model.validation.rmse.toPrecision(4) : '-', `${formulaTextX(e.model, 'x').replace(/^y =/, '최종 =')}  (x = ${fmt(e.sec / 60, 3)}분까지 회수량)`], null, { border: true }));
       if (ep) {
         r++;
         const xw = +mean(ep.x).toPrecision(6);

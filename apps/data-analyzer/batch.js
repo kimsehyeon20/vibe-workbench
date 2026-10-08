@@ -17,6 +17,8 @@
   'use strict';
   const Reader = root.Reader || (typeof require === 'function' ? require('./reader.js') : null);
   const Reg = root.Regression || (typeof require === 'function' ? require('./regression.js') : null);
+  const minOf = a => { let m = Infinity; for (const v of a) if (v < m) m = v; return m; };
+  const maxOf = a => { let m = -Infinity; for (const v of a) if (v > m) m = v; return m; };
   const { mean, sd } = Reg;
 
   const sorted = a => [...a].sort((x, y) => x - y);
@@ -50,7 +52,7 @@
     if (/초|sec|\(s\)/i.test(name)) return 's';
     if (/시간|hour|\(h\)/i.test(name)) return 'h';
     const v = values.map(Reader.toNumber).filter(Number.isFinite);
-    return v.length > 30 && Math.max(...v) <= 60 ? 'min' : 's';
+    return v.length > 30 && maxOf(v) <= 60 ? 'min' : 's';
   }
 
   /* ---------- 1. 표 읽기 ---------- */
@@ -204,7 +206,7 @@
   /* ---------- 3. 강번 하나 요약 ---------- */
   // 앞뒤의 0 근처 값(회수 전·후)을 잘라 회수 구간만 남긴다
   function trim(h, thr = 0.05) {
-    const peak = Math.max(...h.q);
+    const peak = maxOf(h.q);
     const th = thr * peak;
     const a = h.q.findIndex(v => v >= th);
     let b = h.q.length - 1; while (b > a && h.q[b] < th) b--;
@@ -232,12 +234,12 @@
     const dts = h.t.slice(1).map((v, i) => v - h.t[i]);
     const duration = h.t[h.t.length - 1];
     const volume = integrate(h.t, h.q, unitSec);
-    const peak = Math.max(...h.q);
+    const peak = maxOf(h.q);
     return {
       duration, volume, peak,
       meanFlow: duration > 0 ? volume / (duration / unitSec) : NaN,
       tPeak: h.t[h.q.indexOf(peak)],
-      n: h.t.length, dt: median(dts), maxGap: Math.max(...dts),
+      n: h.t.length, dt: median(dts), maxGap: maxOf(dts),
     };
   }
 
@@ -254,7 +256,7 @@
     let grid;
     if (mode === 'pct') grid = Array.from({ length: 201 }, (_, i) => i * 0.5);
     else {
-      const maxD = Math.max(...heats.map(h => h.t[h.t.length - 1]));
+      const maxD = maxOf(heats.map(h => h.t[h.t.length - 1]));
       const step = Math.max(median(heats.map(h => h.sum.dt)) || 1, maxD / 600);
       grid = []; for (let x = 0; x <= maxD + 1e-9; x += step) grid.push(+x.toFixed(6));
     }
@@ -322,7 +324,7 @@
     const stats = {
       n: heats.length, mean: mean(vols), sd: sd(vols), median: quantile(sv, 0.5), min: sv[0], max: sv[sv.length - 1],
       p10: quantile(sv, 0.1), p90: quantile(sv, 0.9),
-      durMean: mean(durs), durMin: Math.min(...durs), durMax: Math.max(...durs),
+      durMean: mean(durs), durMin: minOf(durs), durMax: maxOf(durs),
       peakMean: mean(heats.map(h => h.sum.peak)), flowMean: mean(heats.map(h => h.sum.meanFlow)),
     };
     stats.cv = stats.sd / stats.mean;

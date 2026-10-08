@@ -235,3 +235,5 @@ input.num { min-height: 46px; border-radius: 12px; border: 1px solid var(--line-
 .stat-table td.flag, .stat-table td.flag { color: var(--neg); font-weight: 650; }
 .stat-table tr.sum td { font-weight: 750; background: var(--bg); }
 #h-results { margin: 0; }
+
+.hint.warn { color: var(--warn); font-weight: 600; }

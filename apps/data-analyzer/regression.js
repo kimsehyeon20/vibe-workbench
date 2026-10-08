@@ -16,6 +16,9 @@
   const VERSION = 1;
 
   /* ---------- 기본 계산 ---------- */
+  // 큰 배열에서 Math.max(...a)는 '호출 스택 초과'로 터지므로 반복문으로
+  const minOf = a => { let m = Infinity; for (const v of a) if (v < m) m = v; return m; };
+  const maxOf = a => { let m = -Infinity; for (const v of a) if (v > m) m = v; return m; };
   const sum = a => a.reduce((s, v) => s + v, 0);
   const mean = a => sum(a) / a.length;
   const sd = a => { const m = mean(a); return Math.sqrt(sum(a.map(v => (v - m) ** 2)) / (a.length - 1)); };
@@ -26,7 +29,7 @@
   function gaussJordan(A, B) {
     const n = A.length, w = B[0].length;
     const M = A.map((r, i) => [...r, ...B[i]]);
-    const scale = Math.max(...A.map(r => Math.max(...r.map(Math.abs)))) || 1;
+    const scale = maxOf(A.map(r => maxOf(r.map(Math.abs)))) || 1;
     for (let c = 0; c < n; c++) {
       let p = c;
       for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
@@ -92,7 +95,11 @@
     for (let i = 0; i < 100; i++) { const mid = (lo + hi) / 2; if (tP(mid, df) > alpha) lo = mid; else hi = mid; }
     return (lo + hi) / 2;
   }
-  const t975 = df => tInv(0.05, df);
+  // t 임계값은 자유도마다 한 번만 계산 (예측 범위를 점마다 구할 때 느려지지 않게)
+  const tCache = new Map();
+  const t975 = df => { if (!tCache.has(df)) tCache.set(df, tInv(0.05, df)); return tCache.get(df); };
+  // 값이 사실상 변하지 않는가 (소수 반올림 잡음은 무시)
+  const isConstant = a => { const lo = minOf(a), hi = maxOf(a); return !(hi - lo > 1e-12 * Math.max(1, Math.abs(hi), Math.abs(lo))); };
 
   /* ---------- 핵심: 표준화한 다항식 최소제곱 ----------
    * 설명변수 g를 u = (g − center) / scale 로 바꿔 [1, u, u², …]로 푼다.
@@ -132,12 +139,21 @@
   }
 
   const binom = (n, k) => { let r = 1; for (let i = 1; i <= k; i++) r = r * (n - k + i) / i; return r; };
-  // 표준화 계수 → 원래 g 의 다항식 계수 [a0, a1, …]
-  function expand(core) {
-    const { coef: c, center: m, scale: s, deg } = core;
+  // 표준화 계수 → (g − g0) 의 다항식 계수 [a0, a1, …]
+  // g0(기준점)을 데이터 근처로 잡아야 x가 클 때(온도 1600, 날짜 숫자) 계수가 서로 상쇄되어 틀어지지 않는다
+  function expand(core, g0 = 0) {
+    const { coef: c, scale: s, deg } = core, m = core.center - g0;
     const a = new Array(deg + 1).fill(0);
     for (let k = 0; k <= deg; k++) for (let j = 0; j <= k; j++) a[j] += c[k] * s ** -k * binom(k, j) * (-m) ** (k - j);
     return a;
+  }
+  // 식을 쓸 기준점: 데이터가 0 근처면 0, 멀리 떨어져 있으면 보기 좋은 가운데 값
+  function originFor(transformX, core) {
+    if (!(Math.abs(core.center) > 3 * core.scale)) return { g0: 0, x0: transformX === 'ln' ? 1 : 0 };
+    if (transformX === 'ln') { const x0 = Number(Math.exp(core.center).toPrecision(2)); return { g0: Math.log(x0), x0 }; }
+    const p = 10 ** Math.floor(Math.log10(core.scale || 1));
+    const x0 = Number((Math.round(core.center / p) * p).toPrecision(12));
+    return { g0: x0, x0 };
   }
 
   /* ---------- 함수 종류 ----------
@@ -154,9 +170,11 @@
   const fwd = (t, v) => (t === 'ln' ? (v > 0 ? Math.log(v) : NaN) : v);
   const back = (t, v) => (t === 'ln' ? Math.exp(v) : v);
 
-  // 사람이 읽는 식의 계수. 직선·2차·3차: [a0,a1,…], 지수: y=a·e^(bx) → [a,b], 로그: y=a+b·ln x → [a,b], 거듭제곱: y=a·x^b → [a,b]
-  function readableParams(id, core) {
-    const a = expand(core);
+  // 사람이 읽는 식의 계수 (x0 = 기준점, 보통 0)
+  //   직선·2차·3차: y = a0 + a1·(x−x0) + a2·(x−x0)² …  → [a0, a1, …]
+  //   지수: y = a·e^(b·(x−x0)) → [a, b] / 로그: y = a + b·ln(x/x0) → [a, b] / 거듭제곱: y = a·(x/x0)^b → [a, b]
+  function readableParams(id, core, g0) {
+    const a = expand(core, g0);
     return id === 'exp' || id === 'power' ? [Math.exp(a[0]), a[1]] : a;
   }
 
@@ -174,18 +192,22 @@
     if (n < meta.deg + 3) return null;
     if (meta.transform.x === 'ln' && !x.every(v => v > 0)) return null;
     if (meta.transform.y === 'ln' && !y.every(v => v > 0)) return null;
+    if (isConstant(y)) return null;
     const g = x.map(v => fwd(meta.transform.x, v)), h = y.map(v => fwd(meta.transform.y, v));
     if (new Set(g).size <= meta.deg) return null;
     const core = coreFit(g, h, meta.deg);
     if (!core) return null;
+    const { g0, x0 } = originFor(meta.transform.x, core);
+    const params = readableParams(id, core, g0);
+    if (!params.every(Number.isFinite)) return null;
     const model = attach({
       kind: 'single', id, name: meta.name, plain: meta.plain, p: meta.p, transform: meta.transform,
-      core, params: readableParams(id, core), xMin: Math.min(...x), xMax: Math.max(...x),
+      core, params, x0, g0, xMin: minOf(x), xMax: maxOf(x),
     });
     const yh = x.map(model.predict);
     if (!yh.every(Number.isFinite)) return null;
     Object.assign(model, scores(y, yh, meta.p));
-    Object.defineProperty(model, 'data', { value: { x, y, g, h }, enumerable: false });
+    Object.defineProperty(model, 'data', { value: { x, y, g, h, timeOrdered: false }, enumerable: false });
     return model;
   }
 
@@ -193,17 +215,21 @@
     const n = y.length, my = mean(y);
     const ssRes = sum(y.map((v, i) => (v - yh[i]) ** 2));
     const ssTot = sum(y.map(v => (v - my) ** 2));
-    const r2 = ssTot > 0 ? 1 - ssRes / ssTot : 1;
+    // y가 변하지 않으면 R²는 정의되지 않는다 (1이 아님)
+    const r2 = ssTot > 0 ? 1 - ssRes / ssTot : NaN;
     const adj = n - p - 1 > 0 ? 1 - (1 - r2) * (n - 1) / (n - p - 1) : r2;
     // AIC/BIC: 원래 값 기준, 정규분포 로그우도 (statsmodels 와 같은 정의, 계수 p+1개). 작을수록 좋음
+    // AICc: 자료가 적을 때 복잡한 함수에 더 큰 벌점 (자동 선택에 사용)
     const k = p + 1, nll2 = n * (Math.log(2 * Math.PI * Math.max(ssRes, 1e-300) / n) + 1);
-    return { r2, adj, rmse: Math.sqrt(ssRes / n), n, aic: nll2 + 2 * k, bic: nll2 + k * Math.log(n) };
+    const aic = nll2 + 2 * k;
+    const aicc = n - k - 1 > 0 ? aic + 2 * k * (k + 1) / (n - k - 1) : Infinity;
+    return { r2, adj, rmse: Math.sqrt(ssRes / n), n, aic, aicc, bic: nll2 + k * Math.log(n) };
   }
 
   /** 모델로 값 하나 예측. 단일 모델은 x(숫자), 다중 모델은 {항목이름: 값} 또는 배열 */
   function predict(model, x) {
     if (model.kind === 'multi') return multiEval(model, x).eta;
-    const gv = fwd(model.transform.x, x);
+    const gv = fwd(model.transform.x, asNum(x));
     if (!Number.isFinite(gv)) return NaN;
     return back(model.transform.y, coreEval(model.core, gv).eta);
   }
@@ -213,7 +239,7 @@
     let e;
     if (model.kind === 'multi') e = multiEval(model, x);
     else {
-      const gv = fwd(model.transform.x, x);
+      const gv = fwd(model.transform.x, asNum(x));
       if (!Number.isFinite(gv)) return [NaN, NaN];
       e = coreEval(model.core, gv);
     }
@@ -224,13 +250,14 @@
   }
 
   /** 검증: 일부를 숨기고 나머지로 식을 만든 뒤, 숨긴 값을 얼마나 맞히는지 본다
-   *  mode 'tail'  : 뒤쪽 20%를 숨김 (시간 순서 데이터 → 미래 예측 능력)
-   *  mode 'spread': 5개마다 1개를 숨김 (측정 범위 안쪽 예측 능력) */
+   *  mode 'tail'  : x가 큰 쪽 20%를 숨김 (시간이 x면 → 미래 예측 능력)
+   *  mode 'time'  : 들어온 순서(시간 순)로 마지막 20%를 숨김 (시간 순 데이터의 항목 관계)
+   *  mode 'spread': 5개마다 1개를 숨김 (측정 범위 안쪽 예측 능력, 시간 순 데이터에는 낙관적) */
   function validate(id, x, y, mode = 'tail') {
     const n = x.length;
-    const order = [...x.keys()].sort((a, b) => x[a] - x[b]);
+    const order = mode === 'time' ? [...x.keys()] : [...x.keys()].sort((a, b) => x[a] - x[b]);
     const nTest = Math.max(2, Math.round(n * 0.2));
-    const testSet = new Set(mode === 'tail' ? order.slice(n - nTest) : order.filter((_, k) => k % 5 === 4));
+    const testSet = new Set(mode === 'tail' || mode === 'time' ? order.slice(n - nTest) : order.filter((_, k) => k % 5 === 4));
     const tr = order.filter(i => !testSet.has(i)), te = order.filter(i => testSet.has(i));
     if (te.length < 2) return null;
     const f = fitModel(id, tr.map(i => x[i]), tr.map(i => y[i]));
@@ -253,21 +280,25 @@
   }
 
   /** 여러 함수를 모두 맞추고 가장 알맞은 것을 고른다.
-   *  수정 R²가 최고값과 0.01 이내면 더 단순한(변수 적은) 함수를 고른다.
-   *  opts.validate: 'tail' | 'spread' | null */
+   *  AICc(자료 수에 맞춘 정보 기준)가 가장 작은 함수와 2 이내로 비슷하면 더 단순한 함수를 고른다
+   *  (자료가 적을 때 3차 곡선이 우연히 뽑히는 것을 막는다).
+   *  opts.validate: 'tail' | 'time' | 'spread' | null
+   *  opts.timeOrdered: 들어온 순서가 시간 순서인가 (잔차 자기상관을 그 순서로 검사) */
   function bestFit(xAll, yAll, opts = {}) {
     const { x, y } = clean(xAll, yAll);
     if (x.length < 4) return { error: '값이 4개 이상 있어야 계산할 수 있어요', n: x.length };
-    if (new Set(y).size === 1) return { constant: y[0], n: x.length, x, y };
-    if (new Set(x).size === 1) return { error: '기준 값이 모두 같아서 관계를 계산할 수 없어요', n: x.length };
+    if (isConstant(y)) return { constant: y[0], n: x.length, x, y };
+    if (isConstant(x)) return { error: '기준 값이 모두 같아서 관계를 계산할 수 없어요', n: x.length };
     const all = MODELS.map(m => fitModel(m.id, x, y)).filter(Boolean);
     if (!all.length) return { error: '계산할 수 없어요', n: x.length };
+    all.forEach(f => { f.data.timeOrdered = !!opts.timeOrdered; });
     if (opts.validate) all.forEach(f => { f.validation = validate(f.id, x, y, opts.validate); });
-    const top = Math.max(...all.map(f => f.adj));
-    const ok = all.filter(f => f.adj >= top - 0.01).sort((a, b) => a.p - b.p || b.adj - a.adj);
-    const auto = ok[0];
+    const top = minOf(all.map(f => f.aicc));
+    const ok = all.filter(f => f.aicc <= top + 2).sort((a, b) => a.p - b.p || a.aicc - b.aicc);
+    const auto = ok[0] || all.sort((a, b) => a.aicc - b.aicc)[0];
     let best = auto;
     if (opts.prefer) best = all.find(f => f.id === opts.prefer) || auto;
+    // 표에는 정확도(수정 R²) 순서로
     return { best, auto, all: all.sort((a, b) => b.adj - a.adj), linear: all.find(f => f.id === 'linear'), x, y, n: x.length };
   }
 
@@ -290,11 +321,24 @@
     if (k < 1) return null;
     if (n < k + 3) return { error: `여러 항목을 함께 쓰려면 값이 ${k + 3}줄 이상 필요해요 (지금 ${n}줄)` };
     const ys = rows.map(i => y[i]);
+    if (isConstant(ys)) return { error: `${yName}이(가) 변하지 않아서 다른 항목으로 설명할 수 없어요 (계측기 고정·설정값인지 확인해주세요)` };
     const ms = preds.map(p => mean(rows.map(i => p.values[i])));
     const ss = preds.map(p => sd(rows.map(i => p.values[i])));
-    if (ss.some(s => !(s > 0))) return { error: '값이 변하지 않는 항목이 있어서 함께 계산할 수 없어요' };
-    const core = lsCore(rows.map(i => [1, ...preds.map((p, j) => (p.values[i] - ms[j]) / ss[j])]), ys);
-    if (!core) return { error: '항목끼리 너무 똑같이 움직여서(겹쳐서) 함께 계산할 수 없어요. 비슷한 항목을 하나 빼보세요.' };
+    const flat = preds.filter(p => isConstant(rows.map(i => p.values[i])));
+    if (flat.length) return { error: `값이 변하지 않는 항목(${flat.map(p => p.name).join(', ')})이 있어서 함께 계산할 수 없어요. 그 항목을 빼주세요`, constant: flat.map(p => p.name) };
+    const Z = rows.map(i => preds.map((p, j) => (p.values[i] - ms[j]) / ss[j]));
+    const core = lsCore(Z.map(z => [1, ...z]), ys);
+    if (!core) {
+      // 어느 항목이 겹치는지: 다른 항목들로 거의 정확히 계산되는 항목
+      const overlap = preds.filter((p, j) => {
+        if (k < 2) return false;
+        const c = lsCore(Z.map(z => [1, ...z.filter((_, q) => q !== j)]), Z.map(z => z[j]));
+        if (!c) return true;
+        const e = Z.map(z => z[j] - dot(c.coef, [1, ...z.filter((_, q) => q !== j)]));
+        return 1 - sum(e.map(v => v * v)) / (Z.length - 1) > 0.999999;
+      }).map(p => p.name);
+      return { error: `항목끼리 너무 똑같이 움직여서(겹쳐서) 함께 계산할 수 없어요${overlap.length ? ` (${overlap.join(', ')})` : ''}. 그중 하나를 빼보세요.`, overlap };
+    }
     const c = core.coef, sy = sd(ys);
     const model = attach({
       kind: 'multi', yName, core,
@@ -309,8 +353,11 @@
     return model;
   }
 
+  // 입력값 정리: 숫자나 숫자 글자만 받고, 빈 값·null 은 NaN (0으로 바뀌지 않게)
+  const asNum = v => (typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN);
   function multiEval(model, x) {
-    const vals = Array.isArray(x) ? x : model.terms.map(t => x[t.name]);
+    const raw = Array.isArray(x) ? x : x && typeof x === 'object' ? model.terms.map(t => x[t.name]) : [];
+    const vals = model.terms.map((_, j) => asNum(raw[j]));
     const b = [1, ...model.terms.map((t, j) => (vals[j] - t.mean) / t.sd)];
     if (!b.every(Number.isFinite)) return { eta: NaN, se: NaN };
     const q = dot(b, matVec(model.core.cov, b));
@@ -321,8 +368,9 @@
   const SUPN = ['', '', '²', '³'];
 
   // 잔차 진단 공통: e(검정 공간 잔차), lev(지렛값), order(시간/x 순서)
-  function diagnose(e, lev, sigma, nPar, order) {
+  function diagnose(e, lev, sigma, nPar, order, exact) {
     const n = e.length;
+    if (exact) return { exact: true, dw: NaN, r1: NaN, skew: NaN, kurt: NaN, jb: NaN, jbP: NaN, stud: e.map(() => 0), cook: e.map(() => 0), lev, nEff: n };
     const eo = order.map(i => e[i]);
     let num = 0; for (let i = 1; i < n; i++) num += (eo[i] - eo[i - 1]) ** 2;
     const sse = sum(e.map(v => v * v));
@@ -334,7 +382,9 @@
     const jb = n / 6 * (skew ** 2 + (kurt - 3) ** 2 / 4);
     const stud = e.map((v, i) => (sigma > 0 && lev[i] < 1 ? v / (sigma * Math.sqrt(1 - lev[i])) : 0));
     const cook = stud.map((r, i) => (lev[i] < 1 ? r * r * lev[i] / (nPar * (1 - lev[i])) : 0));
-    return { dw, r1, skew, kurt, jb, jbP: Math.exp(-jb / 2), stud, cook, lev };
+    // 자기상관이 강하면 실제로 독립적인 자료 수는 더 적다 (p값이 실제보다 작게 나온다)
+    const nEff = r1 > 0 ? Math.max(3, n * (1 - r1) / (1 + r1)) : n;
+    return { dw, r1, skew, kurt, jb, jbP: Math.exp(-jb / 2), stud, cook, lev, nEff };
   }
 
   function coefRows(names, est, covB, df, sigma) {
@@ -352,35 +402,40 @@
    *  지수·로그·거듭제곱은 변환한 공간(예: ln y)에서 검정한다 → space 로 표시 */
   function details(model, xSym = 'x') {
     if (model.kind === 'multi') return multiDetails(model);
-    const { x, y, g, h } = model.data;
+    const { x, y, g, h, timeOrdered } = model.data;
     const core = model.core, n = x.length, deg = core.deg, df = core.df;
-    const { center: m, scale: s } = core;
-    // 표준화 계수 c → 원래 g 계수 a = T c
+    const g0 = model.g0 || 0;
+    const m = core.center - g0, s = core.scale;
+    // 표준화 계수 c → (g − g0) 계수 a = T c
     const T = Array.from({ length: deg + 1 }, (_, j) => Array.from({ length: deg + 1 }, (_, k) => (k >= j ? s ** -k * binom(k, j) * (-m) ** (k - j) : 0)));
     const a = matVec(T, core.coef);
     const covA = mulT(mulT(T, core.cov), tr(T));
-    const gx = model.transform.x === 'ln' ? `ln(${xSym})` : xSym;
-    const names = a.map((_, k) => (k === 0 ? '절편' : `${gx}${SUPN[k] || ''}`));
+    const x0 = model.x0 || 0;
+    const gx = model.transform.x === 'ln' ? (g0 ? `ln(${xSym}/${+x0.toPrecision(6)})` : `ln(${xSym})`) : g0 ? `(${xSym}−${+x0.toPrecision(10)})` : xSym;
+    const names = a.map((_, k) => (k === 0 ? (g0 ? `기준값 (${xSym}=${+x0.toPrecision(10)}에서)` : '절편') : `${gx}${SUPN[k] || ''}`));
     let coefs = coefRows(names, a, covA, df, core.sigma);
     if (model.transform.y === 'ln') { // y = a·e^(…) : 절편은 ln a → a 로 되돌린다
       const c0 = coefs[0];
       coefs[0] = { name: 'a (배율)', est: Math.exp(c0.est), se: Math.exp(c0.est) * c0.se, t: NaN, p: NaN, lo: Math.exp(c0.lo), hi: Math.exp(c0.hi) };
       coefs[1].name = model.id === 'exp' ? `b (${xSym}의 지수)` : `b (거듭제곱)`;
     }
-    const U = g.map(v => basis((v - m) / s, deg));
+    const U = g.map(v => basis((v - core.center) / s, deg));
     const eta = U.map(r => dot(core.coef, r));
     const e = h.map((v, i) => v - eta[i]);
     const hm = mean(h);
     const sst = sum(h.map(v => (v - hm) ** 2)), sse = sum(e.map(v => v * v)), ssr = Math.max(0, sst - sse);
-    const F = deg > 0 && sse > 0 ? (ssr / deg) / (sse / df) : NaN;
+    // 잔차가 사실상 0 = 단위 환산·계산 태그처럼 정확한 관계
+    const exact = sst > 0 && sse <= 1e-20 * sst;
+    const F = exact ? Infinity : deg > 0 && sse > 0 ? (ssr / deg) / (sse / df) : NaN;
     const lev = U.map(r => dot(r, matVec(core.cov, r)));
-    const order = [...x.keys()].sort((i, j) => x[i] - x[j]);
-    const dg = diagnose(e, lev, core.sigma, deg + 1, order);
+    // 자기상관은 시간 순서로 본다 (시간 순 자료가 아니면 x 순서 = 곡선 모양 검사)
+    const order = timeOrdered ? [...x.keys()] : [...x.keys()].sort((i, j) => x[i] - x[j]);
+    const dg = diagnose(e, lev, core.sigma, deg + 1, order, exact);
     return {
       space: model.transform.y === 'ln' ? 'ln(y)' : 'y',
       coefs, n, df,
-      anova: { ssr, sse, sst, dfR: deg, dfE: df, F, p: fP(F, deg, df) },
-      ...dg,
+      anova: { ssr, sse, sst, dfR: deg, dfE: df, F, p: exact ? 0 : fP(F, deg, df) },
+      ...dg, orderKind: timeOrdered ? 'time' : 'x',
       points: x.map((v, i) => ({ x: v, y: y[i], fit: model.predict(v), resid: y[i] - model.predict(v), stud: dg.stud[i], cook: dg.cook[i] })),
     };
   }
@@ -399,13 +454,14 @@
     const e = ys.map((v, i) => v - yh[i]);
     const my = mean(ys);
     const sst = sum(ys.map(v => (v - my) ** 2)), sse = sum(e.map(v => v * v)), ssr = Math.max(0, sst - sse);
-    const F = sse > 0 ? (ssr / k) / (sse / df) : NaN;
+    const exact = sst > 0 && sse <= 1e-20 * sst;
+    const F = exact ? Infinity : sse > 0 ? (ssr / k) / (sse / df) : NaN;
     const lev = U.map(r => dot(r, matVec(core.cov, r)));
-    const dg = diagnose(e, lev, core.sigma, k + 1, [...e.keys()]);
+    const dg = diagnose(e, lev, core.sigma, k + 1, [...e.keys()], exact);
     return {
       space: 'y', coefs, n, df,
-      anova: { ssr, sse, sst, dfR: k, dfE: df, F, p: fP(F, k, df) },
-      ...dg,
+      anova: { ssr, sse, sst, dfR: k, dfE: df, F, p: exact ? 0 : fP(F, k, df) },
+      ...dg, orderKind: 'time',
       points: ys.map((v, i) => ({ x: yh[i], y: v, fit: yh[i], resid: e[i], stud: dg.stud[i], cook: dg.cook[i], row: model.data.rows[i] })),
     };
   }
@@ -423,7 +479,7 @@
     }
     return {
       kind: 'single', ...extra, type: model.id, typeName: model.name, transform: model.transform,
-      params: deep(model.params), xRange: [r12(model.xMin), r12(model.xMax)], stats,
+      params: deep(model.params), x0: model.x0 || 0, g0: model.g0 || 0, xRange: [r12(model.xMin), r12(model.xMax)], stats,
       validation: model.validation || null, core,
     };
   }
@@ -437,7 +493,7 @@
     const meta = MODELS.find(x => x.id === json.type) || {};
     return attach({
       kind: 'single', id: json.type, name: json.typeName || meta.name, plain: meta.plain, p: meta.p,
-      transform: json.transform, core: json.core, params: json.params,
+      transform: json.transform, core: json.core, params: json.params, x0: json.x0 || 0, g0: json.g0 || 0,
       xMin: json.xRange[0], xMax: json.xRange[1], r2: json.stats.r2, adj: json.stats.adjR2, rmse: json.stats.rmse, n: json.stats.n,
       validation: json.validation,
     });
@@ -446,7 +502,7 @@
   const Regression = {
     VERSION, MODELS,
     sum, mean, sd, solve, invert, t975, tInv, tP, fP, ibeta,
-    fitModel, bestFit, validate, pearson, multiRegression, details,
+    fitModel, bestFit, validate, pearson, multiRegression, details, isConstant, minOf, maxOf, expand,
     predict, interval, serialize, deserialize,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = Regression;
