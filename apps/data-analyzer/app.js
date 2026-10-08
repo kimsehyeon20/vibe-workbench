@@ -297,7 +297,7 @@ function drawChart(canvas, spec, opt = {}) {
   if (opt.legend) {
     ctx.font = font(400); ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
     const items = [...(spec.hidePoints ? [] : [[spec.pointLabel || '측정값', th.point, 'dot']]), ...(lines.some(l => l.label) ? lines.filter(l => l.label).map(l => [l.label, l.flag ? th.warn : th.point, 'line'])
-      : [...(lines.length ? [[spec.linesLabel || '각 강번', th.point, 'line']] : []), ...(lines.some(l => l.flag) ? [['이상 강번', th.warn, 'line']] : [])]), ...(spec.fn ? [[spec.fitLabel || '회귀 함수', th.fit, 'line']] : []), ...(ov.length ? [[spec.overlayLabel || '예측', th.fit, 'line']] : []), ...(band.length ? [[spec.bandLabel || '95% 예측 범위', th.fit, 'band']] : [])];
+      : [...(lines.length ? [[spec.linesLabel || '각 배치', th.point, 'line']] : []), ...(lines.some(l => l.flag) ? [['많이 다른 배치', th.warn, 'line']] : [])]), ...(spec.fn ? [[spec.fitLabel || '회귀 함수', th.fit, 'line']] : []), ...(ov.length ? [[spec.overlayLabel || '예측', th.fit, 'line']] : []), ...(band.length ? [[spec.bandLabel || '95% 예측 범위', th.fit, 'band']] : [])];
     let lx = L + pw - sum(items.map(([t]) => ctx.measureText(t).width + 34)), ly = spec.title ? 10 + fs / 2 : top + 8;
     for (const [t, c, k] of items) {
       ctx.fillStyle = c;
