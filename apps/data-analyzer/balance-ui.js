@@ -114,7 +114,7 @@ function hRenderSetup() {
       const scale = el('select', { 'aria-label': `${s.name} 배수` });
       [[1, '×1'], [1000, '×1000 (k·천)'], [1e6, '×100만 (M)']].forEach(([k, v]) => scale.append(el('option', { value: String(k), text: v })));
       scale.value = String(s.scale || 1); scale.onchange = () => { s.scale = +scale.value; hChanged(); };
-      cell.append(unit, scale);
+      cell.append(el('div', { class: 'unit-cell' }, unit, scale));
     } else if (s.role === 'level') {
       const f = el('input', { class: 'num', type: 'number', inputmode: 'decimal', step: 'any', min: '0', placeholder: '1단위당 부피 (모름)', value: s.factor || '', 'aria-label': `${s.name} 1단위당 부피` });
       f.onchange = () => { s.factor = toNumber(f.value) > 0 ? f.value : ''; hChanged(); };
