@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>데이터 분석기</title>
+<meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111113" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <a class="icon-btn" href="../../" aria-label="갤러리로">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+  </a>
+  <h1>데이터 분석기</h1>
+</header>
+
+<main class="wrap">
+  <nav class="modes" aria-label="분석 종류">
+    <button type="button" data-mode="single" aria-pressed="true">측정값</button>
+    <button type="button" data-mode="batch" aria-pressed="false">배치별</button>
+    <button type="button" data-mode="bal" aria-pressed="false">수지</button>
+  </nav>
+
+  <div class="mode" id="mode-single">
+  <!-- 1. 데이터 넣기 -->
+  <section class="card intro">
+    <p class="eyebrow">시간별 측정값 → 함수 · 그래프 · 엑셀</p>
+    <h2>표를 붙여넣기만 하세요</h2>
+    <p class="muted">엑셀에서 표를 복사해 아래 칸에 붙여넣거나 파일을 여세요. <b>첫 줄은 항목 이름</b>, <b>첫 칸은 시간</b>이면 가장 좋아요.</p>
+  </section>
+
+  <section class="panel">
+    <div class="step-head"><span class="step-no">1</span><h3>데이터 넣기</h3></div>
+    <textarea id="input" spellcheck="false" autocomplete="off" placeholder="시간	온도	전력
+09:00	21.5	3.2
+09:05	21.9	3.4
+09:10	22.4	3.5
+…"></textarea>
+    <div class="row-btns">
+      <label class="chip-btn">
+        <input type="file" id="file" accept=".csv,.tsv,.txt,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+        파일 열기
+      </label>
+      <button class="chip-btn" id="sample-btn" type="button">예시: 냉방</button>
+      <button class="chip-btn" id="gas-btn" type="button">예시: 가스 운전</button>
+      <button class="chip-btn ghost" id="clear-btn" type="button">지우기</button>
+    </div>
+    <p class="msg" id="parse-msg" role="status"></p>
+  </section>
+
+  <!-- 2. 설정 -->
+  <section class="panel" id="setup" hidden>
+    <div class="step-head"><span class="step-no">2</span><h3>확인하기</h3></div>
+    <label class="field" id="sheet-field" hidden>
+      <span>시트</span>
+      <select id="sheet"></select>
+    </label>
+    <label class="field">
+      <span>표 방향 <small class="hint">(값이 아래로 이어지면 세로, 옆으로 이어지면 가로)</small></span>
+      <select id="layout">
+        <option value="auto">자동</option>
+        <option value="cols">세로 표: 항목 이름이 맨 위 줄, 값이 아래로</option>
+        <option value="rows">가로 표: 항목 이름이 맨 왼쪽 칸, 값이 옆으로</option>
+      </select>
+    </label>
+    <p class="hint" id="prep-notes"></p>
+    <div class="table-scroll"><table class="preview" id="preview"></table></div>
+    <p class="hint" id="preview-note"></p>
+
+    <label class="field">
+      <span>시간이 적힌 칸</span>
+      <select id="time-col"></select>
+    </label>
+    <p class="hint" id="time-preview"></p>
+    <label class="field" id="unit-field">
+      <span>시간 단위</span>
+      <select id="time-unit">
+        <option value="auto">자동</option>
+        <option value="s">초</option>
+        <option value="min">분</option>
+        <option value="h">시간</option>
+        <option value="d">일</option>
+      </select>
+    </label>
+
+    <div class="field">
+      <span>분석할 항목 <small class="hint">(누르면 빼거나 넣어요)</small></span>
+      <div class="chips" id="var-chips"></div>
+    </div>
+
+    <label class="field">
+      <span>가장 궁금한 값 <small class="hint">(다른 항목이 이 값에 어떤 영향을 주는지 봐요)</small></span>
+      <select id="target"></select>
+    </label>
+  </section>
+
+  <!-- 3. 결과 -->
+  <div id="results" hidden>
+    <section class="panel">
+      <div class="step-head"><span class="step-no">3</span><h3>한눈에 보기</h3></div>
+      <ul class="summary" id="summary"></ul>
+      <button class="chip-btn model-btn" id="model-btn" type="button">예측용 모델 파일 받기 (.json)</button>
+      <p class="hint">나중에 예측 앱에서 불러와 쓰는 파일이에요. 식·정확도·예측 범위 계산에 필요한 값이 모두 들어 있어요.</p>
+    </section>
+
+    <section class="panel">
+      <h3 class="sec-title">시간에 따른 변화</h3>
+      <p class="hint">점은 측정값, 주황 선은 계산된 함수예요. 그래프를 누르면 값을 볼 수 있어요.</p>
+      <div id="time-fits"></div>
+    </section>
+
+    <section class="panel" id="corr-panel">
+      <h3 class="sec-title">항목끼리의 관계</h3>
+      <p class="hint">숫자가 1에 가까우면 같이 오르내리고, −1에 가까우면 반대로 움직여요. 0 근처는 관계가 거의 없어요.</p>
+      <div class="table-scroll"><table class="heat" id="heat"></table></div>
+      <ul class="pair-list" id="pair-list"></ul>
+    </section>
+
+    <section class="panel" id="pair-panel">
+      <h3 class="sec-title" id="pair-title"></h3>
+      <div id="pair-fits"></div>
+    </section>
+
+    <section class="panel" id="multi-panel">
+      <h3 class="sec-title" id="multi-title"></h3>
+      <div id="multi"></div>
+    </section>
+
+    <section class="panel" id="ctrl-panel" hidden>
+      <h3 class="sec-title">운전 조작 판단 (운전자의 감 → 규칙·식)</h3>
+      <p class="hint">운전자가 어떤 상태를 보고 조작 항목을 얼마나 바꿨는지 배워요. "직전 상태를 보고 다음 조작을 했다"고 가정해요.</p>
+      <label class="field"><span>조작 항목 <small class="hint">(운전자가 바꾼 값: 밸브 개도, 설정값 등)</small></span><select id="ctrl-mv"></select></label>
+      <div class="field"><span>판단 근거 항목 <small class="hint">(운전자가 보고 판단한 값)</small></span><div class="chips" id="ctrl-inputs"></div></div>
+      <label class="field"><span>추세를 볼 시간 <small class="hint">(이만큼 전과 비교해 오르는지 내리는지)</small></span><select id="ctrl-window"></select></label>
+      <label class="field"><span>조작으로 볼 최소 폭 <small class="hint">(이보다 작은 변화는 잡음으로 봄. 비우면 자동)</small></span><input id="ctrl-db" type="number" inputmode="decimal" step="any" min="0" placeholder="자동"></label>
+      <div id="ctrl-out"></div>
+    </section>
+
+    <section class="panel">
+      <details class="glossary">
+        <summary>용어가 어려우면 눌러보세요</summary>
+        <dl>
+          <dt>순시값</dt><dd>어느 한 순간에 잰 값이에요. 예: 9시 5분의 온도.</dd>
+          <dt>회귀(함수 찾기)</dt><dd>점들 사이를 가장 잘 지나가는 선(식)을 찾는 일이에요. 그 식으로 재지 않은 시점의 값도 짐작할 수 있어요.</dd>
+          <dt>정확도 (R²)</dt><dd>식이 실제 값을 얼마나 잘 설명하는지예요. 1이면 완벽, 0이면 전혀 못 맞혀요. 0.9 이상이면 매우 좋아요.</dd>
+          <dt>상관계수 (r)</dt><dd>두 항목이 같이 움직이는 정도예요. −1 ~ 1 사이. 같이 움직인다고 해서 한쪽이 원인이라는 뜻은 아니에요.</dd>
+          <dt>오차 (RMSE)</dt><dd>식으로 계산한 값이 실제와 평균적으로 얼마나 차이 나는지예요. 작을수록 좋아요.</dd>
+          <dt>조작량</dt><dd>운전자가 한 번에 바꾼 양이에요. 예: 밸브 개도 50% → 52%면 조작량 +2.</dd>
+          <dt>판단 규칙 (회귀 나무)</dt><dd>"압력이 4.92보다 낮으면 올림"처럼 조건을 나눠 운전자의 판단을 정리한 것이에요.</dd>
+          <dt>방향 맞힘</dt><dd>올림·내림·그대로 중 무엇을 할지 맞힌 비율이에요. "조작 안 함" 기준보다 높아야 의미가 있어요.</dd>
+          <dt>ln, e</dt><dd>로그·지수 함수에 쓰는 수학 기호예요. 엑셀에서는 LN(), EXP()로 계산해요.</dd>
+        </dl>
+      </details>
+    </section>
+  </div>
+  </div>
+
+  <!-- ================= 배치(반복 작업)별 분석 ================= -->
+  <div class="mode" id="mode-batch" hidden>
+    <section class="card intro">
+      <p class="eyebrow">반복 작업(배치·사이클·로트·회차)마다 기록된 값 → 총량·평균·최대 · 대표 곡선 · 많이 다른 배치 · 예측</p>
+      <h2>배치별 기록을 한꺼번에 넣으세요</h2>
+      <p class="muted">파일 하나에 배치 하나, 배치 번호 칸이 있는 긴 표, 열마다 배치인 표, 연속 기록(작업 구간마다 자동으로 나눔) 모두 돼요.
+        예: 강번별 가스 회수량, 사이클별 전력량(kW → kWh), 배치 반응 온도 곡선, 시험 회차별 측정값.</p>
+    </section>
+
+    <section class="panel">
+      <div class="step-head"><span class="step-no">1</span><h3>데이터 넣기</h3></div>
+      <div class="row-btns">
+        <label class="chip-btn">
+          <input type="file" id="b-files" multiple accept=".csv,.tsv,.txt,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+          파일 여러 개 열기
+        </label>
+        <button class="chip-btn" id="b-demo" type="button">예시: 강번별 가스 회수</button>
+        <button class="chip-btn" id="b-demo2" type="button">예시: 반응기 배치 온도</button>
+        <button class="chip-btn ghost" id="b-clear" type="button">모두 지우기</button>
+      </div>
+      <details class="more">
+        <summary>표를 붙여넣어 추가하기</summary>
+        <textarea id="b-paste" spellcheck="false" placeholder="배치	시각	유량(Nm3/h)
+B101	07:00:00	0
+B101	07:00:05	12000
+…"></textarea>
+        <div class="row-btns"><button class="chip-btn" id="b-paste-add" type="button">붙여넣은 표 추가</button></div>
+      </details>
+      <ul class="src-list" id="b-sources"></ul>
+      <p class="msg" id="b-msg" role="status"></p>
+    </section>
+
+    <section class="panel" id="b-setup" hidden>
+      <div class="step-head"><span class="step-no">2</span><h3>확인하기</h3></div>
+      <label class="field"><span>데이터 모양</span>
+        <select id="b-shape">
+          <option value="files">파일(시트) 하나 = 배치 하나</option>
+          <option value="long">배치 번호 칸이 있는 표 (여러 배치가 아래로 이어짐)</option>
+          <option value="wide">열마다 배치 하나 (넓은 표)</option>
+          <option value="continuous">연속 기록 → 작업 구간마다 자동으로 나누기</option>
+        </select>
+      </label>
+      <label class="field" id="b-heat-f"><span>배치 번호 칸</span><select id="b-heat"></select></label>
+      <label class="field"><span>시간 칸</span><select id="b-time"></select></label>
+      <label class="field" id="b-tunit-f"><span>시간 칸의 숫자 단위</span>
+        <select id="b-tunit"><option value="s">초</option><option value="min">분</option><option value="h">시간</option><option value="d">일</option></select>
+      </label>
+      <label class="field" id="b-interval-f"><span>측정 간격 (초)</span><input class="num" id="b-interval" type="number" inputmode="decimal" step="any" min="0"></label>
+      <label class="field" id="b-val-f"><span>값 칸</span><select id="b-val"></select></label>
+      <label class="field"><span>값 종류</span>
+        <select id="b-kind">
+          <option value="rate">시간당 양 (유량·전력 등) → 총량 = 시간으로 적분</option>
+          <option value="level">측정값 (온도·압력·농도 등) → 평균·최대</option>
+        </select>
+      </label>
+      <label class="field" id="b-funit-f"><span>시간당 값의 단위</span>
+        <select id="b-funit"><option value="h">시간당 (예: Nm³/h, kW)</option><option value="min">분당 (예: L/min)</option><option value="s">초당 (예: kg/s)</option><option value="d">하루당 (예: t/d)</option></select>
+      </label>
+      <label class="field"><span>배치끼리 비교할 값</span>
+        <select id="b-metric">
+          <option value="total">총량 (적분)</option>
+          <option value="mean">평균값 (시간 가중)</option>
+          <option value="peak">최고값</option>
+          <option value="last">끝 값</option>
+          <option value="duration">걸린 시간</option>
+        </select>
+      </label>
+      <label class="field"><span>작업 구간 <small class="hint">(앞뒤의 대기 구간을 자르는 기준)</small></span>
+        <select id="b-thr"><option value="0">기록 전체 (자르지 않음)</option><option value="0.01">바닥값보다 최대의 1% 넘는 구간</option><option value="0.02">2% 넘는 구간</option><option value="0.05">5% 넘는 구간</option><option value="0.1">10% 넘는 구간</option><option value="0.2">20% 넘는 구간</option></select>
+      </label>
+      <label class="field" id="b-gap-f"><span>끊겨도 같은 배치로 볼 시간 (분) <small class="hint">(비우면 자동)</small></span><input class="num" id="b-gap" type="number" inputmode="decimal" step="any" min="0" placeholder="자동"></label>
+      <label class="field"><span>시간 맞추기</span>
+        <select id="b-align">
+          <option value="time">시작 후 경과 시간 (분)</option>
+          <option value="pct">진행률 0~100% (배치마다 길이가 많이 다를 때)</option>
+        </select>
+      </label>
+      <p class="hint" id="b-found"></p>
+    </section>
+
+    <div id="b-results" hidden>
+      <section class="panel">
+        <div class="step-head"><span class="step-no">3</span><h3>한눈에 보기</h3></div>
+        <ul class="summary" id="b-summary"></ul>
+        <button class="chip-btn model-btn" id="b-model-btn" type="button">예측용 모델 파일 받기 (.json)</button>
+        <details class="glossary">
+          <summary>어떻게 계산했나요? (점들을 그냥 평균 내지 않는 이유)</summary>
+          <dl>
+            <dt>1. 작업 구간 찾기</dt><dd>배치마다 바닥값(대기 중 값)보다 최대의 일정 비율 넘게 오른 구간만 남겨요(기본: 시간당 값은 5%, 측정값은 자르지 않음). 작업 시작이 0이 돼요.</dd>
+            <dt>2. 총량 = 적분</dt><dd>유량(Nm³/h)·전력(kW)처럼 "시간당 양"은 그 순간의 속도라서, 총량(Nm³, kWh)은 속도 × 시간을 모두 더해야 해요. 이웃한 두 측정값의 평균 × 시간 간격을 더해요(사다리꼴 공식). 측정 간격이 들쭉날쭉해도 정확해요. 온도 같은 측정값은 같은 방법으로 시간 가중 평균을 구해요.</dd>
+            <dt>3. 시간 맞추고 겹치기</dt><dd>배치마다 측정 시각이 조금씩 달라서 같은 시점 값끼리 바로 평균 낼 수 없어요. 그래서 일정한 간격의 공통 시간축을 만들고, 각 배치 값을 그 시점으로 보간(사이 값 채우기)한 뒤 시점마다 평균·중앙값·10~90% 범위를 구해요.</dd>
+            <dt>4. 평균과 중앙값</dt><dd>시간당 값의 평균 곡선을 적분하면 평균 총량과 같아져서 계획·예측에 써요. 중앙값은 이상한 배치에 덜 흔들려서 "보통 모양"을 볼 때 좋아요.</dd>
+            <dt>5. 많이 다른 배치</dt><dd>비교할 값·길이·곡선 모양이 다른 배치들과 많이 다르면(중앙값 기준 강건 점수 3 초과) 표시해요. 작업 중간에 끊긴 배치, 기록이 빠진 배치도 표시하고, 한 점만 튀는 값은 이웃 평균으로 고쳐요.</dd>
+          </dl>
+        </details>
+      </section>
+
+      <section class="panel">
+        <h3 class="sec-title">배치별 곡선 겹쳐 보기</h3>
+        <p class="hint">가는 선 하나가 배치 하나, 주황 선이 시점별 평균, 옅은 띠가 10~90% 범위(배치 80%가 들어오는 범위)예요. 빨간 선은 다른 배치와 많이 다른 배치예요.</p>
+        <div class="chart tall" id="b-overlay"></div>
+        <div id="b-typical"></div>
+      </section>
+
+      <section class="panel">
+        <h3 class="sec-title" id="b-run-title">배치별 값</h3>
+        <p class="hint" id="b-run-hint"></p>
+        <div class="chart" id="b-run"></div>
+        <div class="table-scroll"><table class="heat-table" id="b-table"></table></div>
+        <p class="hint">"빼기"를 누르면 그 배치를 평균·예측 계산에서 빼요 (측정 오류일 때).</p>
+      </section>
+
+      <section class="panel" id="b-early-panel">
+        <h3 class="sec-title">중간에 최종 값 예측하기</h3>
+        <p class="hint" id="b-early-hint"></p>
+        <div id="b-early"></div>
+      </section>
+
+      <section class="panel">
+        <h3 class="sec-title">배치 정보(조건)와의 관계 <small class="hint">(선택)</small></h3>
+        <p class="hint">배치마다의 조건(원료량, 설정값, 생산량 등)을 붙여넣으면 비교할 값과의 관계를 찾아요. 한 줄에 배치 하나, 첫 칸(또는 "배치" 칸)이 배치 이름이어야 해요.</p>
+        <textarea id="b-attrs" spellcheck="false" placeholder="배치	원료량(kg)	설정온도(°C)
+B101	520	180
+…"></textarea>
+        <div id="b-factors"></div>
+        <button class="chip-btn model-btn" id="b-to-single" type="button">배치별 요약표로 회귀 분석하기 →</button>
+        <p class="hint">요약표(배치, 비교할 값, 길이, 평균·최대 + 배치 정보)를 "측정값 분석"으로 보내서 상세 회귀 분석을 해요.</p>
+      </section>
+    </div>
+  </div>
+
+  <!-- ================= 수지(입·출·저장량) 분석 ================= -->
+  <div class="mode" id="mode-bal" hidden>
+    <section class="card intro">
+      <p class="eyebrow">들어온 양 · 나간 양 · 저장량(레벨) → 수지 · 계측기 편차 · 합계</p>
+      <h2>계측기마다 얼마나 틀리는지 찾아요</h2>
+      <p class="muted">저장소(탱크·홀더·사일로·배터리 …)의 저장량 변화 = 들어온 양 − 나간 양 이 맞아야 해요. 여러 구간에서 이 식을 맞춰 보며 <b>어느 계측기가 몇 % 틀리는지</b>, 계측 안 되는 손실이 얼마인지 찾아요. 계열마다 기록 시각이 달라도 돼요.</p>
+    </section>
+
+    <section class="panel">
+      <div class="step-head"><span class="step-no">1</span><h3>데이터 넣기</h3></div>
+      <div class="row-btns">
+        <label class="chip-btn">
+          <input type="file" id="h-files" multiple accept=".csv,.tsv,.txt,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+          파일 여러 개 열기
+        </label>
+        <button class="chip-btn" id="h-demo" type="button">예시: 가스 홀더 24시간</button>
+        <button class="chip-btn" id="h-demo2" type="button">예시: 물탱크 3일</button>
+        <button class="chip-btn ghost" id="h-clear" type="button">모두 지우기</button>
+      </div>
+      <details class="more">
+        <summary>표를 붙여넣어 추가하기</summary>
+        <textarea id="h-paste" spellcheck="false" placeholder="시각	유입(m3/h)	공정 사용(m3/h)	탱크 수위(%)
+2026-10-01 00:00	60.2	41.0	52.4
+…"></textarea>
+        <div class="row-btns"><button class="chip-btn" id="h-paste-add" type="button">붙여넣은 표 추가</button></div>
+      </details>
+      <p class="hint">파일 모양: ① 시각 칸 + 여러 계열 칸, ② 시각·태그(계열 이름)·값 3칸의 긴 표, ③ 계열마다 다른 파일, ④ 같은 칸으로 하루씩 나눈 파일. 시각은 날짜+시각이 가장 정확해요.</p>
+      <ul class="src-list" id="h-sources"></ul>
+      <p class="msg" id="h-msg" role="status"></p>
+    </section>
+
+    <section class="panel" id="h-setup" hidden>
+      <div class="step-head"><span class="step-no">2</span><h3>확인하기</h3></div>
+      <p class="hint">계열마다 역할과 단위를 확인하세요. 이름으로 자동으로 골랐어요 (회수·유입·투입 → 유입, 레벨·수위 → 저장 레벨, 온도·압력·% → 안 씀, 나머지 → 유출). 저장 레벨은 "1단위당 부피"를 알면 넣고, 모르면 비워 두세요.</p>
+      <div class="table-scroll"><table class="role-table" id="h-series"></table></div>
+      <label class="field" id="h-ref-f"><span>믿을 수 있는 계측기 <small class="hint">(레벨 환산값을 모를 때 이 계측기를 기준으로 나머지를 비교해요)</small></span><select id="h-ref"></select></label>
+      <label class="field"><span>구간 길이 <small class="hint">(이 길이마다 수지를 맞춰 봐요)</small></span>
+        <select id="h-window"><option value="0">자동</option><option value="300">5분</option><option value="600">10분</option><option value="900">15분</option><option value="1800">30분</option><option value="3600">1시간</option><option value="7200">2시간</option><option value="14400">4시간</option></select>
+      </label>
+      <label class="field"><span>허용 오차 <small class="hint">(이보다 작은 차이는 "허용 범위"로 봐요)</small></span>
+        <select id="h-tol"><option value="0.005">±0.5%</option><option value="0.01">±1%</option><option value="0.02">±2%</option><option value="0.03">±3%</option><option value="0.05">±5%</option></select>
+      </label>
+      <p class="hint" id="h-found"></p>
+    </section>
+
+    <div id="h-results" class="mode" hidden>
+      <section class="panel">
+        <div class="step-head"><span class="step-no">3</span><h3>한눈에 보기</h3></div>
+        <ul class="summary" id="h-summary"></ul>
+        <details class="glossary">
+          <summary>어떻게 계산했나요?</summary>
+          <dl>
+            <dt>1. 합계</dt><dd>각 유량을 자기 기록 시각 그대로 적분해요. 하나는 5초, 하나는 1분처럼 간격이 달라도 정확해요.</dd>
+            <dt>2. 구간별 수지</dt><dd>전체 기간을 일정한 구간으로 나눠, 구간마다 "저장량 변화"와 "유입 − 유출"을 구해요. 레벨은 구간 경계 시각에서 보간하고, 기록이 빈 구간은 빼요.</dd>
+            <dt>3. 보정계수</dt><dd>저장량 변화 = Σ(보정계수 × 계측량) + 계측 안 되는 양 을 모든 구간에서 가장 잘 맞추는 보정계수를 회귀로 찾아요. 1이면 정확, 1.03이면 계측값이 실제보다 약 3% 적게 읽힌다는 뜻이에요.</dd>
+            <dt>4. 레벨 환산값을 모를 때</dt><dd>믿을 수 있는 계측기 하나를 기준(β = 1)으로 놓고 환산값까지 함께 구해요. 잡음이 많은 레벨은 식의 왼쪽에 두어 결과가 한쪽으로 쏠리지 않게 해요.</dd>
+            <dt>5. 구분 조건</dt><dd>계열끼리 따로따로 변해야 누가 틀렸는지 구분돼요. 늘 같이 움직이거나(VIF가 큼) 구간마다 양이 거의 같으면 "판단 불가·데이터 확인"으로 표시해요.</dd>
+          </dl>
+        </details>
+      </section>
+      <section class="panel" id="h-beta-panel">
+        <h3 class="sec-title">계측기별 편차</h3>
+        <p class="hint">보정계수 β: 실제 = β × 계측값. 95% 범위가 1을 포함하면 "틀렸다"고 말할 근거가 부족하고, 범위가 넓으면 "맞다"고 말할 근거도 부족해요.</p>
+        <div class="table-scroll"><table class="stat-table" id="h-beta"></table></div>
+      </section>
+      <section class="panel" id="h-cum-panel">
+        <h3 class="sec-title">누적 수지</h3>
+        <p class="hint">"저장량 실제 변화 − 계측한 (유입 − 유출)"을 처음부터 쌓은 값이에요(기록이 빈 구간 제외). 계측이 맞으면 0 근처에 머물러요. 빨간 점(계측값 그대로)이 한쪽으로 계속 벌어지면 계측 편차가 쌓이는 것이고, 주황 선(보정 후)이 0 근처면 보정계수가 맞는 거예요.</p>
+        <div class="chart tall" id="h-cum"></div>
+        <p class="mini-title">구간별 수지 차이</p>
+        <div class="chart" id="h-imb"></div>
+      </section>
+      <section class="panel">
+        <h3 class="sec-title">계열별 합계</h3>
+        <div class="table-scroll"><table class="stat-table" id="h-totals"></table></div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<div class="bottom">
+  <button class="btn" id="main-btn" type="button" disabled>데이터를 넣어주세요</button>
+  <button class="btn" id="batch-btn" type="button" disabled hidden>배치별 기록을 넣어주세요</button>
+  <button class="btn" id="bal-btn" type="button" disabled hidden>유량·레벨 파일을 넣어주세요</button>
+</div>
+
+<div class="tip" id="tip" hidden></div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="reader.js"></script>
+<script src="regression.js"></script>
+<script src="control.js"></script>
+<script src="batch.js"></script>
+<script src="balance.js"></script>
+<script src="app.js"></script>
+<script src="batch-ui.js"></script>
+<script src="balance-ui.js"></script>
+</body>
+</html>
