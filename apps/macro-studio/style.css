@@ -90,9 +90,12 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
   background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
 }
 .step .num {
-  width: 26px; height: 26px; border-radius: 8px; background: var(--tint); color: var(--accent);
+  width: 30px; height: 30px; border-radius: 8px; background: var(--tint); color: var(--accent);
   font-size: 13px; font-weight: 800; display: grid; place-items: center; flex: none;
 }
+.step .drag-handle { cursor: grab; touch-action: none; -webkit-user-select: none; user-select: none; position: relative; }
+.step .drag-handle::after { content: '⠿'; position: absolute; right: -11px; top: 50%; transform: translateY(-50%); font-size: 12px; color: var(--text-3); }
+.step.dragging { pointer-events: none; opacity: .55; box-shadow: 0 6px 20px rgba(0,0,0,.2); }
 .step .st-main { flex: 1; min-width: 0; }
 .step .st-type { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 7px; }
 .step .st-desc { font-size: 13px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
