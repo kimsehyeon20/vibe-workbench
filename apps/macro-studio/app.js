@@ -724,6 +724,8 @@ function fileName(base, ext) {
   return `${safe}.${ext}`;
 }
 function download(name, text, mime = 'text/plain;charset=utf-8') {
+  // .ps1/.ahk 는 윈도우 PowerShell·AutoHotkey가 한글을 깨지 않게 UTF-8 BOM 을 붙임
+  if (/\.(ps1|ahk)$/i.test(name) && text.charCodeAt(0) !== 0xFEFF) text = '﻿' + text;
   const blob = new Blob([text], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -883,6 +885,7 @@ function genPS1(l) {
   P.push('# -*- 매크로: ' + (l.name || '').replace(/[\r\n]/g, ' ') + ' -*-');
   P.push('# 설치가 필요 없습니다. 함께 받은 "...-무설치.bat" 를 더블클릭하세요.');
   P.push(`# 단축키:  ${CTRL_KEYS.pauseLabel} = 일시정지/재생    ${CTRL_KEYS.stopLabel} = 종료`);
+  P.push('try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}');
   P.push('Add-Type @"');
   P.push('using System; using System.Runtime.InteropServices;');
   P.push('public class U {');
@@ -913,7 +916,7 @@ function genPS1(l) {
   P.push('  }');
   P.push('}');
   P.push('function WaitMs($ms){ $end=[Environment]::TickCount+$ms; while([Environment]::TickCount -lt $end){ Pump; Start-Sleep -Milliseconds 80 } }');
-  P.push('function Move($x,$y){ [U]::SetCursorPos($x,$y) | Out-Null; Start-Sleep -Milliseconds 60 }');
+  P.push('function MoveMouse($x,$y){ [U]::SetCursorPos($x,$y) | Out-Null; Start-Sleep -Milliseconds 60 }');
   P.push('function ClickAt($x,$y,$btn,$double){');
   P.push('  [U]::SetCursorPos($x,$y) | Out-Null; Start-Sleep -Milliseconds 70');
   P.push("  $d = if($btn -eq 'right'){0x08}elseif($btn -eq 'middle'){0x20}else{0x02}");
@@ -957,16 +960,18 @@ function genPS1(l) {
   P.push('while($reps -eq 0 -or $i -lt $reps){');
   P.push('  $skip = 0');
   const g = gapMs(l);
-  l.steps.forEach(s => {
+  const total = l.steps.length;
+  l.steps.forEach((s, idx) => {
     P.push('  Pump');
     P.push('  if($skip -gt 0){ $skip-- } else {');
+    P.push(`    Write-Host ${psStr(`▶ [${idx + 1}/${total}] ${stepDesc(s)}`)}`);
     genPSStep(s).forEach(x => P.push('    ' + x));
     if (g > 0) P.push(`    WaitMs ${g}`);
     P.push('  }');
   });
   P.push('  $i++');
   P.push('}');
-  P.push('Write-Host "매크로가 끝났어요."');
+  P.push('Write-Host "✅ 매크로가 끝났어요."');
   return P.join('\r\n') + '\r\n';
 }
 function psOcrFuncs() {
@@ -1009,7 +1014,7 @@ function psOcrFuncs() {
 function genPSStep(s) {
   switch (s.type) {
     case 'url': return [`OpenUrl ${psStr(s.url)}`];
-    case 'move': return [`Move ${num(s.x)} ${num(s.y)}`];
+    case 'move': return [`MoveMouse ${num(s.x)} ${num(s.y)}`];
     case 'click': return [`ClickAt ${num(s.x)} ${num(s.y)} '${s.button || 'left'}' $${s.double ? 'true' : 'false'}`];
     case 'drag': return [`Drag ${num(s.x1)} ${num(s.y1)} ${num(s.x2)} ${num(s.y2)}`];
     case 'hotkey': return [`Keys ${psStr(buildHotkey(s).sk)}`];
@@ -1187,11 +1192,13 @@ function genPY(l) {
   P.push(`    time.sleep(${Number(l.delay) || 0})`);
   const g = (Number(l.gap) || 0);
   const iter = ['skip[0] = 0'];
-  l.steps.forEach(s => {
+  const totalPy = l.steps.length;
+  l.steps.forEach((s, idx) => {
     iter.push('control()');
     iter.push('if skip[0] > 0:');
     iter.push('    skip[0] -= 1');
     iter.push('else:');
+    iter.push(`    print(${JSON.stringify(`▶ [${idx + 1}/${totalPy}] ${stepDesc(s)}`)})`);
     genPYStep(s).forEach(x => iter.push('    ' + x));
     if (g > 0) iter.push(`    time.sleep(${g})`);
   });
@@ -1354,78 +1361,100 @@ function genFinder() {
   ].join('\r\n');
 }
 
-/* --- 영역 선택 도우미 (조건의 네모 영역 좌표 구하기) --- */
+/* 공통: 드래그로 네모 영역을 긁는 반투명 전체화면(무설치). Snip 은 "ok"/"small"/"esc" 반환 */
+function psSnipFn() {
+  return [
+    'function Snip(){',
+    '  $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen',
+    '  $f = New-Object System.Windows.Forms.Form',
+    '  $f.FormBorderStyle = "None"; $f.StartPosition = "Manual"',
+    '  $f.SetBounds($vs.Left, $vs.Top, $vs.Width, $vs.Height)',
+    '  $f.BackColor = [System.Drawing.Color]::Black; $f.Opacity = 0.35; $f.TopMost = $true; $f.KeyPreview = $true',
+    '  $f.Cursor = [System.Windows.Forms.Cursors]::Cross',
+    '  $script:sx = 0; $script:sy = 0; $script:rect = New-Object System.Drawing.Rectangle 0,0,0,0; $script:drawing = $false; $script:res = "small"',
+    '  $f.Add_MouseDown({ $script:sx = $_.X; $script:sy = $_.Y; $script:drawing = $true })',
+    '  $f.Add_MouseMove({ if($script:drawing){ $x=[Math]::Min($script:sx,$_.X); $y=[Math]::Min($script:sy,$_.Y); $w=[Math]::Abs($_.X-$script:sx); $h=[Math]::Abs($_.Y-$script:sy); $script:rect = New-Object System.Drawing.Rectangle $x,$y,$w,$h; $f.Invalidate() } })',
+    '  $f.Add_Paint({ if($script:rect.Width -gt 0 -and $script:rect.Height -gt 0){ $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::Red), 2; $_.Graphics.DrawRectangle($pen, $script:rect); $pen.Dispose() } })',
+    '  $f.Add_MouseUp({ $script:drawing = $false; if($script:rect.Width -ge 3 -and $script:rect.Height -ge 3){ $script:res = "ok" } else { $script:res = "small" }; $f.Close() })',
+    '  $f.Add_KeyDown({ if($_.KeyCode -eq "Escape"){ $script:res = "esc"; $f.Close() } })',
+    '  [void]$f.ShowDialog(); $f.Dispose()',
+    '  $script:vsLeft = $vs.Left; $script:vsTop = $vs.Top',
+    '  return $script:res',
+    '}',
+  ];
+}
+
+/* --- 영역 선택 도우미 (드래그로 네모 긁어 좌표 알려주기, 무설치) → 조건 OCR 영역용 --- */
 function genRegionPicker() {
   return [
-    '#Requires AutoHotkey v2.0', '#SingleInstance Force', 'CoordMode "Mouse", "Screen"',
-    '; 읽을 네모 영역의 왼쪽위에서 F1, 오른쪽아래에서 F2 를 누르세요.',
-    '; 나온 네 숫자를 매크로 "조건" 동작의 영역칸에 적으면 됩니다.',
-    'global gx1 := 0, gy1 := 0, got1 := false',
-    'SetTimer ShowPos, 50',
-    '*Esc::ExitApp',
-    'F1:: {', '    global', '    MouseGetPos &gx1, &gy1', '    got1 := true', '}',
-    'F2:: {', '    global', '    MouseGetPos &x2, &y2',
-    '    MsgBox "왼쪽 X = " gx1 "`n위 Y = " gy1 "`n오른쪽 X = " x2 "`n아래 Y = " y2, "영역 좌표"', '}',
-    'ShowPos() {', '    global', '    MouseGetPos &mx, &my',
-    '    s := "X = " mx "   Y = " my "`nF1=왼쪽위  F2=오른쪽아래  Esc=끄기"',
-    '    if got1', '        s .= "`n(왼쪽위 저장: " gx1 ", " gy1 ")"',
-    '    ToolTip s', '}', '',
+    '# -*- 영역 선택 도우미 -*-  (드래그로 네모 긁으면 그 영역 좌표를 알려줘요 · 설치 불필요)',
+    '# 나온 네 숫자를 매크로 "조건" 동작의 영역 칸(왼쪽X·위Y·오른쪽X·아래Y)에 적으세요.',
+    'try {',
+    'Add-Type -AssemblyName System.Windows.Forms',
+    'Add-Type -AssemblyName System.Drawing',
+    ...psSnipFn(),
+    '[System.Windows.Forms.MessageBox]::Show("읽을 네모 영역을 마우스로 드래그해 긁으세요.`n긁으면 좌표를 알려줘요. 그만하려면 어두운 화면에서 Esc.", "영역 선택 도우미") | Out-Null',
+    'while($true){',
+    '  $r = Snip',
+    '  if($r -eq "esc"){ break }',
+    '  if($r -eq "ok"){',
+    '    $L = $script:vsLeft + $script:rect.X; $T = $script:vsTop + $script:rect.Y',
+    '    $R = $L + $script:rect.Width; $B = $T + $script:rect.Height',
+    '    [System.Windows.Forms.MessageBox]::Show("왼쪽 X = $L`n위 Y = $T`n오른쪽 X = $R`n아래 Y = $B`n`n조건 동작의 영역 칸에 적으세요.", "영역 좌표") | Out-Null',
+    '  }',
+    '}',
+    'Write-Host "끝났어요."',
+    '} catch {',
+    '  try { [System.Windows.Forms.MessageBox]::Show("오류가 났어요:`n" + $_.Exception.Message, "영역 선택 도우미") | Out-Null } catch {}',
+    '  Write-Host ("오류: " + $_.Exception.Message)',
+    '}',
+    '',
   ].join('\r\n');
 }
 
-/* --- 이미지 캡처 도우미 (드래그로 영역 긁어 PNG 저장, 무설치) --- */
+/* --- 이미지 캡처 도우미 (드래그로 긁은 그림을 PNG 저장, 무설치) → 이미지 찾아 클릭용 --- */
 function genImageCapturer() {
   return [
-    '# -*- 이미지 캡처 도우미 -*-',
-    '# 찾을 버튼/아이콘을 마우스로 드래그해 긁으면 images\\template_N.png 로 저장돼요.',
-    '# 여러 개 연속 저장 가능. 그만하려면 어두운 화면에서 Esc.',
+    '# -*- 이미지 캡처 도우미 -*-  (드래그로 긁은 그림을 images\\template_N.png 로 저장 · 설치 불필요)',
+    '# 찾을 버튼/아이콘을 긁으면, 매크로가 실행할 때 그 그림을 화면에서 찾아 클릭해요.',
+    'try {',
     'Add-Type -AssemblyName System.Windows.Forms',
     'Add-Type -AssemblyName System.Drawing',
     '$dir = Join-Path $PSScriptRoot "images"',
     'if(-not (Test-Path $dir)){ New-Item -ItemType Directory -Path $dir | Out-Null }',
-    '$script:n = 1',
-    'while(Test-Path (Join-Path $dir ("template_" + $script:n + ".png"))){ $script:n++ }',
-    '',
-    'function Snip(){',
-    '  $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen',
-    '  $f = New-Object System.Windows.Forms.Form',
-    '  $f.FormBorderStyle = "None"; $f.StartPosition = "Manual"; $f.Bounds = $vs',
-    '  $f.BackColor = "Black"; $f.Opacity = 0.35; $f.TopMost = $true; $f.KeyPreview = $true',
-    '  $f.Cursor = [System.Windows.Forms.Cursors]::Cross',
-    '  $script:sx = 0; $script:sy = 0; $script:rect = [System.Drawing.Rectangle]::Empty; $script:drawing = $false; $script:ok = $false',
-    '  $f.Add_MouseDown({ $script:sx = $_.X; $script:sy = $_.Y; $script:drawing = $true })',
-    '  $f.Add_MouseMove({ if($script:drawing){ $x=[Math]::Min($script:sx,$_.X); $y=[Math]::Min($script:sy,$_.Y); $w=[Math]::Abs($_.X-$script:sx); $h=[Math]::Abs($_.Y-$script:sy); $script:rect = New-Object System.Drawing.Rectangle $x,$y,$w,$h; $f.Invalidate() } })',
-    '  $f.Add_Paint({ if($script:rect.Width -gt 0){ $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::Red), 2; $_.Graphics.DrawRectangle($pen, $script:rect); $pen.Dispose() } })',
-    '  $f.Add_MouseUp({ $script:drawing = $false; $script:ok = $true; $f.Close() })',
-    '  $f.Add_KeyDown({ if($_.KeyCode -eq "Escape"){ $script:ok = $false; $f.Close() } })',
-    '  [void]$f.ShowDialog()',
-    '  $rc = $script:rect; $okk = $script:ok; $f.Dispose()',
-    '  if(-not $okk -or $rc.Width -lt 3 -or $rc.Height -lt 3){ return $false }',
-    '  Start-Sleep -Milliseconds 200',
-    '  $bmp = New-Object System.Drawing.Bitmap $rc.Width, $rc.Height',
-    '  $g = [System.Drawing.Graphics]::FromImage($bmp)',
-    '  $g.CopyFromScreen($vs.Left + $rc.X, $vs.Top + $rc.Y, 0, 0, $rc.Size)',
-    '  $g.Dispose()',
-    '  $out = Join-Path $dir ("template_" + $script:n + ".png")',
-    '  $bmp.Save($out, [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()',
-    '  return $true',
-    '}',
-    '',
+    '$n = 1',
+    'while(Test-Path (Join-Path $dir ("template_" + $n + ".png"))){ $n++ }',
+    ...psSnipFn(),
     '[System.Windows.Forms.MessageBox]::Show("찾을 버튼/아이콘을 드래그로 긁으세요.`n저장되면 다음 슬롯으로 넘어가요. 그만하려면 어두운 화면에서 Esc.", "이미지 캡처 도우미") | Out-Null',
     'while($true){',
-    '  if(Snip){',
-    '    [System.Windows.Forms.MessageBox]::Show(("슬롯 " + $script:n + " 저장됨 (template_" + $script:n + ".png)`n매크로의 이미지 슬롯 번호에 " + $script:n + " 를 적으세요."), "저장됨") | Out-Null',
-    '    $script:n++',
-    '  } else { break }',
+    '  $r = Snip',
+    '  if($r -eq "esc"){ break }',
+    '  if($r -eq "ok"){',
+    '    Start-Sleep -Milliseconds 200',
+    '    $bmp = New-Object System.Drawing.Bitmap $script:rect.Width, $script:rect.Height',
+    '    $g = [System.Drawing.Graphics]::FromImage($bmp)',
+    '    $g.CopyFromScreen($script:vsLeft + $script:rect.X, $script:vsTop + $script:rect.Y, 0, 0, (New-Object System.Drawing.Size $script:rect.Width, $script:rect.Height))',
+    '    $g.Dispose()',
+    '    $out = Join-Path $dir ("template_" + $n + ".png")',
+    '    $bmp.Save($out, [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()',
+    '    [System.Windows.Forms.MessageBox]::Show(("슬롯 " + $n + " 저장됨 (template_" + $n + ".png)`n매크로의 이미지 슬롯 번호에 " + $n + " 를 적으세요."), "저장됨") | Out-Null',
+    '    $n++',
+    '  }',
     '}',
     'Write-Host "끝났어요. images 폴더를 매크로 파일과 같은 폴더에 두세요."',
+    '} catch {',
+    '  try { [System.Windows.Forms.MessageBox]::Show("오류가 났어요:`n" + $_.Exception.Message, "이미지 캡처 도우미") | Out-Null } catch {}',
+    '  Write-Host ("오류: " + $_.Exception.Message)',
+    '}',
     '',
   ].join('\r\n');
 }
-function genImgCapBat(ps1Name) {
+function genHelperBat(ps1Name, title) {
   return [
-    '@echo off', 'chcp 65001 >nul', 'echo 이미지 캡처 도우미를 시작합니다...',
-    `powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0${ps1Name}"`, '',
+    '@echo off', 'chcp 65001 >nul',
+    `echo ${title} 시작... (창이 바로 안 뜨면 잠시 기다리세요)`,
+    `powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0${ps1Name}"`,
+    'echo.', 'echo 끝났어요. 문제가 있으면 위 메시지를 확인하세요.', 'pause', '',
   ].join('\r\n');
 }
 
@@ -1454,12 +1483,14 @@ function doExport(kind) {
     download('좌표찾기도우미.ahk', genFinder());
     toast('좌표 찾기 도우미를 받았어요');
   } else if (kind === 'region') {
-    download('영역선택도우미.ahk', genRegionPicker());
+    const ps1 = '영역선택도우미.ps1';
+    download(ps1, genRegionPicker(), 'text/plain;charset=utf-8');
+    download('영역선택도우미-실행.bat', genHelperBat(ps1, '영역 선택 도우미'), 'application/bat');
     toast('영역 선택 도우미를 받았어요');
   } else if (kind === 'imgcap') {
     const ps1 = '이미지캡처도우미.ps1';
     download(ps1, genImageCapturer(), 'text/plain;charset=utf-8');
-    download('이미지캡처도우미-실행.bat', genImgCapBat(ps1), 'application/bat');
+    download('이미지캡처도우미-실행.bat', genHelperBat(ps1, '이미지 캡처 도우미'), 'application/bat');
     toast('이미지 캡처 도우미를 받았어요');
   } else if (kind === 'backup') {
     download(fileName('매크로설계소-백업', 'json'), JSON.stringify(state, null, 2), 'application/json');
@@ -1630,9 +1661,9 @@ const HELP = `
 <li><b>무설치(윈도우)</b> — 설치·권한이 필요 없어요. 잘 모르면 이걸 먼저. <code>...-무설치.bat</code> 더블클릭.</li>
 <li><b>.ahk + .bat</b> — <code>autohotkey.com</code>에서 AutoHotkey v2를 설치할 수 있다면 가장 안정적이고 <b>한글 입력</b>도 잘 돼요.</li>
 <li><b>.py (파이썬)</b> — 맥이거나 파이썬을 쓰는 경우.</li>
-<li><b>좌표 찾기 도우미</b> — 클릭할 X·Y 숫자 알아내기.</li>
-<li><b>영역 선택 도우미</b> — 조건의 네모 영역 좌표 알아내기.</li>
-<li><b>이미지 캡처 도우미</b> — "이미지 찾아 클릭"에 쓸 그림(버튼·아이콘)을 PC에서 드래그로 긁어 PNG로 저장.</li>
+<li><b>좌표 찾기 도우미</b> — 클릭할 <b>한 지점</b>의 X·Y 숫자(점 하나). <em>클릭·이동 동작용.</em></li>
+<li><b>영역 선택 도우미</b> — <b>드래그로 네모</b>를 긁으면 그 영역의 네 좌표를 알려줘요. <em>조건(OCR) 동작의 영역용.</em> (무설치)</li>
+<li><b>이미지 캡처 도우미</b> — <b>드래그로 긁은 그림</b>을 PNG로 저장. <em>"이미지 찾아 클릭" 동작용.</em> (무설치)</li>
 <li><b>전체 백업 저장 / 불러오기</b> — 만든 모든 루프를 파일로 저장하거나 되돌려요(기기를 바꿀 때).</li>
 </ul>
 
