@@ -51,7 +51,7 @@ const HOTKEYS = {
 };
 
 /* 실행 중 제어 단축키 (사람이 외우기 쉬운 키로 고정) */
-const CTRL_KEYS = { pauseLabel: 'F8', stopLabel: 'F9', startNowLabel: 'F7' };
+const CTRL_KEYS = { pauseLabel: 'F8', stopLabel: 'F9', startNowLabel: 'F7', restartLabel: 'F10' };
 
 /* ===== 상태 ===== */
 let state = normalize(store.get(null));
@@ -218,7 +218,7 @@ function renderSteps() {
     li.className = 'step' + (issue ? ' warn' : '');
     li.dataset.i = i;
     li.innerHTML = `
-      <span class="num">${i + 1}</span>
+      <span class="num drag-handle" title="끌어서 순서 바꾸기">${i + 1}</span>
       <div class="st-main">
         <div class="st-type"><span class="st-ico">${t.ico}</span>${t.label}</div>
         <div class="st-desc">${escapeHtml(stepDesc(s))}</div>
@@ -233,6 +233,7 @@ function renderSteps() {
     li.querySelectorAll('.step-actions button').forEach(btn => {
       btn.onclick = e => { e.stopPropagation(); stepAction(btn.dataset.act, i); };
     });
+    li.querySelector('.drag-handle').addEventListener('pointerdown', e => startStepDrag(e));
     ol.appendChild(li);
   });
 
@@ -240,6 +241,41 @@ function renderSteps() {
   const w = $('#step-warn');
   if (n) { w.hidden = false; w.textContent = `⚠ 입력이 빠진 동작 ${n}개 — 내보내기 전에 확인하세요`; }
   else w.hidden = true;
+}
+
+/* 드래그로 순서 바꾸기 (터치·마우스 공용) */
+let dragI = null;
+function startStepDrag(e) {
+  if (e.button != null && e.button > 0) return;           // 왼쪽/터치만
+  const li = e.target.closest('.step');
+  if (!li) return;
+  e.preventDefault();
+  dragI = Number(li.dataset.i);
+  li.classList.add('dragging');
+  const onMove = ev => {
+    const el = document.elementFromPoint(ev.clientX, ev.clientY);
+    const over = el && el.closest('.step');
+    if (!over || over.dataset.i == null) return;
+    const oi = Number(over.dataset.i);
+    if (oi !== dragI) {
+      const steps = activeLoop().steps;
+      const [moved] = steps.splice(dragI, 1);
+      steps.splice(oi, 0, moved);
+      dragI = oi;
+      renderSteps();
+      const nl = document.querySelector(`.step[data-i="${oi}"]`);
+      if (nl) nl.classList.add('dragging');
+    }
+  };
+  const onUp = () => {
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+    document.removeEventListener('pointercancel', onUp);
+    dragI = null; save(); renderSteps();
+  };
+  document.addEventListener('pointermove', onMove);
+  document.addEventListener('pointerup', onUp);
+  document.addEventListener('pointercancel', onUp);
 }
 
 function stepAction(act, i) {
@@ -762,10 +798,11 @@ function genAHK(l) {
     'CoordMode "Pixel", "Screen"', 'SetTitleMatchMode 2', 'SetKeyDelay 30', 'SetMouseDelay 30', '');
   L.push(`; ===== 매크로: ${(l.name || '').replace(/[\r\n]/g, ' ')} =====`);
   L.push('; 이 파일을 더블클릭하면 시작합니다. (AutoHotkey v2 설치 필요)');
-  L.push(`; 단축키:  ${CTRL_KEYS.pauseLabel} = 일시정지/재생    ${CTRL_KEYS.stopLabel} = 종료 (Esc 도 종료)    ${CTRL_KEYS.startNowLabel} = 예약 기다리지 않고 즉시 시작`);
+  L.push(`; 단축키:  ${CTRL_KEYS.pauseLabel} = 일시정지/재생   ${CTRL_KEYS.stopLabel} = 종료(Esc)   ${CTRL_KEYS.startNowLabel} = 예약 즉시 시작   ${CTRL_KEYS.restartLabel} = 처음부터 다시`);
   L.push('');
   L.push('*F8::Pause(-1)   ; 일시정지/재생');
   L.push('*F9::ExitApp     ; 종료');
+  L.push('*F10::Reload     ; 처음부터 다시 실행');
   L.push('*Esc::ExitApp');
   L.push('');
   const p = hhmmParts(l.startAt);
@@ -858,7 +895,7 @@ function genBAT(l, ahkName) {
   return [
     '@echo off', 'chcp 65001 >nul',
     `echo [${(l.name || '매크로').replace(/[\r\n]/g, ' ')}] 를 시작합니다...`,
-    `echo 단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료`,
+    `echo 단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.restartLabel} 재실행`,
     `start "" "%~dp0${ahkName}"`,
     'if errorlevel 1 (',
     '  echo.',
@@ -875,7 +912,7 @@ function genPSBat(l, ps1Name) {
   return [
     '@echo off', 'chcp 65001 >nul',
     `echo [${(l.name || '매크로').replace(/[\r\n]/g, ' ')}] 를 시작합니다. (설치 필요 없음)`,
-    `echo 단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료`,
+    `echo 단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.restartLabel} 재실행`,
     `powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0${ps1Name}"`,
     'echo.', 'pause', '',
   ].join('\r\n');
@@ -884,7 +921,7 @@ function genPS1(l) {
   const P = [];
   P.push('# -*- 매크로: ' + (l.name || '').replace(/[\r\n]/g, ' ') + ' -*-');
   P.push('# 설치가 필요 없습니다. 함께 받은 "...-무설치.bat" 를 더블클릭하세요.');
-  P.push(`# 단축키:  ${CTRL_KEYS.pauseLabel} = 일시정지/재생    ${CTRL_KEYS.stopLabel} = 종료`);
+  P.push(`# 단축키:  ${CTRL_KEYS.pauseLabel} = 일시정지/재생   ${CTRL_KEYS.stopLabel} = 종료   ${CTRL_KEYS.restartLabel} = 처음부터 다시 실행`);
   P.push('try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}');
   P.push('Add-Type @"');
   P.push('using System; using System.Runtime.InteropServices;');
@@ -907,6 +944,7 @@ function genPS1(l) {
   P.push('  if($f8 -and -not $script:prevKey){ $script:paused = -not $script:paused; Write-Host $(if($script:paused){"|| 일시정지 (F8로 재생)"}else{"> 재생"}) }');
   P.push('  $script:prevKey = $f8');
   P.push('  if(([int][U]::GetAsyncKeyState(0x78) -band 0x8000) -ne 0){ Write-Host "[] 종료"; exit }   # F9');
+  P.push('  if(([int][U]::GetAsyncKeyState(0x79) -band 0x8000) -ne 0){ throw "RESTART" }   # F10 재실행');
   P.push('  while($script:paused){');
   P.push('    Start-Sleep -Milliseconds 120');
   P.push('    $f = ([int][U]::GetAsyncKeyState(0x77) -band 0x8000) -ne 0');
@@ -956,7 +994,10 @@ function genPS1(l) {
   }
   P.push(`WaitMs ${Math.round((l.delay || 0) * 1000)}   # 시작 전 대기`);
   P.push(`$reps = ${l.repeat && l.repeat > 0 ? l.repeat : 0}   # 0 = 무한 반복`);
-  P.push('$i = 0; $skip = 0');
+  P.push('$skip = 0');
+  P.push('while($true){   # F10 재실행 바깥 루프');
+  P.push('try {');
+  P.push('$i = 0');
   P.push('while($reps -eq 0 -or $i -lt $reps){');
   P.push('  $skip = 0');
   const g = gapMs(l);
@@ -970,6 +1011,9 @@ function genPS1(l) {
     P.push('  }');
   });
   P.push('  $i++');
+  P.push('}');
+  P.push('} catch { if("$($_.Exception.Message)" -eq "RESTART"){ Write-Host "↻ 처음부터 다시 실행"; continue } else { throw } }');
+  P.push('break');
   P.push('}');
   P.push('Write-Host "✅ 매크로가 끝났어요."');
   return P.join('\r\n') + '\r\n';
@@ -1136,7 +1180,7 @@ function genPY(l) {
   P.push(`# 매크로: ${(l.name || '').replace(/[\r\n]/g, ' ')}`);
   P.push('# 실행: 1) 파이썬 설치  2) pip install pyautogui pygetwindow keyboard  3) python "이파일.py"');
   P.push('#  (조건·읽어입력:  pip install winocr pillow pyperclip  / 이미지 찾기:  pip install opencv-python )');
-  P.push(`#  단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.startNowLabel} 예약 즉시시작 (keyboard 설치 시)`);
+  P.push(`#  단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.startNowLabel} 예약 즉시시작, ${CTRL_KEYS.restartLabel} 재실행 (keyboard 설치 시)`);
   P.push('#  급할 때: 마우스를 화면 왼쪽 맨 위 구석으로 휙 옮기면 멈춥니다.');
   P.push('import time, webbrowser, datetime');
   P.push('try:');
@@ -1149,11 +1193,13 @@ function genPY(l) {
   P.push('    gw = None');
   P.push('pyautogui.FAILSAFE = True');
   P.push('pyautogui.PAUSE = 0.1');
-  P.push('_paused = {"v": False}; _stop = {"v": False}; skip = [0]');
+  P.push('_paused = {"v": False}; _stop = {"v": False}; _restart = {"v": False}; skip = [0]');
+  P.push('class _Restart(Exception): pass');
   P.push('try:');
   P.push('    import keyboard');
   P.push("    keyboard.add_hotkey('f8', lambda: (_paused.__setitem__('v', not _paused['v']), print('|| 일시정지' if _paused['v'] else '> 재생')))");
   P.push("    keyboard.add_hotkey('f9', lambda: _stop.__setitem__('v', True))");
+  P.push("    keyboard.add_hotkey('f10', lambda: _restart.__setitem__('v', True))");
   P.push(`    print("단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료")`);
   P.push('except Exception:');
   P.push('    keyboard = None');
@@ -1161,9 +1207,11 @@ function genPY(l) {
   P.push('');
   P.push('def control():');
   P.push('    if _stop["v"]: raise SystemExit("종료")');
+  P.push('    if _restart["v"]: _restart["v"] = False; raise _Restart()');
   P.push('    while _paused["v"]:');
   P.push('        time.sleep(0.12)');
   P.push('        if _stop["v"]: raise SystemExit("종료")');
+  P.push('        if _restart["v"]: _restart["v"] = False; raise _Restart()');
   P.push('');
   P.push('def activate_window(title):');
   P.push('    if not gw: return');
@@ -1202,9 +1250,14 @@ function genPY(l) {
     genPYStep(s).forEach(x => iter.push('    ' + x));
     if (g > 0) iter.push(`    time.sleep(${g})`);
   });
-  if (l.repeat && l.repeat > 0) P.push(`    for _ in range(${l.repeat}):`);
-  else P.push('    while True:   # 무한 반복');
-  iter.forEach(x => P.push('        ' + x));
+  P.push('    while True:   # F10 재실행 바깥 루프');
+  P.push('        try:');
+  if (l.repeat && l.repeat > 0) P.push(`            for _ in range(${l.repeat}):`);
+  else P.push('            while True:   # 무한 반복');
+  iter.forEach(x => P.push('                ' + x));
+  P.push('        except _Restart:');
+  P.push('            print("↻ 처음부터 다시 실행"); continue');
+  P.push('        break');
   P.push('');
   P.push('run()');
   P.push('print("매크로가 끝났어요.")');
@@ -1353,11 +1406,32 @@ function genPYCond(s) {
 /* --- 좌표 찾기 도우미 --- */
 function genFinder() {
   return [
-    '#Requires AutoHotkey v2.0', '#SingleInstance Force', 'CoordMode "Mouse", "Screen"',
-    '; 마우스를 원하는 곳에 올리면 X, Y 숫자가 보입니다. 그 숫자를 매크로에 적으세요.',
-    'SetTimer ShowPos, 50', '*Esc::ExitApp',
-    'ShowPos() {', '    MouseGetPos &mx, &my',
-    '    ToolTip "X = " mx "`nY = " my "`n`n이 숫자를 매크로에 적으세요`nEsc = 끄기"', '}', '',
+    '# -*- 좌표 찾기 도우미 -*-  (마우스 위치의 X·Y 를 실시간으로 보여줘요 · 설치 불필요)',
+    '# ★ 무설치 매크로와 똑같은 방식이라 좌표가 정확히 일치해요. 끝내려면 창을 닫거나 Esc. ★',
+    'try {',
+    'Add-Type -AssemblyName System.Windows.Forms',
+    'Add-Type -AssemblyName System.Drawing',
+    'Add-Type @"',
+    'using System; using System.Runtime.InteropServices;',
+    'public class CurPos { [DllImport("user32.dll")] public static extern bool GetCursorPos(out PT p); }',
+    'public struct PT { public int X; public int Y; }',
+    '"@',
+    '$f = New-Object System.Windows.Forms.Form',
+    '$f.Text = "좌표 찾기"; $f.TopMost = $true; $f.FormBorderStyle = "FixedToolWindow"',
+    '$f.Width = 250; $f.Height = 120; $f.StartPosition = "Manual"; $f.Left = 20; $f.Top = 20; $f.KeyPreview = $true',
+    '$lbl = New-Object System.Windows.Forms.Label',
+    '$lbl.Dock = "Fill"; $lbl.TextAlign = "MiddleCenter"',
+    '$lbl.Font = New-Object System.Drawing.Font("Segoe UI", 14)',
+    '$f.Controls.Add($lbl)',
+    '$t = New-Object System.Windows.Forms.Timer; $t.Interval = 60',
+    '$t.Add_Tick({ $p = New-Object PT; [CurPos]::GetCursorPos([ref]$p) | Out-Null; $lbl.Text = ("X = " + $p.X + "    Y = " + $p.Y + "`n`n이 숫자를 매크로에 적으세요") })',
+    '$f.Add_KeyDown({ if($_.KeyCode -eq "Escape"){ $f.Close() } })',
+    '$t.Start(); [void]$f.ShowDialog(); $t.Stop()',
+    '} catch {',
+    '  try { [System.Windows.Forms.MessageBox]::Show("오류:`n" + $_.Exception.Message, "좌표 찾기 도우미") | Out-Null } catch {}',
+    '  Write-Host ("오류: " + $_.Exception.Message)',
+    '}',
+    '',
   ].join('\r\n');
 }
 
@@ -1480,7 +1554,9 @@ function doExport(kind) {
     download(fileName(l.name, 'py'), genPY(l), 'text/x-python;charset=utf-8');
     toast('파이썬 파일을 받았어요');
   } else if (kind === 'finder') {
-    download('좌표찾기도우미.ahk', genFinder());
+    const ps1 = '좌표찾기도우미.ps1';
+    download(ps1, genFinder(), 'text/plain;charset=utf-8');
+    download('좌표찾기도우미-실행.bat', genHelperBat(ps1, '좌표 찾기 도우미'), 'application/bat');
     toast('좌표 찾기 도우미를 받았어요');
   } else if (kind === 'region') {
     const ps1 = '영역선택도우미.ps1';
@@ -1584,7 +1660,7 @@ const HELP = `
 <ul>
 <li><b>추가</b>: 아래 <b>+ 동작 추가</b> → 종류 고르기 → 값 채우기 → <b>저장</b>.</li>
 <li><b>수정</b>: 목록에서 그 동작을 <b>탭</b>하면 편집 창이 열려요.</li>
-<li><b>순서 바꾸기</b>: 동작 오른쪽의 <b>∧ ∨</b> 버튼.</li>
+<li><b>순서 바꾸기</b>: 왼쪽 <b>번호(⠿)를 꾹 눌러 드래그</b>해 위아래로 옮기거나, 오른쪽 <b>∧ ∨</b> 버튼.</li>
 <li><b>복제</b>: 동작을 탭 → 편집 창의 <b>복제</b>(비슷한 동작을 빠르게 추가).</li>
 <li><b>삭제</b>: <b>🗑</b> 버튼. 잘못 지웠으면 바로 뜨는 <b>되돌리기</b>를 누르세요.</li>
 <li>값이 빠지면 그 동작에 <b>빨간 ⚠</b>가 떠요. 그대로 내보내면 엉뚱하게 동작하니 채워 주세요.</li>
@@ -1634,9 +1710,11 @@ const HELP = `
 <ul>
 <li><b>${CTRL_KEYS.pauseLabel}</b> — 일시정지 / 다시 재생</li>
 <li><b>${CTRL_KEYS.stopLabel}</b> — 완전 종료 (.ahk 는 Esc 도 종료)</li>
+<li><b>${CTRL_KEYS.restartLabel}</b> — 처음부터 다시 실행</li>
 <li><b>${CTRL_KEYS.startNowLabel}</b> — 예약 시간을 기다리지 않고 즉시 시작</li>
 <li>파이썬만 <code>pip install keyboard</code> 후에 단축키가 켜져요.</li>
 </ul>
+<p class="muted small">실행 중 검은 창(cmd)에 <b>▶ [3/7] ...</b> 처럼 지금 어떤 동작인지 글자로 보여줘요.</p>
 
 <h4>🖼️ 이미지 찾아 클릭 — 베타</h4>
 <ul>
@@ -1661,7 +1739,7 @@ const HELP = `
 <li><b>무설치(윈도우)</b> — 설치·권한이 필요 없어요. 잘 모르면 이걸 먼저. <code>...-무설치.bat</code> 더블클릭.</li>
 <li><b>.ahk + .bat</b> — <code>autohotkey.com</code>에서 AutoHotkey v2를 설치할 수 있다면 가장 안정적이고 <b>한글 입력</b>도 잘 돼요.</li>
 <li><b>.py (파이썬)</b> — 맥이거나 파이썬을 쓰는 경우.</li>
-<li><b>좌표 찾기 도우미</b> — 클릭할 <b>한 지점</b>의 X·Y 숫자(점 하나). <em>클릭·이동 동작용.</em></li>
+<li><b>좌표 찾기 도우미</b> — 클릭할 <b>한 지점</b>의 X·Y 숫자(점 하나). <em>클릭·이동 동작용.</em> (무설치 · 무설치 매크로와 좌표가 정확히 일치)</li>
 <li><b>영역 선택 도우미</b> — <b>드래그로 네모</b>를 긁으면 그 영역의 네 좌표를 알려줘요. <em>조건(OCR) 동작의 영역용.</em> (무설치)</li>
 <li><b>이미지 캡처 도우미</b> — <b>드래그로 긁은 그림</b>을 PNG로 저장. <em>"이미지 찾아 클릭" 동작용.</em> (무설치)</li>
 <li><b>전체 백업 저장 / 불러오기</b> — 만든 모든 루프를 파일로 저장하거나 되돌려요(기기를 바꿀 때).</li>
