@@ -769,7 +769,7 @@ function download(name, text, mime = 'text/plain;charset=utf-8') {
   setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
 }
 function gapMs(l) { return Math.round((Number(l.gap) || 0) * 1000); }
-function numConst(v) { return Number(String(v == null ? '' : v).replace(/,/g, '')) || 0; }
+function numConst(v) { const m = String(v == null ? '' : v).match(/-?\d[\d,]*(\.\d+)?/); return m ? Number(m[0].replace(/,/g, '')) : 0; }
 function hhmm(startAt) { return startAt ? Number(startAt.replace(':', '')) : null; }
 function hhmmParts(startAt) { if (!startAt) return null; const [hh, mm] = startAt.split(':'); return { hh: String(Number(hh)), mm: String(Number(mm)), pad: `${hh}${mm}00` }; }
 
@@ -784,7 +784,7 @@ function buildHotkey(s) {
   const ahkSym = { ctrl: '^', alt: '!', shift: '+', win: '#' };
   const skSym = { ctrl: '^', alt: '%', shift: '+', win: '' };
   const mods = (s.mods || []);
-  let key = (s.key || '').trim();
+  let key = (s.key || '').trim().replace(/["'`{}]/g, '');   // 스크립트를 깨뜨리는 문자 제거
   const ahk = mods.map(m => ahkSym[m]).join('') + (key.length > 1 ? `{${key}}` : key);
   const sk = mods.map(m => skSym[m]).join('') + (key ? (key.length > 1 ? `{${key.toUpperCase()}}` : key.toLowerCase()) : '');
   const py = [...mods.map(m => m === 'win' ? 'win' : m), key.toLowerCase()].filter(Boolean);
@@ -799,11 +799,6 @@ function genAHK(l) {
   L.push(`; ===== 매크로: ${(l.name || '').replace(/[\r\n]/g, ' ')} =====`);
   L.push('; 이 파일을 더블클릭하면 시작합니다. (AutoHotkey v2 설치 필요)');
   L.push(`; 단축키:  ${CTRL_KEYS.pauseLabel} = 일시정지/재생   ${CTRL_KEYS.stopLabel} = 종료(Esc)   ${CTRL_KEYS.startNowLabel} = 예약 즉시 시작   ${CTRL_KEYS.restartLabel} = 처음부터 다시`);
-  L.push('');
-  L.push('*F8::Pause(-1)   ; 일시정지/재생');
-  L.push('*F9::ExitApp     ; 종료');
-  L.push('*F10::Reload     ; 처음부터 다시 실행');
-  L.push('*Esc::ExitApp');
   L.push('');
   const p = hhmmParts(l.startAt);
   if (p) {
@@ -826,6 +821,13 @@ function genAHK(l) {
   });
   L.push('}');
   L.push('MsgBox "매크로가 끝났어요.", "매크로 설계소"');
+  L.push('ExitApp');
+  L.push('');
+  L.push('; ↓ 단축키 정의 (불러올 때 등록되어 실행 중 내내 작동)');
+  L.push('*F8::Pause(-1)   ; 일시정지/재생');
+  L.push('*F9::ExitApp     ; 종료');
+  L.push('*F10::Reload     ; 처음부터 다시 실행');
+  L.push('*Esc::ExitApp');
   return L.join('\r\n') + '\r\n';
 }
 function genAHKStep(s) {
@@ -890,11 +892,14 @@ function genAHKImg(s) {
   return L;
 }
 
+/* cmd echo 에서 문제되는 특수문자 제거 */
+function batName(s) { return String(s || '매크로').replace(/[\r\n%<>|&^"()!]/g, ' ').replace(/\s+/g, ' ').trim() || '매크로'; }
+
 /* --- 실행용 .bat (.ahk 실행) --- */
 function genBAT(l, ahkName) {
   return [
     '@echo off', 'chcp 65001 >nul',
-    `echo [${(l.name || '매크로').replace(/[\r\n]/g, ' ')}] 를 시작합니다...`,
+    `echo [${batName(l.name)}] 를 시작합니다...`,
     `echo 단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.restartLabel} 재실행`,
     `start "" "%~dp0${ahkName}"`,
     'if errorlevel 1 (',
@@ -911,7 +916,7 @@ function sendKeysText(s) { return String(s == null ? '' : s).replace(/[+^%~(){}\
 function genPSBat(l, ps1Name) {
   return [
     '@echo off', 'chcp 65001 >nul',
-    `echo [${(l.name || '매크로').replace(/[\r\n]/g, ' ')}] 를 시작합니다. (설치 필요 없음)`,
+    `echo [${batName(l.name)}] 를 시작합니다. (설치 필요 없음)`,
     `echo 단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.restartLabel} 재실행`,
     `powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0${ps1Name}"`,
     'echo.', 'pause', '',
@@ -931,6 +936,7 @@ function genPS1(l) {
   P.push('  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);');
   P.push('  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int k);');
   P.push('  [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);');
+  P.push('  [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, int extra);');
   P.push('}');
   P.push('public struct POINT { public int X; public int Y; }');
   P.push('"@');
@@ -939,12 +945,13 @@ function genPS1(l) {
   P.push('');
   P.push('$script:paused = $false');
   P.push('$script:prevKey = $false');
+  P.push('$script:canRestart = $false');
   P.push('function Pump(){');
   P.push('  $f8 = ([int][U]::GetAsyncKeyState(0x77) -band 0x8000) -ne 0   # F8');
   P.push('  if($f8 -and -not $script:prevKey){ $script:paused = -not $script:paused; Write-Host $(if($script:paused){"|| 일시정지 (F8로 재생)"}else{"> 재생"}) }');
   P.push('  $script:prevKey = $f8');
   P.push('  if(([int][U]::GetAsyncKeyState(0x78) -band 0x8000) -ne 0){ Write-Host "[] 종료"; exit }   # F9');
-  P.push('  if(([int][U]::GetAsyncKeyState(0x79) -band 0x8000) -ne 0){ throw "RESTART" }   # F10 재실행');
+  P.push('  if($script:canRestart -and ([int][U]::GetAsyncKeyState(0x79) -band 0x8000) -ne 0){ throw "RESTART" }   # F10 재실행');
   P.push('  while($script:paused){');
   P.push('    Start-Sleep -Milliseconds 120');
   P.push('    $f = ([int][U]::GetAsyncKeyState(0x77) -band 0x8000) -ne 0');
@@ -969,8 +976,10 @@ function genPS1(l) {
   P.push('  [U]::mouse_event(0x04,0,0,0,0)');
   P.push('}');
   P.push('function Keys($s){ [System.Windows.Forms.SendKeys]::SendWait($s); Start-Sleep -Milliseconds 90 }');
+  P.push('function TypeText($s){ if("$s" -ne ""){ Set-Clipboard -Value $s; Start-Sleep -Milliseconds 90; Keys "^v" } }   # 클립보드로 붙여넣기(한글 OK)');
+  P.push('function AltTab(){ [U]::keybd_event(0x12,0,0,0); Start-Sleep -Milliseconds 40; [U]::keybd_event(0x09,0,0,0); [U]::keybd_event(0x09,0,2,0); Start-Sleep -Milliseconds 250; [U]::keybd_event(0x12,0,2,0); Start-Sleep -Milliseconds 120 }');
   P.push('function ActivateWin($title){');
-  P.push('  $p = Get-Process | Where-Object { $_.MainWindowTitle -like "*$title*" } | Select-Object -First 1');
+  P.push('  $p = Get-Process | Where-Object { $_.MainWindowTitle -and $_.MainWindowTitle.Contains($title) } | Select-Object -First 1');
   P.push('  if($p){ [U]::SetForegroundWindow($p.MainWindowHandle) | Out-Null; Start-Sleep -Milliseconds 400 }');
   P.push('}');
   P.push("function Scroll($dir,$amt){ for($i=0;$i -lt $amt;$i++){ [U]::mouse_event(0x800,0,0,$(if($dir -eq 'up'){120}else{-120}),0); Start-Sleep -Milliseconds 50 } }");
@@ -995,6 +1004,7 @@ function genPS1(l) {
   P.push(`WaitMs ${Math.round((l.delay || 0) * 1000)}   # 시작 전 대기`);
   P.push(`$reps = ${l.repeat && l.repeat > 0 ? l.repeat : 0}   # 0 = 무한 반복`);
   P.push('$skip = 0');
+  P.push('$script:canRestart = $true   # 여기서부터 F10 재실행 가능');
   P.push('while($true){   # F10 재실행 바깥 루프');
   P.push('try {');
   P.push('$i = 0');
@@ -1061,8 +1071,8 @@ function genPSStep(s) {
     case 'move': return [`MoveMouse ${num(s.x)} ${num(s.y)}`];
     case 'click': return [`ClickAt ${num(s.x)} ${num(s.y)} '${s.button || 'left'}' $${s.double ? 'true' : 'false'}`];
     case 'drag': return [`Drag ${num(s.x1)} ${num(s.y1)} ${num(s.x2)} ${num(s.y2)}`];
-    case 'hotkey': return [`Keys ${psStr(buildHotkey(s).sk)}`];
-    case 'text': return [`Keys ${psStr(sendKeysText(s.text))}`];
+    case 'hotkey': return s.preset === 'alttab' ? ['AltTab'] : [`Keys ${psStr(buildHotkey(s).sk)}`];
+    case 'text': return [`TypeText ${psStr(s.text)}`];
     case 'win': return [`ActivateWin ${psStr(s.title)}`];
     case 'scroll': return [`Scroll '${s.dir === 'up' ? 'up' : 'down'}' ${num(s.amount) || 1}`];
     case 'wait': return [`WaitMs ${Math.round((Number(s.sec) || 0) * 1000)}`];
@@ -1141,7 +1151,7 @@ function psImgFuncs() {
 }
 function genPSReadPut(s) {
   const L = psReadRegion('$txt', s.mode, s.region || {});
-  if (s.read === 'number') L.push('$n = ReadNumber $txt; $val = if($null -ne $n){ [string]$n } else { "" }');
+  if (s.read === 'number') L.push("$m = [regex]::Match($txt, '-?\\d[\\d,]*(\\.\\d+)?'); $val = if($m.Success){ $m.Value -replace ',','' } else { '' }");
   else L.push('$val = "$txt".Trim()');
   const lines = [`if($val -ne ""){ Set-Clipboard -Value $val; Start-Sleep -Milliseconds 90; Keys "^v"`];
   if (s.after === 'enter') lines[0] += '; Keys "{ENTER}"';
@@ -1193,7 +1203,7 @@ function genPY(l) {
   P.push('    gw = None');
   P.push('pyautogui.FAILSAFE = True');
   P.push('pyautogui.PAUSE = 0.1');
-  P.push('_paused = {"v": False}; _stop = {"v": False}; _restart = {"v": False}; skip = [0]');
+  P.push('_paused = {"v": False}; _stop = {"v": False}; _restart = {"v": False}; _can_restart = {"v": False}; skip = [0]');
   P.push('class _Restart(Exception): pass');
   P.push('try:');
   P.push('    import keyboard');
@@ -1207,11 +1217,11 @@ function genPY(l) {
   P.push('');
   P.push('def control():');
   P.push('    if _stop["v"]: raise SystemExit("종료")');
-  P.push('    if _restart["v"]: _restart["v"] = False; raise _Restart()');
+  P.push('    if _restart["v"] and _can_restart["v"]: _restart["v"] = False; raise _Restart()');
   P.push('    while _paused["v"]:');
   P.push('        time.sleep(0.12)');
   P.push('        if _stop["v"]: raise SystemExit("종료")');
-  P.push('        if _restart["v"]: _restart["v"] = False; raise _Restart()');
+  P.push('        if _restart["v"] and _can_restart["v"]: _restart["v"] = False; raise _Restart()');
   P.push('');
   P.push('def activate_window(title):');
   P.push('    if not gw: return');
@@ -1250,6 +1260,7 @@ function genPY(l) {
     genPYStep(s).forEach(x => iter.push('    ' + x));
     if (g > 0) iter.push(`    time.sleep(${g})`);
   });
+  P.push('    _restart["v"] = False; _can_restart["v"] = True   # 여기서부터 F10 재실행 가능');
   P.push('    while True:   # F10 재실행 바깥 루프');
   P.push('        try:');
   if (l.repeat && l.repeat > 0) P.push(`            for _ in range(${l.repeat}):`);
@@ -1364,7 +1375,7 @@ function pyImgFuncs() {
 function genPYReadPut(s) {
   const a = pyRegionArgs(s.mode, s.region || {}); const L = [...a.pre];
   L.push(`_t = read_region(${a.args})`);
-  if (s.read === 'number') L.push('_n = read_number(_t); _val = "" if _n is None else (str(int(_n)) if float(_n).is_integer() else str(_n))');
+  if (s.read === 'number') { L.push('import re as _re'); L.push("_m = _re.search(r'-?\\d[\\d,]*(\\.\\d+)?', _t or ''); _val = _m.group().replace(',', '') if _m else ''"); }
   else L.push('_val = (_t or "").strip()');
   L.push('if _val:');
   L.push('    if set_clip(_val):');
