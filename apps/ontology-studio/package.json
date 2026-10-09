@@ -1,0 +1,26 @@
+{
+  "name": "ontology-studio",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "3d-force-graph": "^1.80.1",
+    "d3-force-3d": "^3.0.6",
+    "fflate": "^0.8.3",
+    "papaparse": "^5.7.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "three": "^0.186.1",
+    "three-spritetext": "^1.10.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.2",
+    "vite": "^8.3.4"
+  }
+}
