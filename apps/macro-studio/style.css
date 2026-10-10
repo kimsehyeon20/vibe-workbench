@@ -272,6 +272,15 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .toast-btn { color: var(--accent); font-weight: 800; font-size: 14px; flex: none; }
 @keyframes pop { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 
+/* 단축키 직접 만들기 */
+.combo-tools { display: flex; flex-wrap: wrap; gap: 6px; margin: -6px 0 8px; }
+.chip-btn { padding: 7px 10px; border-radius: 9px; background: var(--surface); border: 1px solid var(--line); font-size: 13px; font-weight: 700; }
+.chip-btn:active { background: var(--line); }
+.chip-btn.rec { color: var(--accent); }
+.chip-btn.rec.on { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+.combo-preview { font-size: 14px; margin: 0 0 8px; padding: 9px 12px; border-radius: 10px; background: var(--tint); color: var(--text); }
+.combo-preview.bad { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); font-weight: 650; }
+
 /* 작업방 변수 */
 .vars-box { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
 .vars-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }

@@ -88,7 +88,8 @@ const HOTKEYS = {
 
 /* 가상 키코드(윈도우 keybd_event용): SendKeys 가 못 보내는 Win 조합 등을 직접 보냄 */
 const VK_MOD = { ctrl: 0x11, shift: 0x10, alt: 0x12, win: 0x5B };
-const VK_NAMED = { enter: 0x0D, tab: 0x09, esc: 0x1B, escape: 0x1B, space: 0x20, up: 0x26, down: 0x28, left: 0x25, right: 0x27, home: 0x24, end: 0x23, pageup: 0x21, pagedown: 0x22, delete: 0x2E, del: 0x2E, backspace: 0x08, insert: 0x2D };
+const VK_NAMED = { enter: 0x0D, tab: 0x09, esc: 0x1B, escape: 0x1B, space: 0x20, up: 0x26, down: 0x28, left: 0x25, right: 0x27, home: 0x24, end: 0x23, pageup: 0x21, pagedown: 0x22, delete: 0x2E, del: 0x2E, backspace: 0x08, insert: 0x2D,
+  printscreen: 0x2C, apps: 0x5D, capslock: 0x14, comma: 0xBC };
 const VK_SYM = { ';': 0xBA, '=': 0xBB, ',': 0xBC, '-': 0xBD, '.': 0xBE, '/': 0xBF, '`': 0xC0, '[': 0xDB, '\\': 0xDC, ']': 0xDD, "'": 0xDE };
 function vkForKey(key) {
   key = String(key || '').trim().toLowerCase();
@@ -112,7 +113,82 @@ function hotkeyCombo(s) {
   const vks = mods.map(m => VK_MOD[m]); if (kv != null) vks.push(kv);
   return vks.length ? vks : null;
 }
-function hotkeyUsesWin(s) { return s.preset === 'custom' ? (s.mods || []).includes('win') : ((HOTKEYS[s.preset] || {}).py || []).includes('win'); }
+function hotkeyUsesWin(s) { return ((HOTKEYS[s.preset] || {}).py || []).includes('win'); }
+
+/* ===== 직접 만드는 단축키: "Ctrl+Shift+N", "Win+R", "Alt, F, X"(차례로) 같은 글을 키로 해석 ===== */
+const MOD_ALIAS = { ctrl: 'ctrl', control: 'ctrl', ctl: 'ctrl', '컨트롤': 'ctrl', '^': 'ctrl', shift: 'shift', '시프트': 'shift', '쉬프트': 'shift',
+  alt: 'alt', '알트': 'alt', option: 'alt', win: 'win', windows: 'win', window: 'win', '윈도우': 'win', '윈': 'win', '윈키': 'win', cmd: 'win', super: 'win', meta: 'win' };
+const KEY_ALIAS = { return: 'enter', '엔터': 'enter', '탭': 'tab', escape: 'esc', '이스케이프': 'esc', spacebar: 'space', '스페이스': 'space', '스페이스바': 'space',
+  bs: 'backspace', '백스페이스': 'backspace', del: 'delete', '딜리트': 'delete', '삭제': 'delete', ins: 'insert', pgup: 'pageup', pgdn: 'pagedown',
+  arrowup: 'up', arrowdown: 'down', arrowleft: 'left', arrowright: 'right', '↑': 'up', '↓': 'down', '←': 'left', '→': 'right',
+  '위': 'up', '아래': 'down', '왼쪽': 'left', '오른쪽': 'right', prtsc: 'printscreen', printscr: 'printscreen', '프린트스크린': 'printscreen',
+  menu: 'apps', '캡스락': 'capslock', '쉼표': 'comma' };
+/* 한글 자판으로 쳐도 같은 자리 영문 키로 (ㅜ → n) */
+const JAMO_KEY = { 'ㅂ': 'q', 'ㅈ': 'w', 'ㄷ': 'e', 'ㄱ': 'r', 'ㅅ': 't', 'ㅛ': 'y', 'ㅕ': 'u', 'ㅑ': 'i', 'ㅐ': 'o', 'ㅔ': 'p', 'ㅁ': 'a', 'ㄴ': 's', 'ㅇ': 'd',
+  'ㄹ': 'f', 'ㅎ': 'g', 'ㅗ': 'h', 'ㅓ': 'j', 'ㅏ': 'k', 'ㅣ': 'l', 'ㅋ': 'z', 'ㅌ': 'x', 'ㅊ': 'c', 'ㅍ': 'v', 'ㅠ': 'b', 'ㅜ': 'n', 'ㅡ': 'm',
+  'ㅃ': 'q', 'ㅉ': 'w', 'ㄸ': 'e', 'ㄲ': 'r', 'ㅆ': 't', 'ㅒ': 'o', 'ㅖ': 'p' };
+const KEY_NAMES = ['enter', 'tab', 'esc', 'space', 'backspace', 'delete', 'insert', 'home', 'end', 'pageup', 'pagedown', 'up', 'down', 'left', 'right', 'printscreen', 'apps', 'capslock', 'comma'];
+const KEY_LABEL = { enter: 'Enter', tab: 'Tab', esc: 'Esc', space: 'Space', backspace: 'Backspace', delete: 'Delete', insert: 'Insert', home: 'Home', end: 'End',
+  pageup: 'PageUp', pagedown: 'PageDown', up: '↑', down: '↓', left: '←', right: '→', printscreen: 'PrintScreen', apps: '메뉴키', capslock: 'CapsLock', comma: ',' };
+/* 키 하나 이름 정리 → 'a' / '1' / 'f5' / 'enter' / ';' … 모르면 null */
+function normKey(t) {
+  let k = String(t || '').trim().toLowerCase();
+  if (!k) return null;
+  if (JAMO_KEY[k]) k = JAMO_KEY[k];
+  if (KEY_ALIAS[k]) k = KEY_ALIAS[k];
+  if (KEY_NAMES.includes(k) || /^f([1-9]|1[0-2])$/.test(k)) return k;
+  if (k.length === 1 && (/[a-z0-9]/.test(k) || VK_SYM[k] != null)) return k;
+  return null;
+}
+/* "Ctrl+Shift+N, Alt+F4" → { chords:[{mods,key}], error } (쉼표·→ 는 "차례로") */
+function parseCombo(text) {
+  const src = String(text || '').trim();
+  if (!src) return { chords: [], error: '누를 키를 적어 주세요' };
+  const parts = src.split(/[,，→]/).map(x => x.trim()).filter(Boolean);
+  if (parts.length > 10) return { chords: [], error: '차례로 누르는 키는 10개까지예요' };
+  const chords = [];
+  for (const part of parts) {
+    const toks = part.split('+').map(x => x.trim()).filter(Boolean);
+    const mods = [], keys = [];
+    for (const t of toks) {
+      const m = MOD_ALIAS[t.toLowerCase()];
+      if (m) { if (!mods.includes(m)) mods.push(m); continue; }
+      const k = normKey(t);
+      if (!k) return { chords: [], error: `'${t}' 는 모르는 키예요 (예: a, 1, f5, enter, tab, esc, space, up)` };
+      keys.push(k);
+    }
+    if (keys.length > 1) return { chords: [], error: `'${part}' — 한 번에 누르는 일반 키는 하나만 돼요. 차례로 누르려면 쉼표(,)로 나누세요` };
+    if (!keys.length && !mods.length) continue;
+    chords.push({ mods: ['ctrl', 'shift', 'alt', 'win'].filter(x => mods.includes(x)), key: keys[0] || '' });
+  }
+  if (!chords.length) return { chords: [], error: '누를 키를 적어 주세요' };
+  return { chords, error: null };
+}
+const MOD_LABEL = { ctrl: 'Ctrl', shift: 'Shift', alt: 'Alt', win: 'Win' };
+function chordLabel(c) { return [...c.mods.map(m => MOD_LABEL[m]), c.key ? (KEY_LABEL[c.key] || c.key.toUpperCase()) : ''].filter(Boolean).join('+'); }
+function prettyCombo(text) { const p = parseCombo(text); return p.error ? String(text || '') : p.chords.map(chordLabel).join(' → '); }
+/* 내 단축키(직접 만들어 저장한 것) 찾기 / 동작이 실제로 누를 키 */
+function myKey(id) { return (state.myKeys || []).find(k => k.id === id) || null; }
+function resolveHotkey(s) {
+  if (s.preset === 'custom') return { combo: s.combo || '', label: null };
+  if (String(s.preset || '').startsWith('my:')) {
+    const mk = myKey(s.preset.slice(3));
+    return { combo: mk ? mk.combo : (s.combo || ''), label: mk ? mk.name : (s.keyName || '내 단축키') };
+  }
+  return null;   // 기본 제공 단축키
+}
+/* 생성기용: 화음(동시에 누르는 키 묶음) → 각 언어 표기 */
+function chordVKs(c) { const v = c.mods.map(m => VK_MOD[m]); if (c.key) v.push(vkForKey(c.key)); return v.filter(x => x != null); }
+const AHK_KEYNAME = { enter: '{Enter}', tab: '{Tab}', esc: '{Esc}', space: '{Space}', backspace: '{Backspace}', delete: '{Delete}', insert: '{Insert}', home: '{Home}',
+  end: '{End}', pageup: '{PgUp}', pagedown: '{PgDn}', up: '{Up}', down: '{Down}', left: '{Left}', right: '{Right}', printscreen: '{PrintScreen}', apps: '{AppsKey}', capslock: '{CapsLock}', comma: ',' };
+function chordAHK(c) {
+  const sym = { ctrl: '^', shift: '+', alt: '!', win: '#' };
+  const k = !c.key ? '' : AHK_KEYNAME[c.key] || (/^f\d+$/.test(c.key) ? `{${c.key.toUpperCase()}}` : c.key);
+  if (!k) return c.mods.map(m => `{${MOD_LABEL[m]} down}`).join('') + c.mods.map(m => `{${MOD_LABEL[m]} up}`).join('');   // 수식키만
+  return c.mods.map(m => sym[m]).join('') + k;
+}
+const PY_KEYNAME = { comma: ',' };
+function chordPY(c) { return [...c.mods, ...(c.key ? [PY_KEYNAME[c.key] || c.key] : [])]; }
 
 /* 실행 중 제어 단축키 (사람이 외우기 쉬운 키로 고정) */
 const CTRL_KEYS = { pauseLabel: 'F8', stopLabel: 'F9', startNowLabel: 'F7', restartLabel: 'F10' };
@@ -158,6 +234,9 @@ let activeId = state.loops[0].id;
 function normalize(s) {
   if (!s || !Array.isArray(s.loops) || s.loops.length === 0) s = seed();
   s.screen = s.screen && s.screen.w ? s.screen : { w: 1920, h: 1080 };
+  // 내 단축키 (직접 만들어 이름 붙여 저장한 키 조합) — 모든 작업방에서 같이 씀
+  if (!Array.isArray(s.myKeys)) s.myKeys = [];
+  s.myKeys = s.myKeys.filter(k => k && k.id).map(k => ({ id: String(k.id), name: String(k.name || '내 단축키'), combo: String(k.combo || '') }));
   s.loops.forEach(l => {
     if (!l.id) l.id = uid();
     if (typeof l.gap !== 'number') l.gap = 0.5;
@@ -193,6 +272,12 @@ function migrateStep(s) {
     if (!Array.isArray(s.children)) s.children = [];
     if (s.count == null || s.count === '') s.count = 1;
   }
+  if (s.type === 'hotkey') {
+    // 옛 "직접 입력"(수식키 버튼 + 키 하나) → 글로 적는 키 조합 "Ctrl+Shift+N"
+    if (s.preset === 'custom' && s.combo == null) s.combo = [...(s.mods || []).map(m => MOD_LABEL[m] || m), s.key].filter(Boolean).join('+');
+    delete s.mods; delete s.key;
+    if (!s.preset || (!HOTKEYS[s.preset] && !String(s.preset).startsWith('my:'))) s.preset = s.combo ? 'custom' : 'copy';
+  }
   if (s.type === 'imgclick') {
     // 옛 "슬롯 번호" → 이미지 이름 (옛 파일 template_N.png 그대로 찾음)
     if (s.img == null || s.img === '') s.img = 'template_' + (num(s.slot) || 1);
@@ -222,11 +307,11 @@ function seed() {
       steps: [
         { id: uid(), type: 'win', title: '엑셀' },
         { id: uid(), type: 'click', x: 600, y: 320, button: 'left', double: false },
-        { id: uid(), type: 'hotkey', preset: 'copy', mods: [], key: '' },
+        { id: uid(), type: 'hotkey', preset: 'copy' },
         { id: uid(), type: 'wait', sec: 1 },
-        { id: uid(), type: 'hotkey', preset: 'alttab', mods: [], key: '' },
+        { id: uid(), type: 'hotkey', preset: 'alttab' },
         { id: uid(), type: 'click', x: 880, y: 500, button: 'left', double: false },
-        { id: uid(), type: 'hotkey', preset: 'paste', mods: [], key: '' },
+        { id: uid(), type: 'hotkey', preset: 'paste' },
       ],
     }],
   };
@@ -344,9 +429,12 @@ function stepDesc(s) {
     case 'move': return `화면 X ${s.x}, Y ${s.y} 로 이동`;
     case 'click': return `X ${s.x}, Y ${s.y} ${s.double ? '더블' : ''}${s.button === 'right' ? '우' : s.button === 'middle' ? '가운데' : ''}클릭`;
     case 'drag': return `X ${s.x1},${s.y1} → X ${s.x2},${s.y2} 끌기`;
-    case 'hotkey': return (s.preset === 'custom')
-      ? `${[...(s.mods || []), s.key].filter(Boolean).join(' + ') || '(비어있음)'}`
-      : (HOTKEYS[s.preset] || {}).label || '단축키';
+    case 'hotkey': {
+      const rk = resolveHotkey(s);
+      if (!rk) return (HOTKEYS[s.preset] || {}).label || '단축키';
+      const pc = prettyCombo(rk.combo) || '(비어있음)';
+      return rk.label ? `${rk.label} (${pc})` : pc;
+    }
     case 'text': return `"${(s.text || '').slice(0, 24)}" 입력`;
     case 'win': return `제목에 "${s.title}" 있는 창 앞으로`;
     case 'scroll': return `${s.dir === 'up' ? '위' : '아래'}로 ${s.amount}칸 스크롤`;
@@ -403,7 +491,7 @@ function stepIssue(s) {
     case 'url': { const u = (s.url || '').trim(); return (!u || u === 'https://' || u === 'http://') ? '주소를 입력하세요' : null; }
     case 'move': case 'click': return (bad(s.x) || bad(s.y)) ? '좌표(X·Y)를 입력하세요' : null;
     case 'drag': return (bad(s.x1) || bad(s.y1) || bad(s.x2) || bad(s.y2)) ? '시작·끝 좌표를 입력하세요' : null;
-    case 'hotkey': return (s.preset === 'custom' && !(s.key || '').trim()) ? '누를 키를 입력하세요' : null;
+    case 'hotkey': { const rk = resolveHotkey(s); return rk ? parseCombo(rk.combo).error : null; }
     case 'text': return (s.text || '') === '' ? '입력할 글자가 비었어요' : null;
     case 'win': return (s.title || '').trim() === '' ? '창 제목을 입력하세요' : null;
     case 'scroll': return (bad(s.amount) || Number(s.amount) < 1) ? '스크롤 칸 수를 입력하세요' : null;
@@ -693,7 +781,7 @@ function setType(type) {
     move:     { type, x: 100, y: 100 },
     click:    { type, x: 100, y: 100, button: 'left', double: false },
     drag:     { type, x1: 100, y1: 100, x2: 300, y2: 300 },
-    hotkey:   { type, preset: 'copy', mods: [], key: '' },
+    hotkey:   { type, preset: 'copy', combo: '' },
     text:     { type, text: '' },
     win:      { type, title: '' },
     scroll:   { type, dir: 'down', amount: 3 },
@@ -777,6 +865,60 @@ function likeBlock() {
     + `<p class="hint">화면이 전체적으로 밝아지거나 어두워져도 찾아요(무늬로 비교). 모양·각도·크기가 다른 사진은 찾지 못해요.</p>`;
 }
 
+/* --- 단축키 직접 만들기: 글로 적기 + 도우미 버튼 + (PC) 키보드로 눌러 입력 + 해석 미리보기 --- */
+function setK(k, v) { if (k.includes('.')) { const [a, b] = k.split('.'); (draft[a] = draft[a] || {})[b] = v; } else draft[k] = v; }
+function comboPreview(text) {
+  const p = parseCombo(text);
+  if (p.error) return { bad: true, html: '⚠ ' + escapeHtml(p.error) };
+  return { bad: false, html: '→ ' + p.chords.map(c => `<b>${escapeHtml(chordLabel(c))}</b>`).join(' 다음 ') + (p.chords.length > 1 ? ' (차례로 누름)' : ' (함께 누름)') };
+}
+let captureTarget = null;   // "키보드로 눌러 입력" 중인 칸
+function comboEditor(k) {
+  const val = String(getK(k) ?? '');
+  const pv = comboPreview(val);
+  const rec = captureTarget === k;
+  return `<label class="field"><span>누를 키 (직접 적기)</span><input type="text" data-k="${k}" data-combo="1" value="${escapeHtml(val)}" placeholder="예: Ctrl+Shift+N  /  Win+R  /  Alt, F, X" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+    <div class="combo-tools">
+      ${['Ctrl+', 'Shift+', 'Alt+', 'Win+'].map(t => `<button class="chip-btn" data-append="${t}" data-target="${k}">${t}</button>`).join('')}
+      <button class="chip-btn" data-append=", " data-target="${k}">, 다음 키</button>
+      <button class="chip-btn" data-clear="${k}">지우기</button>
+      <button class="chip-btn rec${rec ? ' on' : ''}" data-capture="${k}">${rec ? '⏺ 지금 키를 누르세요… (Esc 취소)' : '⌨ 키보드로 눌러 입력 (PC)'}</button>
+    </div>
+    <p class="combo-preview${pv.bad ? ' bad' : ''}" data-preview="${k}">${pv.html}</p>
+    <p class="hint"><b>+</b> = 함께 누르기, <b>쉼표(,)</b> = 차례로 누르기. 예) <code>Ctrl+Shift+N</code> · <code>Win+R</code> · <code>Alt+F4</code> · <code>Alt, F, X</code><br>
+      쓸 수 있는 키: 영문·숫자, <code>f1~f12</code>, <code>enter</code> <code>tab</code> <code>esc</code> <code>space</code> <code>backspace</code> <code>delete</code> <code>home</code> <code>end</code> <code>pageup</code> <code>pagedown</code> <code>up</code> <code>down</code> <code>left</code> <code>right</code>, 기호 <code>; = - . / [ ] \\ '</code>(쉼표 키는 <code>comma</code>). 한글 자판으로 쳐도 같은 자리 키로 알아들어요(ㅜ → N).<br>
+      PC에선 "키보드로 눌러 입력"을 누르고 원하는 키를 누르면 바로 적혀요. Ctrl+W·Alt+F4처럼 브라우저가 먼저 가로채는 키는 글로 적으세요.</p>`;
+}
+/* PC 키보드로 누른 조합을 글로 바꿔 칸에 넣음 (끝이 쉼표면 뒤에 이어 붙임 = 차례로) */
+const CODE_KEY = { Enter: 'enter', NumpadEnter: 'enter', Tab: 'tab', Escape: 'esc', Space: 'space', Backspace: 'backspace', Delete: 'delete', Insert: 'insert',
+  Home: 'home', End: 'end', PageUp: 'pageup', PageDown: 'pagedown', ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+  PrintScreen: 'printscreen', ContextMenu: 'apps', CapsLock: 'capslock', Semicolon: ';', Equal: '=', Comma: 'comma', Minus: '-', Period: '.',
+  Slash: '/', Backquote: '`', BracketLeft: '[', Backslash: '\\', BracketRight: ']', Quote: "'" };
+document.addEventListener('keydown', e => {
+  if (!captureTarget) return;
+  e.preventDefault(); e.stopPropagation();
+  const code = e.code || '';
+  if (code === 'Escape' && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) { captureTarget = null; renderSheetBody(); return; }
+  let key = null;
+  if (/^Key[A-Z]$/.test(code)) key = code.slice(3);
+  else if (/^Digit\d$/.test(code)) key = code.slice(5);
+  else if (/^Numpad\d$/.test(code)) key = code.slice(6);
+  else if (/^F([1-9]|1[0-2])$/.test(code)) key = code;
+  else if (CODE_KEY[code]) key = CODE_KEY[code];
+  if (!key) return;                                   // 수식키만 누른 상태면 다음 키를 기다림
+  const chord = [e.ctrlKey && 'Ctrl', e.shiftKey && 'Shift', e.altKey && 'Alt', e.metaKey && 'Win', key].filter(Boolean).join('+');
+  const cur = String(getK(captureTarget) ?? '');
+  setK(captureTarget, /,\s*$/.test(cur) ? cur.replace(/\s*$/, ' ') + chord : chord);
+  captureTarget = null;
+  renderSheetBody();
+}, true);
+/* 내 단축키를 지우면 그걸 쓰던 동작은 같은 키의 "직접 만들기"로 바꿔 둠(동작이 깨지지 않게) */
+function deleteMyKey(id) {
+  const mk = myKey(id); if (!mk) return;
+  state.loops.forEach(l => walkSteps(l.steps, s => { if (s.type === 'hotkey' && s.preset === 'my:' + id) { s.preset = 'custom'; s.combo = mk.combo; delete s.keyName; } }));
+  state.myKeys = state.myKeys.filter(k => k.id !== id);
+}
+
 function fieldsFor(type) {
   const xy = (lx, ly, vx, vy) => `<div class="two">${inpN(lx, vx)}${inpN(ly, vy)}</div>`;
   switch (type) {
@@ -791,17 +933,28 @@ function fieldsFor(type) {
       return `<p class="hint">시작 위치에서 누른 채로 끝 위치까지 끌어요.</p>`
         + xy('시작 X', '시작 Y', 'x1', 'y1') + xy('끝 X', '끝 Y', 'x2', 'y2') + coordHint();
     case 'hotkey': {
-      let h = selF('단축키 고르기', 'preset', Object.fromEntries(Object.entries(HOTKEYS).map(([k, v]) => [k, v.label])));
+      // 저장된 내 단축키가 없어졌으면(지웠거나 다른 기기에서 불러옴) 이 동작에 적힌 키로 "직접 만들기"
+      if (String(draft.preset).startsWith('my:') && !myKey(draft.preset.slice(3))) draft.preset = 'custom';
+      const opt = (v, t) => `<option value="${escapeHtml(v)}"${String(draft.preset) === v ? ' selected' : ''}>${escapeHtml(t)}</option>`;
+      const mine = state.myKeys || [];
+      let h = `<label class="field"><span>단축키</span><select data-k="preset">`
+        + `<optgroup label="자주 쓰는 단축키">${Object.entries(HOTKEYS).filter(([k]) => k !== 'custom').map(([k, v]) => opt(k, v.label)).join('')}</optgroup>`
+        + (mine.length ? `<optgroup label="내 단축키 (직접 만든 것)">${mine.map(m => opt('my:' + m.id, `★ ${m.name}  (${prettyCombo(m.combo)})`)).join('')}</optgroup>` : '')
+        + `<optgroup label="새로 만들기">${opt('custom', '✏️ 직접 만들기 (원하는 키 조합 적기)')}</optgroup></select></label>`;
       if (draft.preset === 'close') h += `<p class="hint"><b>지금 맨 앞에 있는 창</b>을 닫아요. 바탕화면이 앞이면 "윈도우 종료" 창이 뜨니, 앞에 "창 활성화"로 닫을 창을 먼저 앞으로 가져오세요.</p>`;
       if (draft.preset === 'custom') {
-        h += `<div class="field"><span>함께 누를 키</span><div class="chk-row" data-group="mods">
-          ${chk('mods', 'ctrl', 'Ctrl', (draft.mods || []).includes('ctrl'))}
-          ${chk('mods', 'shift', 'Shift', (draft.mods || []).includes('shift'))}
-          ${chk('mods', 'alt', 'Alt', (draft.mods || []).includes('alt'))}
-          ${chk('mods', 'win', 'Win', (draft.mods || []).includes('win'))}
-        </div></div>`
-          + inpT('글자/키', 'key', '예: r, f5, enter, tab, esc, up')
-          + `<p class="hint">함께 누를 키(Ctrl/Shift/Alt/Win)를 고르고 글자/키 한 개를 적어요.<br>예) <b>실행창</b>: Win 체크 + <code>r</code> → "글자 입력 notepad" → "단축키 Enter". <code>f1~f12</code>·<code>enter</code>·<code>tab</code>·<code>esc</code>·<code>space</code>·<code>up/down/left/right</code>·<code>delete</code> 도 돼요.</p>`;
+        h += comboEditor('combo')
+          + `<button class="mini wide" data-act="save-my">★ 이 조합을 "내 단축키"로 저장 (이름 붙여 목록에서 다시 쓰기)</button>`;
+      } else if (String(draft.preset).startsWith('my:')) {
+        const mk = myKey(draft.preset.slice(3));
+        if (!draft.myEdit || draft.myEdit.id !== mk.id) draft.myEdit = { id: mk.id, name: mk.name, combo: mk.combo };
+        h += `<div class="seg-title">★ 내 단축키 고치기</div>`
+          + inpT('이름', 'myEdit.name', '예: 창 닫기')
+          + comboEditor('myEdit.combo')
+          + `<p class="hint">여기서 고치고 저장하면 <b>이 단축키를 쓰는 모든 동작</b>이 같이 바뀌어요.</p>`
+          + `<button class="mini wide ghost danger" data-act="del-my">이 내 단축키 지우기</button>`;
+      } else {
+        h += `<p class="hint">목록에 없는 키는 맨 아래 <b>✏️ 직접 만들기</b>에서 원하는 조합을 적어 만들 수 있어요(내 단축키로 저장 가능).</p>`;
       }
       return h;
     }
@@ -917,19 +1070,58 @@ function bindFields() {
     el.oninput = () => {
       const k = el.dataset.k;
       const v = el.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value;
+      // 기본 단축키에서 "직접 만들기"로 바꾸면 그 키 조합을 미리 채워 줌(고쳐 쓰기 쉽게)
+      if (k === 'preset' && v === 'custom' && !draft.combo && HOTKEYS[draft.preset] && draft.preset !== 'custom') {
+        draft.combo = HOTKEYS[draft.preset].py.map(p => MOD_LABEL[p] || (p.length === 1 || /^f\d+$/.test(p) ? p.toUpperCase() : (KEY_LABEL[p] || p))).join('+');
+      }
       if (k.includes('.')) { const [a, b] = k.split('.'); (draft[a] = draft[a] || {})[b] = v; }
       else draft[k] = v;
-      if (el.tagName === 'SELECT' && RERENDER_KEYS.includes(k)) renderSheetBody();
+      if (el.tagName === 'SELECT' && RERENDER_KEYS.includes(k)) { captureTarget = null; renderSheetBody(); }
+      // 단축키 칸: 글자를 칠 때마다 해석 결과만 바꿔 보여줌(입력 중 칸이 다시 그려지지 않게)
+      if (el.dataset.combo) {
+        const pv = body.querySelector(`[data-preview="${k}"]`);
+        if (pv) { const r = comboPreview(el.value); pv.innerHTML = r.html; pv.classList.toggle('bad', r.bad); }
+      }
     };
   });
+  // 단축키 도우미 버튼
+  body.querySelectorAll('[data-append]').forEach(b => {
+    b.onclick = () => {
+      const k = b.dataset.target, add = b.dataset.append;
+      const cur = String(getK(k) ?? '');
+      setK(k, add.startsWith(',') ? cur.replace(/[\s,]*$/, '') + (cur.trim() ? add : '') : cur + add);
+      renderSheetBody();
+      const inp = body.querySelector(`input[data-k="${k}"]`);
+      if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+    };
+  });
+  body.querySelectorAll('[data-clear]').forEach(b => { b.onclick = () => { setK(b.dataset.clear, ''); renderSheetBody(); }; });
+  body.querySelectorAll('[data-capture]').forEach(b => {
+    b.onclick = () => { captureTarget = captureTarget === b.dataset.capture ? null : b.dataset.capture; renderSheetBody(); };
+  });
+  const saveMy = body.querySelector('[data-act="save-my"]');
+  if (saveMy) saveMy.onclick = () => {
+    const p = parseCombo(draft.combo);
+    if (p.error) { toast(p.error); return; }
+    const name = (prompt('내 단축키 이름 (목록에 이 이름으로 보여요)', prettyCombo(draft.combo)) || '').replace(/[\r\n]/g, ' ').trim().slice(0, 30);
+    if (!name) return;
+    const mk = { id: uid(), name, combo: String(draft.combo).trim() };
+    state.myKeys.push(mk);
+    draft.preset = 'my:' + mk.id; draft.myEdit = { id: mk.id, name: mk.name, combo: mk.combo };
+    save(); renderSheetBody(); toast(`"${name}"을(를) 내 단축키로 저장했어요`);
+  };
+  const delMy = body.querySelector('[data-act="del-my"]');
+  if (delMy) delMy.onclick = () => {
+    const id = String(draft.preset).slice(3), mk = myKey(id);
+    if (!mk || !confirm(`내 단축키 "${mk.name}"을(를) 지울까요?\n이걸 쓰던 동작은 같은 키 조합(${prettyCombo(mk.combo)})으로 그대로 남아요.`)) return;
+    deleteMyKey(id);
+    draft.preset = 'custom'; draft.combo = mk.combo; delete draft.myEdit; delete draft.keyName;
+    save(); renderSteps(); renderSheetBody(); toast('내 단축키를 지웠어요');
+  };
   body.querySelectorAll('.chk').forEach(btn => {
     btn.onclick = () => {
       const g = btn.dataset.group, val = btn.dataset.value;
-      if (g === 'mods') {
-        draft.mods = draft.mods || [];
-        const i = draft.mods.indexOf(val);
-        if (i >= 0) draft.mods.splice(i, 1); else draft.mods.push(val);
-      } else if (g === 'double' || g === 'bright') { draft[g] = !draft[g]; }
+      if (g === 'double' || g === 'bright') { draft[g] = !draft[g]; }
       else {
         draft[g] = (g === 'tol' || g === 'sim') ? Number(val) : val;
         if (g === 'read') draft.op = (val === 'text' ? 'has' : 'ge');
@@ -947,6 +1139,21 @@ function finalizeDraft(d) {
   if (d.saveTo != null) d.saveTo = cleanVarName(d.saveTo);
   if (d.varName != null) d.varName = cleanVarName(d.varName);
   if (d.alias != null) d.alias = String(d.alias).replace(/[\r\n]/g, ' ').trim().slice(0, 40);
+  if (d.type === 'hotkey') {
+    if (String(d.preset).startsWith('my:')) {
+      const mk = myKey(d.preset.slice(3));
+      if (mk && d.myEdit) {   // 내 단축키를 고쳤으면 공용 정의에 반영 → 이걸 쓰는 모든 동작이 같이 바뀜
+        const nm = String(d.myEdit.name || '').replace(/[\r\n]/g, ' ').trim().slice(0, 30);
+        if (nm) mk.name = nm;
+        if (!parseCombo(d.myEdit.combo).error) mk.combo = String(d.myEdit.combo).trim();
+        else toast('키 조합이 올바르지 않아 내 단축키의 키는 바꾸지 않았어요');
+      }
+      if (mk) { d.combo = mk.combo; d.keyName = mk.name; } else d.preset = 'custom';   // 지워졌으면 적힌 키로
+    } else if (d.preset === 'custom') {
+      d.combo = String(d.combo || '').trim(); delete d.keyName;
+    } else { delete d.combo; delete d.keyName; }
+    delete d.myEdit;
+  }
   return d;
 }
 
@@ -979,7 +1186,7 @@ $('#sheet-bg').onclick = () => hideSheet('#sheet', '#sheet-bg');
 $('#add-step').onclick = () => openStepSheet(null);
 
 function showSheet(s, bg) { $(bg).hidden = false; $(s).hidden = false; }
-function hideSheet(s, bg) { $(bg).hidden = true; $(s).hidden = true; }
+function hideSheet(s, bg) { $(bg).hidden = true; $(s).hidden = true; captureTarget = null; }
 
 /* ===== 작업방 추가/삭제 ===== */
 $('#add-loop').onclick = () => {
@@ -1282,19 +1489,10 @@ function hhmmParts(startAt) { if (!startAt) return null; const [hh, mm] = startA
 function ahkStr(s) {
   return String(s == null ? '' : s).replace(/`/g, '``').replace(/"/g, '`"').replace(/\r/g, '').replace(/\n/g, '`n').replace(/\t/g, '`t');
 }
+/* 기본 제공 단축키의 각 언어 표기 (직접 만든 키는 parseCombo → chordAHK/chordPY/chordVKs) */
 function buildHotkey(s) {
-  if (s.preset && s.preset !== 'custom') {
-    const h = HOTKEYS[s.preset] || HOTKEYS.copy;
-    return { ahk: h.ahk, py: h.py, sk: h.sk, singlePy: h.py.length === 1 };
-  }
-  const ahkSym = { ctrl: '^', alt: '!', shift: '+', win: '#' };
-  const skSym = { ctrl: '^', alt: '%', shift: '+', win: '' };
-  const mods = (s.mods || []);
-  let key = (s.key || '').trim().replace(/["'`{}]/g, '');   // 스크립트를 깨뜨리는 문자 제거
-  const ahk = mods.map(m => ahkSym[m]).join('') + (key.length > 1 ? `{${key}}` : key);
-  const sk = mods.map(m => skSym[m]).join('') + (key ? (key.length > 1 ? `{${key.toUpperCase()}}` : key.toLowerCase()) : '');
-  const py = [...mods.map(m => m === 'win' ? 'win' : m), key.toLowerCase()].filter(Boolean);
-  return { ahk, py, sk, singlePy: py.length === 1 };
+  const h = HOTKEYS[s.preset] || HOTKEYS.copy;
+  return { ahk: h.ahk, py: h.py, sk: h.sk, singlePy: h.py.length === 1 };
 }
 
 /* --- 글자 → 바이트, base64 (한글 안전) --- */
@@ -1312,7 +1510,17 @@ function b64decodeUtf8(b64) {
 
 /* --- 설계도: 받은 코드 파일 끝에 심어 두면, 웹에 다시 불러와 그대로 복원 --- */
 const DESIGN_BEGIN = 'MACRO-STUDIO-DESIGN-BEGIN', DESIGN_END = 'MACRO-STUDIO-DESIGN-END';
-function designOf(l) { return { kind: 'macro-studio-design', v: 1, screen: state.screen, loop: JSON.parse(JSON.stringify(l)) }; }
+function designOf(l) {
+  const loop = JSON.parse(JSON.stringify(l));
+  const used = [];
+  walkSteps(loop.steps, s => {   // 내 단축키는 지금 키로 적어 두고(다른 기기에서도 동작), 정의도 함께 담음
+    if (s.type === 'hotkey' && String(s.preset).startsWith('my:')) {
+      const mk = myKey(s.preset.slice(3));
+      if (mk) { s.combo = mk.combo; s.keyName = mk.name; if (!used.some(u => u.id === mk.id)) used.push({ ...mk }); }
+    }
+  });
+  return { kind: 'macro-studio-design', v: 1, screen: state.screen, loop, myKeys: used };
+}
 function designBlock(l, style) {
   const b = b64encodeUtf8(JSON.stringify(designOf(l)));
   const rows = []; for (let i = 0; i < b.length; i += 76) rows.push(b.slice(i, i + 76));
@@ -1598,7 +1806,13 @@ function genAHKStep(s) {
       return [`Click "${opt}"`];
     }
     case 'drag': return [`MouseClickDrag "Left", ${num(s.x1)}, ${num(s.y1)}, ${num(s.x2)}, ${num(s.y2)}, 10`];
-    case 'hotkey': return [`Send "${ahkStr(buildHotkey(s).ahk)}"`];
+    case 'hotkey': {
+      const rk = resolveHotkey(s);
+      if (!rk) return [`Send "${ahkStr(buildHotkey(s).ahk)}"`];
+      const L = [];
+      parseCombo(rk.combo).chords.forEach((c, i) => { if (i) L.push('Sleep 120'); L.push(`Send "${ahkStr(chordAHK(c))}"`); });
+      return L;
+    }
     case 'text': return [`SendText ${ahkFill(s.text)}`];
     case 'win': return [`WinActivate ${ahkFill(s.title)}`, `WinWaitActive ${ahkFill(s.title)}, , 5`];
     case 'scroll': return [`Loop ${num(s.amount) || 1} {`, `    Send "{Wheel${s.dir === 'up' ? 'Up' : 'Down'}}"`, '    Sleep 40', '}'];
@@ -2078,8 +2292,15 @@ function genPSStep(s) {
     case 'drag': return [`Drag ${num(s.x1)} ${num(s.y1)} ${num(s.x2)} ${num(s.y2)}`];
     case 'hotkey': {
       if (s.preset === 'alttab') return ['AltTab'];
+      const hex = v => '0x' + v.toString(16).toUpperCase();
+      const rk = resolveHotkey(s);
+      if (rk) {   // 직접 만든 키: 화음마다 keybd_event 로 직접 전송(Win 포함), 쉼표면 차례로
+        const L = [];
+        parseCombo(rk.combo).chords.forEach((c, i) => { if (i) L.push('Start-Sleep -Milliseconds 120'); const v = chordVKs(c); if (v.length) L.push(`KeyCombo @(${v.map(hex).join(', ')})`); });
+        return L;
+      }
       const vks = hotkeyCombo(s);
-      if (vks && (s.preset === 'custom' || hotkeyUsesWin(s))) return [`KeyCombo @(${vks.map(v => '0x' + v.toString(16).toUpperCase()).join(', ')})`];
+      if (vks && hotkeyUsesWin(s)) return [`KeyCombo @(${vks.map(hex).join(', ')})`];
       return [`Keys ${psStr(buildHotkey(s).sk)}`];
     }
     case 'text': return [`TypeText ${psFill(s.text)}`];
@@ -2538,7 +2759,17 @@ function genPYStep(s) {
       return [`pyautogui.click(${a.join(', ')})`];
     }
     case 'drag': return [`pyautogui.moveTo(${num(s.x1)}, ${num(s.y1)}, duration=0.2)`, `pyautogui.dragTo(${num(s.x2)}, ${num(s.y2)}, duration=0.3, button='left')`];
-    case 'hotkey': { const h = buildHotkey(s); return h.singlePy ? [`pyautogui.press(${J(h.py[0])})`] : [`pyautogui.hotkey(${h.py.map(J).join(', ')})`]; }
+    case 'hotkey': {
+      const rk = resolveHotkey(s);
+      if (!rk) { const h = buildHotkey(s); return h.singlePy ? [`pyautogui.press(${J(h.py[0])})`] : [`pyautogui.hotkey(${h.py.map(J).join(', ')})`]; }
+      const L = [];
+      parseCombo(rk.combo).chords.forEach((c, i) => {
+        if (i) L.push('time.sleep(0.12)');
+        const k = chordPY(c);
+        L.push(k.length === 1 ? `pyautogui.press(${J(k[0])})` : `pyautogui.hotkey(${k.map(J).join(', ')})`);
+      });
+      return L;
+    }
     case 'text': return [`type_text(${pyFill(s.text)})`];
     case 'win': return [`activate_window(${pyFill(s.title)})`];
     case 'scroll': return [`pyautogui.scroll(${(s.dir === 'up' ? 1 : -1) * (num(s.amount) || 1) * 300})`];
@@ -2920,6 +3151,13 @@ function importDesignText(text) {
   }
   if (o.kind === 'macro-studio-design' && o.loop) {
     const l = JSON.parse(JSON.stringify(o.loop));
+    // 함께 온 내 단축키: 없으면 추가, 같은 아이디인데 키가 다르면 그 동작은 적힌 키로("직접 만들기")
+    (Array.isArray(o.myKeys) ? o.myKeys : []).forEach(k => {
+      if (!k || !k.id) return;
+      const have = myKey(k.id);
+      if (!have) state.myKeys.push({ id: String(k.id), name: String(k.name || '내 단축키'), combo: String(k.combo || '') });
+      else if (have.combo !== k.combo) walkSteps(l.steps || [], s => { if (s.type === 'hotkey' && s.preset === 'my:' + k.id) s.preset = 'custom'; });
+    });
     l.id = uid();
     walkSteps(l.steps || [], s => { s.id = uid(); });
     if (state.loops.some(x => x.name === l.name)) l.name = `${l.name || '작업방'} (불러옴)`;
@@ -3020,7 +3258,8 @@ const HELP = `
 <h4>🧩 동작 종류</h4>
 <ul>
 <li><b>🌐 주소 열기</b> · <b>🖱️ 마우스 이동</b> · <b>👆 클릭</b> · <b>✋ 드래그</b> · <b>🖲️ 스크롤</b> · <b>⏱️ 대기</b> — 이름 그대로예요. 좌표는 "좌표 찾기 도우미"로.</li>
-<li><b>⌨️ 단축키</b> — 복사·붙여넣기·<b>창 닫기(Alt+F4)·탭 닫기·새 탭·새로고침·주소창·실행창(Win+R)·바탕화면·탐색기</b> 등. 없는 건 <b>직접 입력</b>으로 Ctrl·Shift·Alt·Win + 키를 조합해요. 페이지·프로그램마다 단축키가 다르면 그에 맞게 고르면 돼요.<br>예) 실행창 → 글자 입력 <code>notepad</code> → 단축키 Enter = 메모장 열기</li>
+<li><b>⌨️ 단축키</b> — 자주 쓰는 것(복사·붙여넣기·창 닫기·탭 닫기·새로고침·실행창 등)은 목록에서 고르고, 없는 건 <b>✏️ 직접 만들기</b>에서 <b>원하는 키 조합을 글로 적어</b> 만들어요: <code>Ctrl+Shift+N</code>, <code>Win+R</code>, <code>Alt, F, X</code>(쉼표 = 차례로). PC에선 "키보드로 눌러 입력"으로 실제로 눌러서 적을 수도 있어요. 페이지·프로그램마다 단축키가 다르면 그에 맞게 적으면 돼요.<br>
+  <b>★ 내 단축키</b>: 만든 조합에 이름("결재창 열기" 등)을 붙여 저장하면 목록에 생겨 어느 작업방에서든 골라 써요. 고치면 그걸 쓰는 모든 동작이 같이 바뀌고, 지워도 쓰던 동작은 같은 키로 남아요.<br>예) 실행창 → 글자 입력 <code>notepad</code> → 단축키 Enter = 메모장 열기</li>
 <li><b>✏️ 글자 입력</b> — <code>{변수이름}</code>을 넣으면 그 값으로 바뀌어요. 무설치·파이썬은 붙여넣기로 넣어 한글도 그대로 들어가요.</li>
 <li><b>🪟 창 활성화</b> — 제목으로 창을 찾아 앞으로 가져와요. 제목은 아래 "F12 소스 분석"으로 뽑을 수 있어요.</li>
 <li><b>🖼️ 이미지 찾아 클릭</b> — 찍어 둔 그림을 화면에서 찾아 눌러요(아래 "이미지 찾기").</li>
