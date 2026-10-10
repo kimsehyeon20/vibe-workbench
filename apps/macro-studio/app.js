@@ -756,7 +756,9 @@ $('#prev-stop').onclick = () => { prev.cancel = true; prev.playing = false; prev
    내보내기 (실제 매크로 파일 만들기)
    ========================================================= */
 function fileName(base, ext) {
-  const safe = (base || 'macro').replace(/[^\w가-힣ㄱ-ㅎㅏ-ㅣ-]+/g, '_').replace(/^_+|_+$/g, '') || 'macro';
+  // ★ 파일명은 ASCII만: .bat 안에 파일명이 들어가는데, 한글 파일명이면 cmd+chcp 에서 깨짐
+  let safe = String(base == null ? '' : base).replace(/[^\x20-\x7E]+/g, '').replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '').replace(/-+/g, '-');
+  if (safe.length < 2) safe = 'macro' + (safe ? '-' + safe : '');
   return `${safe}.${ext}`;
 }
 function download(name, text, mime = 'text/plain;charset=utf-8') {
@@ -892,19 +894,15 @@ function genAHKImg(s) {
   return L;
 }
 
-/* cmd echo 에서 문제되는 특수문자 제거 */
-function batName(s) { return String(s || '매크로').replace(/[\r\n%<>|&^"()!]/g, ' ').replace(/\s+/g, ' ').trim() || '매크로'; }
-
-/* --- 실행용 .bat (.ahk 실행) --- */
+/* --- 실행용 .bat (.ahk 실행). ★ 한글 금지(ASCII만): cmd + chcp 65001 에서 한글이 다음 줄 글자를 먹는 버그 방지 --- */
 function genBAT(l, ahkName) {
+  // .bat 는 순수 ASCII + chcp 없음: 한글/코드페이지 전환이 cmd 파서를 깨뜨려 'rshell' 류 오류를 냄
   return [
-    '@echo off', 'chcp 65001 >nul',
-    `echo [${batName(l.name)}] 를 시작합니다...`,
-    `echo 단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.restartLabel} 재실행`,
+    '@echo off',
     `start "" "%~dp0${ahkName}"`,
     'if errorlevel 1 (',
     '  echo.',
-    '  echo [안내] 먼저 AutoHotkey v2 를 설치해야 .ahk 가 실행됩니다. https://www.autohotkey.com',
+    '  echo [Notice] Install AutoHotkey v2 first - https://www.autohotkey.com',
     '  pause', ')', '',
   ].join('\r\n');
 }
@@ -913,12 +911,12 @@ function genBAT(l, ahkName) {
 function psStr(s) { return "'" + String(s == null ? '' : s).replace(/'/g, "''") + "'"; }
 function sendKeysText(s) { return String(s == null ? '' : s).replace(/[+^%~(){}\[\]]/g, m => '{' + m + '}'); }
 
+/* ★ .bat 은 ASCII만 (한글 안내는 .ps1 의 Write-Host 에서 출력) */
 function genPSBat(l, ps1Name) {
+  // .bat 는 순수 ASCII + chcp 없음: cmd 코드페이지 전환이 'powershell' 명령을 깨먹는 버그 회피
   return [
-    '@echo off', 'chcp 65001 >nul',
-    `echo [${batName(l.name)}] 를 시작합니다. (설치 필요 없음)`,
-    `echo 단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.restartLabel} 재실행`,
-    `powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0${ps1Name}"`,
+    '@echo off',
+    `powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0${ps1Name}"`,
     'echo.', 'pause', '',
   ].join('\r\n');
 }
@@ -927,6 +925,7 @@ function genPS1(l) {
   P.push('# -*- 매크로: ' + (l.name || '').replace(/[\r\n]/g, ' ') + ' -*-');
   P.push('# 설치가 필요 없습니다. 함께 받은 "...-무설치.bat" 를 더블클릭하세요.');
   P.push(`# 단축키:  ${CTRL_KEYS.pauseLabel} = 일시정지/재생   ${CTRL_KEYS.stopLabel} = 종료   ${CTRL_KEYS.restartLabel} = 처음부터 다시 실행`);
+  P.push('try { chcp 65001 > $null } catch {}');
   P.push('try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}');
   P.push('Add-Type @"');
   P.push('using System; using System.Runtime.InteropServices;');
@@ -989,7 +988,7 @@ function genPS1(l) {
   const hasImg = l.steps.some(s => s.type === 'imgclick');
   if (hasImg) P.push(...psImgFuncs());
   P.push('');
-  P.push(`Write-Host "단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료"`);
+  P.push(`Write-Host "단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.restartLabel} 재실행"`);
   const p = hhmmParts(l.startAt);
   if (p) {
     P.push(`# 예약 시작: 다음 ${l.startAt} 까지 대기 (${CTRL_KEYS.startNowLabel} 즉시 시작)`);
@@ -1534,12 +1533,13 @@ function genImageCapturer() {
     '',
   ].join('\r\n');
 }
-function genHelperBat(ps1Name, title) {
+/* ★ .bat 은 ASCII만 (도우미 .ps1 은 GUI/MessageBox 로 한글 표시) */
+function genHelperBat(ps1Name) {
+  // .bat 는 순수 ASCII + chcp 없음
   return [
-    '@echo off', 'chcp 65001 >nul',
-    `echo ${title} 시작... (창이 바로 안 뜨면 잠시 기다리세요)`,
+    '@echo off',
     `powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0${ps1Name}"`,
-    'echo.', 'echo 끝났어요. 문제가 있으면 위 메시지를 확인하세요.', 'pause', '',
+    'echo.', 'pause', '',
   ].join('\r\n');
 }
 
@@ -1553,34 +1553,36 @@ function doExport(kind) {
   }
   if (kind === 'ahk') {
     const ahkName = fileName(l.name, 'ahk');
+    const stem = ahkName.replace(/\.ahk$/i, ''); // .bat 이름을 스크립트와 같은 어간으로 맞춤
     download(ahkName, genAHK(l));
-    download(fileName(l.name + '-실행', 'bat'), genBAT(l, ahkName), 'application/bat');
+    download(stem + '-run.bat', genBAT(l, ahkName), 'application/bat');
     toast('.ahk 와 .bat 를 받았어요');
   } else if (kind === 'ps') {
     const ps1Name = fileName(l.name, 'ps1');
+    const stem = ps1Name.replace(/\.ps1$/i, '');
     download(ps1Name, genPS1(l), 'text/plain;charset=utf-8');
-    download(fileName(l.name + '-무설치', 'bat'), genPSBat(l, ps1Name), 'application/bat');
+    download(stem + '-noinstall.bat', genPSBat(l, ps1Name), 'application/bat');
     toast('무설치 실행 파일을 받았어요');
   } else if (kind === 'py') {
     download(fileName(l.name, 'py'), genPY(l), 'text/x-python;charset=utf-8');
     toast('파이썬 파일을 받았어요');
   } else if (kind === 'finder') {
-    const ps1 = '좌표찾기도우미.ps1';
+    const ps1 = 'coordinate-finder.ps1';
     download(ps1, genFinder(), 'text/plain;charset=utf-8');
-    download('좌표찾기도우미-실행.bat', genHelperBat(ps1, '좌표 찾기 도우미'), 'application/bat');
-    toast('좌표 찾기 도우미를 받았어요');
+    download('coordinate-finder-run.bat', genHelperBat(ps1), 'application/bat');
+    toast('좌표 찾기 도우미를 받았어요 (coordinate-finder)');
   } else if (kind === 'region') {
-    const ps1 = '영역선택도우미.ps1';
+    const ps1 = 'region-picker.ps1';
     download(ps1, genRegionPicker(), 'text/plain;charset=utf-8');
-    download('영역선택도우미-실행.bat', genHelperBat(ps1, '영역 선택 도우미'), 'application/bat');
-    toast('영역 선택 도우미를 받았어요');
+    download('region-picker-run.bat', genHelperBat(ps1), 'application/bat');
+    toast('영역 선택 도우미를 받았어요 (region-picker)');
   } else if (kind === 'imgcap') {
-    const ps1 = '이미지캡처도우미.ps1';
+    const ps1 = 'image-capture.ps1';
     download(ps1, genImageCapturer(), 'text/plain;charset=utf-8');
-    download('이미지캡처도우미-실행.bat', genHelperBat(ps1, '이미지 캡처 도우미'), 'application/bat');
-    toast('이미지 캡처 도우미를 받았어요');
+    download('image-capture-run.bat', genHelperBat(ps1), 'application/bat');
+    toast('이미지 캡처 도우미를 받았어요 (image-capture)');
   } else if (kind === 'backup') {
-    download(fileName('매크로설계소-백업', 'json'), JSON.stringify(state, null, 2), 'application/json');
+    download(fileName('macro-studio-backup', 'json'), JSON.stringify(state, null, 2), 'application/json');
     toast('전체 백업을 저장했어요');
   }
 }
