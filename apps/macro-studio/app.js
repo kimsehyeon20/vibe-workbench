@@ -209,6 +209,8 @@ function varNames(l) {
   });
   return [...s];
 }
+/* 아직 안 쓴 기본 이미지 이름 (이미지1, 이미지2 …) */
+function freeImgName(l) { const used = new Set(imgNames(l)); let n = 1; while (used.has(`이미지${n}`)) n++; return `이미지${n}`; }
 function imgNames(l) {
   const s = new Set();
   walkSteps(l.steps, x => { if (x.type === 'imgclick' || (x.type === 'if' && x.what === 'img')) { const n = cleanImgName(x.img); if (n) s.add(n); } });
@@ -395,25 +397,35 @@ $('#loop-imgdir').oninput = e => { activeLoop().imgDir = e.target.value; save();
 function renderVars() {
   const l = activeLoop(), box = $('#var-list');
   box.innerHTML = '';
-  const seen = new Set();
   (l.vars || []).forEach((v, i) => {
-    const nm = cleanVarName(v.name);
-    const dup = nm && seen.has(nm); if (nm) seen.add(nm);
-    const row = document.createElement('div');
+      const row = document.createElement('div');
     row.className = 'var-row';
     row.innerHTML = `<input type="text" class="var-name" placeholder="이름" autocomplete="off" aria-label="변수 이름">`
       + `<input type="text" class="var-val" placeholder="처음 값" autocomplete="off" aria-label="처음 값">`
       + `<button class="mini ghost danger" aria-label="변수 삭제">✕</button>`
-      + (dup ? `<em class="var-dup">같은 이름이 위에 있어요 — 같은 변수로 취급되고 아래 값이 쓰여요</em>` : (!nm ? `<em class="var-dup">이름을 적어 주세요</em>` : ''));
+      + `<em class="var-dup" hidden></em>`;
     const [ni, vi] = row.querySelectorAll('input');
     ni.value = v.name || ''; vi.value = v.value || '';
-    ni.oninput = () => { v.name = ni.value; save(); };
-    ni.onchange = () => { v.name = cleanVarName(ni.value); save(); renderVars(); };
+    // 칸을 다시 그리지 않고 경고만 바꿈 → 이름 칸에서 값 칸으로 바로 넘어가도 입력이 끊기지 않음
+    ni.oninput = () => { v.name = ni.value; save(); varHints(); };
+    ni.onchange = () => { v.name = cleanVarName(ni.value); if (ni.value !== v.name) ni.value = v.name; save(); varHints(); };
     vi.oninput = () => { v.value = vi.value; save(); };
     row.querySelector('button').onclick = () => { l.vars.splice(i, 1); save(); renderVars(); };
     box.appendChild(row);
   });
   $('#var-empty').hidden = (l.vars || []).length > 0;
+  varHints();
+}
+/* 변수 이름 경고(빈 이름·같은 이름)만 다시 표시 */
+function varHints() {
+  const l = activeLoop(), seen = new Set();
+  $('#var-list').querySelectorAll('.var-row').forEach((row, i) => {
+    const v = (l.vars || [])[i], em = row.querySelector('.var-dup'); if (!v || !em) return;
+    const nm = cleanVarName(v.name);
+    const msg = !nm ? '이름을 적어 주세요' : seen.has(nm) ? '같은 이름이 위에 있어요 — 같은 변수로 취급되고 아래 값이 쓰여요' : '';
+    if (nm) seen.add(nm);
+    em.textContent = msg; em.hidden = !msg;
+  });
 }
 $('#add-var').onclick = () => {
   const l = activeLoop(); l.vars = l.vars || [];
@@ -625,22 +637,21 @@ function stepLi(s, i) {
 
 /* 드래그로 이동 (터치·마우스 공용, 묶음 안으로도 이동 가능) */
 let dragId = null;
-function within(container, id) { return anyStep(flatChildren(container), x => x.id === id); }
-function moveBefore(id, overId) {
-  const d = locate(id), o = locate(overId);
-  if (!d || !o || d.step === o.step) return;
-  if (isContainer(d.step) && (o.step === d.step || within(d.step, overId))) return;
+/* 묶음 s(또는 그 안의 묶음)가 가진 하위 목록인지 — 자기 안으로는 못 옮김 */
+function ownsList(s, arr) { return [s, ...flatChildren(s)].some(x => (childListsOf(x) || []).some(c => x[c.key] === arr)); }
+/* id 동작을 arr 의 at 자리로 옮김. 실제로 바뀌었으면 true */
+function placeStep(id, arr, at) {
+  const d = locate(id);
+  if (!d || !arr || ownsList(d.step, arr)) return false;
+  if (d.arr === arr && (at === d.idx || at === d.idx + 1)) return false;   // 제자리
   const [moved] = d.arr.splice(d.idx, 1);
-  const o2 = locate(overId); if (!o2) { d.arr.splice(d.idx, 0, moved); return; }
-  o2.arr.splice(o2.idx, 0, moved);
+  if (d.arr === arr && at > d.idx) at--;
+  arr.splice(Math.max(0, Math.min(at, arr.length)), 0, moved);
+  return true;
 }
-function moveIntoEmpty(id, parentId, key) {
-  const d = locate(id); if (!d || parentId === id) return;
-  if (isContainer(d.step) && within(d.step, parentId)) return;
-  const [moved] = d.arr.splice(d.idx, 1);
-  const arr = listOf(parentId, key); if (!arr) { d.arr.splice(d.idx, 0, moved); return; }
-  arr.push(moved);
-}
+function moveBefore(id, overId) { const o = locate(overId); return !!o && o.step.id !== id && placeStep(id, o.arr, o.idx); }
+function moveAfter(id, overId) { const o = locate(overId); return !!o && o.step.id !== id && placeStep(id, o.arr, o.idx + 1); }
+function moveToEnd(id, parentId, key) { const arr = listOf(parentId, key); return !!arr && parentId !== id && placeStep(id, arr, arr.length); }
 function startStepDrag(e, id) {
   if (e.button != null && e.button > 0) return;           // 왼쪽/터치만
   const li = e.target.closest('.step');
@@ -648,6 +659,8 @@ function startStepDrag(e, id) {
   e.preventDefault();
   dragId = id;
   li.classList.add('dragging');
+  // 터치: 손가락 아래 칸이 다시 그려져도 끌기가 끊기지 않게 이벤트를 body 로 고정
+  try { document.body.setPointerCapture(e.pointerId); } catch {}
   // 같은 동작이 본 목록과 옆 화면에 함께 보일 수 있어 모두 표시
   const reapply = () => { save(); renderSteps(); document.querySelectorAll(`.step[data-id="${dragId}"]`).forEach(nl => nl.classList.add('dragging')); };
   const onMove = ev => {
@@ -656,15 +669,30 @@ function startStepDrag(e, id) {
     const empty = el.closest('.child-empty');
     if (empty) {
       const sub = empty.closest('.child-list');
-      if (sub) { moveIntoEmpty(dragId, sub.dataset.parent, sub.dataset.key); reapply(); }
+      if (sub && moveToEnd(dragId, sub.dataset.parent, sub.dataset.key)) reapply();
       return;
     }
-    const over = el.closest('.step');
-    if (!over || !over.dataset.id || over.dataset.id === dragId) return;
-    moveBefore(dragId, over.dataset.id);
-    reapply();
+    // 동작의 머리줄(번호·이름) 위에서만 자리를 정함 — 묶음 안 빈틈에서 밖으로 튀어나가지 않게
+    const head = el.closest('.step-head');
+    if (head) {
+      const over = head.parentElement;
+      if (!over || !over.dataset.id || over.dataset.id === dragId || over.closest('.dragging')) return;
+      const r = head.getBoundingClientRect();
+      const lower = ev.clientY > r.top + r.height / 2;
+      // 아래 절반 = 그 동작 뒤로 (묶음은 아래가 "안에 담긴 칸"이라 늘 앞으로)
+      const moved = lower && !over.classList.contains('container') ? moveAfter(dragId, over.dataset.id) : moveBefore(dragId, over.dataset.id);
+      if (moved) reapply();
+      return;
+    }
+    // 목록의 마지막 동작 아래 빈 곳 → 그 목록 맨 끝으로
+    const list = el.closest('ol.steps');
+    if (list && el === list) {
+      const last = list.lastElementChild;
+      if (last && ev.clientY > last.getBoundingClientRect().bottom && moveToEnd(dragId, list.dataset.parent || null, list.dataset.key || null)) reapply();
+    }
   };
   const onUp = () => {
+    try { document.body.releasePointerCapture(e.pointerId); } catch {}
     document.removeEventListener('pointermove', onMove);
     document.removeEventListener('pointerup', onUp);
     document.removeEventListener('pointercancel', onUp);
@@ -743,13 +771,14 @@ $('#panel-edit').onclick = () => { const id = panelStack[panelStack.length - 1];
 $('#panel-play').onclick = () => { const r = locate(panelStack[panelStack.length - 1]); if (r) openPreview([r.step]); };
 
 /* ===== 동작 추가/편집 시트 ===== */
-let draft = null, editingId = null, addTarget = { parentId: null, key: null };
+let draft = null, editingId = null, addTarget = { parentId: null, key: null }, origDraft = null;
 
 function openStepSheet(id, parentId, key) {
   editingId = id;
   addTarget = { parentId: parentId ?? null, key: key ?? null };
   if (id == null) draft = { type: 'click', x: 100, y: 100, button: 'left', double: false };
   else { const r = locate(id); draft = r ? JSON.parse(JSON.stringify(r.step)) : { type: 'click', x: 100, y: 100 }; }
+  origDraft = JSON.parse(JSON.stringify(draft));   // 종류를 바꿨다 돌아오면 원래 설정·담긴 동작 복원용
   $('#sheet-title').textContent = id == null ? '동작 추가' : '동작 수정';
   $('#sheet-dup').hidden = id == null;
   renderSheetBody();
@@ -774,6 +803,8 @@ function renderSheetBody() {
 }
 
 function setType(type) {
+  if (draft && draft.type === type) return;                         // 같은 종류를 다시 누름 → 그대로
+  if (origDraft && origDraft.type === type) { draft = JSON.parse(JSON.stringify(origDraft)); renderSheetBody(); return; }
   const reg = (x1, y1, x2, y2) => ({ x1, y1, x2, y2 });
   const findBase = { area: 'screen', region: reg(0, 0, 800, 600), nth: 1, act: 'click', button: 'left', double: false, dx: 0, dy: 0, retries: 8, every: 0.7, notfound: 'pause', saveTo: '' };
   const d = {
@@ -786,7 +817,7 @@ function setType(type) {
     win:      { type, title: '' },
     scroll:   { type, dir: 'down', amount: 3 },
     wait:     { type, sec: 1 },
-    imgclick: { type, img: `이미지${imgNames(activeLoop()).length + 1}`, tol: 25, sim: 100, bright: false, ...findBase },
+    imgclick: { type, img: freeImgName(activeLoop()), tol: 25, sim: 100, bright: false, ...findBase },
     textclick:{ type, text: '', ...findBase },
     readput:  { type, read: 'text', mode: 'screen', region: reg(100, 100, 300, 150), after: 'tab' },
     setvar:   { type, name: varNames(activeLoop())[0] || '변수1', from: 'text', value: '', read: 'text', mode: 'screen', region: reg(100, 100, 300, 150) },
@@ -810,6 +841,8 @@ function setType(type) {
 function getK(k) { if (k.includes('.')) { const [a, b] = k.split('.'); return (draft[a] || {})[b]; } return draft[k]; }
 function inpT(lbl, k, ph, extra) { return `<label class="field"><span>${lbl}</span><input type="text" data-k="${k}" value="${escapeHtml(String(getK(k) ?? ''))}" placeholder="${escapeHtml(ph || '')}" autocomplete="off" ${extra || ''}></label>`; }
 function inpN(lbl, k, extra) { return `<label class="field"><span>${lbl}</span><input type="number" data-k="${k}" value="${escapeHtml(String(getK(k) ?? ''))}" inputmode="decimal" ${extra || ''}></label>`; }
+/* 음수가 될 수 있는 좌표 칸: ± 단추로 부호 바꾸기 (아이폰 숫자 자판엔 − 키가 없어서) */
+function inpNeg(lbl, k) { return `<label class="field"><span>${lbl}</span><span class="neg-row"><input type="number" data-k="${k}" value="${escapeHtml(String(getK(k) ?? ''))}" inputmode="decimal"><button type="button" class="chip-btn pm" data-neg="${k}" aria-label="부호 바꾸기">±</button></span></label>`; }
 function chips(lbl, group, opts) { return `<div class="field">${lbl ? `<span>${lbl}</span>` : ''}<div class="chk-row" data-group="${group}">${Object.entries(opts).map(([v, t]) => chk(group, v, t)).join('')}</div></div>`; }
 function toggle(group, label) { return `<div class="field"><div class="chk-row" data-group="${group}">${chk(group, true, label, draft[group] === true)}</div></div>`; }
 function selF(lbl, k, opts) { return `<label class="field"><span>${lbl}</span><select data-k="${k}">${Object.entries(opts).map(([v, t]) => `<option value="${v}"${String(draft[k]) === String(v) ? ' selected' : ''}>${t}</option>`).join('')}</select></label>`; }
@@ -821,7 +854,7 @@ function varHint() {
 function regionInputs(regKey, modeKey, title) {
   const obj = draft[regKey] || (draft[regKey] = { x1: 100, y1: 100, x2: 300, y2: 150 });
   const cur = draft[modeKey] === 'cursor';
-  const rin = (lbl, key) => `<label class="field"><span>${lbl}</span><input type="number" data-k="${regKey}.${key}" value="${escapeHtml(String(obj[key] ?? ''))}" inputmode="numeric"></label>`;
+  const rin = (lbl, key) => inpNeg(lbl, `${regKey}.${key}`);
   return `<div class="field"><span>${title} 기준</span><div class="chk-row" data-group="${modeKey}">${chk(modeKey, 'screen', '화면 좌표')}${chk(modeKey, 'cursor', '커서 기준')}</div></div>
     <div class="two">${rin(cur ? '왼쪽(−/＋)' : '왼쪽 X', 'x1')}${rin(cur ? '위(−/＋)' : '위 Y', 'y1')}</div>
     <div class="two">${rin(cur ? '오른쪽' : '오른쪽 X', 'x2')}${rin(cur ? '아래' : '아래 Y', 'y2')}</div>`;
@@ -831,7 +864,7 @@ function areaBlock() {
   if (!draft.region) draft.region = { x1: 0, y1: 0, x2: 800, y2: 600 };
   return chips('찾을 범위', 'area', { screen: '화면 전체', region: '지정한 네모 안만' })
     + (draft.area === 'region'
-      ? `<div class="two">${inpN('왼쪽 X', 'region.x1')}${inpN('위 Y', 'region.y1')}</div><div class="two">${inpN('오른쪽 X', 'region.x2')}${inpN('아래 Y', 'region.y2')}</div>
+      ? `<div class="two">${inpNeg('왼쪽 X', 'region.x1')}${inpNeg('위 Y', 'region.y1')}</div><div class="two">${inpNeg('오른쪽 X', 'region.x2')}${inpNeg('아래 Y', 'region.y2')}</div>
          <p class="hint">범위를 좁히면 더 빠르고, 같은 것이 여러 개일 때 엉뚱한 걸 덜 골라요. "영역 선택 도우미"로 네 숫자를 구하세요.</p>`
       : `<p class="hint">지금 <b>화면에 보이는 모습</b>에서 찾아요(뒤에 가려진 창·스크롤 밖은 못 찾아요).</p>`);
 }
@@ -840,7 +873,7 @@ function actBlock() {
   let h = chips('찾으면', 'act', ACT);
   if (draft.act === 'click') h += chips('버튼', 'button', { left: '왼쪽', right: '오른쪽', middle: '가운데' }) + toggle('double', '더블클릭');
   if (draft.act !== 'none') {
-    h += `<div class="two">${inpN('위치 보정 X (＋오른쪽)', 'dx')}${inpN('위치 보정 Y (＋아래)', 'dy')}</div>
+    h += `<div class="two">${inpNeg('위치 보정 X (＋오른쪽)', 'dx')}${inpNeg('위치 보정 Y (＋아래)', 'dy')}</div>
       <p class="hint">찾은 곳 <b>가운데</b>에서 이만큼 옮겨 누르거나 이동해요. 예: 글자 "이메일" 오른쪽 입력칸 → X에 120</p>`;
   } else {
     h += `<p class="hint"><b>찾기만</b>은 클릭 없이 <b>나타날 때까지 기다리는</b> 용도예요(예: 페이지 로딩이 끝나면 보이는 버튼). 아래 "간격 × 횟수"가 최대로 기다리는 시간이에요.</p>`;
@@ -920,7 +953,7 @@ function deleteMyKey(id) {
 }
 
 function fieldsFor(type) {
-  const xy = (lx, ly, vx, vy) => `<div class="two">${inpN(lx, vx)}${inpN(ly, vy)}</div>`;
+  const xy = (lx, ly, vx, vy) => `<div class="two">${inpNeg(lx, vx)}${inpNeg(ly, vy)}</div>`;
   switch (type) {
     case 'url':
       return inpT('열 주소', 'url', 'https://...') + `<p class="hint">기본 브라우저에서 이 주소를 열어요. 뒤에 "몇 초 대기"나 "이미지 찾기(찾기만)"로 페이지가 뜰 때까지 기다리세요.</p>` + varHint();
@@ -1095,6 +1128,14 @@ function bindFields() {
       if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
     };
   });
+  body.querySelectorAll('[data-neg]').forEach(b => {
+    b.onclick = e => {
+      e.preventDefault();
+      const k = b.dataset.neg, inp = body.querySelector(`input[data-k="${k}"]`);
+      const v = -(Number(getK(k)) || 0);
+      setK(k, v); if (inp) inp.value = String(v);
+    };
+  });
   body.querySelectorAll('[data-clear]').forEach(b => { b.onclick = () => { setK(b.dataset.clear, ''); renderSheetBody(); }; });
   body.querySelectorAll('[data-capture]').forEach(b => {
     b.onclick = () => { captureTarget = captureTarget === b.dataset.capture ? null : b.dataset.capture; renderSheetBody(); };
@@ -1157,7 +1198,15 @@ function finalizeDraft(d) {
   return d;
 }
 
+/* 수정 중 종류를 바꿔 원래 담겨 있던 동작이 사라지게 되면 개수 */
+function lostChildren() {
+  if (editingId == null || !origDraft) return 0;
+  const keep = new Set((childListsOf(draft) || []).map(c => c.key));
+  return (childListsOf(origDraft) || []).filter(c => !keep.has(c.key)).reduce((n, c) => n + countOf(origDraft[c.key]), 0);
+}
 $('#sheet-save').onclick = () => {
+  const lost = lostChildren();
+  if (lost && !confirm(`종류를 바꾸면 안에 담겨 있던 동작 ${lost}개가 지워져요. 그래도 저장할까요?\n(원래 종류를 다시 누르면 그대로 돌아와요)`)) return;
   finalizeDraft(draft);
   if (editingId == null) {
     if (!draft.id) draft.id = uid();
@@ -1174,6 +1223,8 @@ $('#sheet-dup').onclick = () => {
   if (editingId == null) return;
   const r = locate(editingId);
   if (!r) return;
+  const lost = lostChildren();
+  if (lost && !confirm(`종류를 바꾸면 안에 담겨 있던 동작 ${lost}개가 지워져요. 그래도 저장할까요?`)) return;
   finalizeDraft(draft);
   draft.id = editingId; r.arr[r.idx] = draft;            // 현재 수정 내용 반영
   const copy = JSON.parse(JSON.stringify(draft));
@@ -1479,15 +1530,15 @@ function download(name, data, mime = 'text/plain;charset=utf-8') {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = name; document.body.appendChild(a); a.click();
-  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 40000);
 }
 function gapMs(l) { return Math.round((Number(l.gap) || 0) * 1000); }
 function numConst(v) { const m = String(v == null ? '' : v).match(/-?\d[\d,]*(\.\d+)?/); return m ? Number(m[0].replace(/,/g, '')) : 0; }
 function hhmm(startAt) { return startAt ? Number(startAt.replace(':', '')) : null; }
 function hhmmParts(startAt) { if (!startAt) return null; const [hh, mm] = startAt.split(':'); return { hh: String(Number(hh)), mm: String(Number(mm)), pad: `${hh}${mm}00` }; }
 
-function ahkStr(s) {
-  return String(s == null ? '' : s).replace(/`/g, '``').replace(/"/g, '`"').replace(/\r/g, '').replace(/\n/g, '`n').replace(/\t/g, '`t');
+function ahkStr(s) {   // ` ;` 는 AHK 에서 주석 시작으로 읽힐 수 있어 `; 로
+  return String(s == null ? '' : s).replace(/`/g, '``').replace(/"/g, '`"').replace(/;/g, '`;').replace(/\r/g, '').replace(/\n/g, '`n').replace(/\t/g, '`t');
 }
 /* 기본 제공 단축키의 각 언어 표기 (직접 만든 키는 parseCombo → chordAHK/chordPY/chordVKs) */
 function buildHotkey(s) {
@@ -1581,9 +1632,11 @@ function zipBytes(files) {
 
 /* --- AutoHotkey v2 --- */
 function genAHK(l) {
+  refreshOrphans(l);
   const L = [];
   L.push('#Requires AutoHotkey v2.0', '#SingleInstance Force', 'FileEncoding "UTF-8"', 'CoordMode "Mouse", "Screen"',
-    'CoordMode "Pixel", "Screen"', 'SetTitleMatchMode 2', 'SetKeyDelay 30', 'SetMouseDelay 30', '');
+    'CoordMode "Pixel", "Screen"', 'SetTitleMatchMode 2', 'SetKeyDelay 30', 'SetMouseDelay 30',
+    'try DllCall("SetThreadDpiAwarenessContext", "ptr", -4, "ptr")   ; 화면 배율과 상관없이 실제 픽셀 좌표 (무설치·도우미와 같은 기준)', '');
   L.push(`; ===== 매크로: ${(l.name || '').replace(/[\r\n]/g, ' ')} =====`);
   L.push('; 이 파일을 더블클릭하면 시작합니다. (AutoHotkey v2 설치 필요)');
   L.push(`; 단축키:  ${CTRL_KEYS.pauseLabel} = 일시정지/재생   ${CTRL_KEYS.stopLabel} = 종료(Esc)   ${CTRL_KEYS.startNowLabel} = 예약 즉시 시작   ${CTRL_KEYS.restartLabel} = 처음부터 다시`);
@@ -1593,6 +1646,7 @@ function genAHK(l) {
   L.push('if !RegExMatch(imgDir, "^([A-Za-z]:|\\\\\\\\)")');
   L.push('    imgDir := A_ScriptDir "\\" imgDir');
   L.push('MacroVars := Map()   ; 변수 저장소 (AHK·PS 는 이름 대소문자를 안 가려 짧은 이름 피함)');
+  L.push('ImgErr := ""         ; 이미지 찾기 실패 이유 (nofile = 파일 없음, bad = 그림을 못 읽음)');
   L.push('InitVars()');
   const p = hhmmParts(l.startAt);
   if (p) {
@@ -1655,8 +1709,12 @@ function ahkFuncs(l) {
     '    return ""',
     '}',
     'FindImage(img, tol, x1, y1, x2, y2, retries, everyMs, &cx, &cy) {   ; 찾으면 true + 가운데 좌표',
-    '    if !FileExist(img)',
+    '    global ImgErr',
+    '    ImgErr := ""',
+    '    if !FileExist(img) {',
+    '        ImgErr := "nofile"',
     '        return false',
+    '    }',
     '    if (x2 <= x1 || y2 <= y1) {',
     '        x1 := SysGet(76), y1 := SysGet(77)',
     '        x2 := x1 + SysGet(78), y2 := y1 + SysGet(79)',
@@ -1676,6 +1734,7 @@ function ahkFuncs(l) {
     '                return true',
     '            }',
     '        } catch {',
+    '            ImgErr := "bad"',
     '            return false',
     '        }',
     '        if (A_Index < retries)',
@@ -1717,7 +1776,7 @@ function emitAHK(steps, L, pad, ctx) {
         }
       }
     } else if (s.type === 'break') {
-      L.push(pad + 'break   ; [반복 빠져나가기]');
+      L.push(pad + (ORPHAN.has(s.id) ? '; (반복문 밖의 "반복 빠져나가기"는 할 일이 없어 건너뜀)' : 'break   ; [반복 빠져나가기]'));
     } else if (s.type === 'stop') {
       L.push(pad + 'ExitApp   ; [멈춤] 매크로 종료');
     } else if (s.type === 'setvar') {
@@ -1740,7 +1799,11 @@ function emitAHK(steps, L, pad, ctx) {
 function ahkCond(s, c) {
   const w = s.what || 'region';
   if (w === 'img') {
-    const L = [`${c} := FindImage(imgDir "\\${ahkStr(cleanImgName(s.img))}.png", ${ahkTol(s)}, ${ahkArea(s)}, 1, 0, &fx, &fy)`];
+    // 한 번만 확인. 파일이 없거나 그림을 못 읽으면 "안 보임"으로 넘기지 않고 오류 창
+    const path = `imgDir "\\${ahkStr(cleanImgName(s.img))}.png"`;
+    const L = ['Loop {', `    ${c} := FindImage(${path}, ${ahkTol(s)}, ${ahkArea(s)}, 1, 0, &fx, &fy)`, `    if (${c} || ImgErr = "")`, '        break',
+      `    r := MsgBox((ImgErr = "nofile" ? "이미지 파일이 없어요:\`n" : "이미지 파일을 읽을 수 없어요:\`n") ${path} "\`n\`n[다시 시도] 파일을 넣은 뒤 다시\`n[무시] 안 보이는 것으로 보고 진행\`n[중단] 매크로 종료", "매크로 설계소 - 오류", "AbortRetryIgnore Icon! 0x40000")`,
+      '    if (r = "Abort")', '        ExitApp', '    if (r = "Ignore")', '        break', '}'];
     if (s.op === 'no') L.push(`${c} := !${c}`);
     return L;
   }
@@ -1772,11 +1835,11 @@ function ahkFindImg(s) {
   L.push(`    found := FindImage(${path}, ${ahkTol(s)}, ${ahkArea(s)}, ${retries}, ${everyMs}, &fx, &fy)`);
   L.push('    if found');
   L.push('        break');
-  const msg = `"이미지 '${ahkStr(name)}' 을(를) 화면에서 찾을 수 없어요 (${retries}번 시도).\`n" ${path}`;
+  const msg = `(ImgErr = "nofile" ? "이미지 '${ahkStr(name)}' 파일이 없어요 (이미지 캡처 도우미로 찍어 두세요).\`n" : ImgErr = "bad" ? "이미지 '${ahkStr(name)}' 파일을 읽을 수 없어요.\`n" : "이미지 '${ahkStr(name)}' 을(를) 화면에서 찾을 수 없어요 (${retries}번 시도).\`n") ${path}`;
   if (s.notfound === 'continue') {
     L.push('    break   ; 못 찾으면 그냥 넘어감');
   } else if (s.notfound === 'stop') {
-    L.push(`    MsgBox ${msg} "\`n\`n매크로를 멈춰요.", "매크로 설계소 - 오류", "Icon! 0x40000"`);
+    L.push(`    MsgBox(${msg} "\`n\`n매크로를 멈춰요.", "매크로 설계소 - 오류", "Icon! 0x40000")`);
     L.push('    ExitApp');
   } else {
     L.push(`    r := MsgBox(${msg} "\`n\`n[다시 시도] 화면을 맞춘 뒤 다시 찾기\`n[무시] 이 동작 건너뛰기\`n[중단] 매크로 종료", "매크로 설계소 - 오류", "AbortRetryIgnore Icon! 0x40000")`);
@@ -1814,7 +1877,7 @@ function genAHKStep(s) {
       return L;
     }
     case 'text': return [`SendText ${ahkFill(s.text)}`];
-    case 'win': return [`WinActivate ${ahkFill(s.title)}`, `WinWaitActive ${ahkFill(s.title)}, , 5`];
+    case 'win': return [`if WinExist(${ahkFill(s.title)}) {   ; 창이 없으면 오류로 멈추지 않고 넘어감`, `    try WinActivate ${ahkFill(s.title)}`, `    try WinWaitActive ${ahkFill(s.title)}, , 5`, '}'];
     case 'scroll': return [`Loop ${num(s.amount) || 1} {`, `    Send "{Wheel${s.dir === 'up' ? 'Up' : 'Down'}}"`, '    Sleep 40', '}'];
     case 'wait': return [`Sleep ${Math.round((Number(s.sec) || 0) * 1000)}`];
     case 'readput': return ['; [영역 값 읽어 입력] 은 .ahk 에서 지원되지 않아 건너뜁니다 — "무설치(윈도우)" 또는 파이썬으로 내보내세요.'];
@@ -1827,7 +1890,8 @@ function genBAT(l, ahkName) {
   // .bat 는 순수 ASCII + chcp 없음: 한글/코드페이지 전환이 cmd 파서를 깨뜨려 'rshell' 류 오류를 냄
   return [
     '@echo off',
-    `start "" "%~dp0${ahkName}"`,
+    ...batPick(ahkName, '-run'),
+    'start "" "%F%"',
     'if errorlevel 1 (',
     '  echo.',
     '  echo [Notice] Install AutoHotkey v2 first - https://www.autohotkey.com',
@@ -1836,7 +1900,27 @@ function genBAT(l, ahkName) {
 }
 
 /* --- 무설치 윈도우: PowerShell .ps1 + 실행용 .bat --- */
-function psStr(s) { return "'" + String(s == null ? '' : s).replace(/'/g, "''") + "'"; }
+/* PowerShell 은 ‘ ’ ‚ ‛ (아이폰 자동 따옴표)도 작은따옴표로 읽어서 모두 두 번 써서 감쌈 */
+function psStr(s) { return "'" + String(s == null ? '' : s).replace(/['\u2018\u2019\u201A\u201B]/g, m => m + m) + "'"; }
+/* 화면 배율(125·150%)·모니터 여러 대에서도 좌표·화면 캡처·마우스가 같은 "실제 픽셀" 기준이 되게 (창을 만들기 전에 실행) */
+function psDpiFix() {
+  return [
+    'Add-Type @"',
+    'using System; using System.Runtime.InteropServices;',
+    'public class DpiFix {',
+    '  [DllImport("user32.dll")] static extern bool SetProcessDPIAware();',
+    '  [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr v);',
+    '  [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr v);',
+    '  public static void Apply() {',
+    '    try { if (SetProcessDpiAwarenessContext(new IntPtr(-4))) return; } catch { }',
+    '    try { if (SetThreadDpiAwarenessContext(new IntPtr(-4)) != IntPtr.Zero) return; } catch { }',
+    '    try { SetProcessDPIAware(); } catch { }',
+    '  }',
+    '}',
+    '"@',
+    'try { [DpiFix]::Apply() } catch {}',
+  ];
+}
 /* {변수} 가 들어 있으면 실행할 때 값으로 바꿔 넣음 */
 function psFill(s) { const t = String(s == null ? '' : s); return t.includes('{') ? `(Fill ${psStr(t)})` : psStr(t); }
 function psArea(s) { if (s.area === 'region') { const r = s.region || {}; return `${num(r.x1)} ${num(r.y1)} ${num(r.x2)} ${num(r.y2)}`; } return '0 0 0 0'; }
@@ -1846,9 +1930,30 @@ function genPSBat(l, ps1Name) {
   // .bat 는 순수 ASCII + chcp 없음: cmd 코드페이지 전환이 'powershell' 명령을 깨먹는 버그 회피
   return [
     '@echo off',
-    `powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0${ps1Name}"`,
+    ...batPick(ps1Name, '-noinstall'),
+    'powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%F%"',
     'echo.', 'pause', '',
   ].join('\r\n');
+}
+/* 실행할 짝 파일 고르기: 다시 받아 "이름-noinstall (1).bat" 이 되면 같이 받은 "이름 (1).ps1" 을 실행(옛 파일이 실행되지 않게).
+   그런 파일이 없으면 원래 이름. (ASCII 만, 결과는 %F%) */
+function batPick(fileName, suffix) {
+  const ext = fileName.slice(fileName.lastIndexOf('.'));
+  return [
+    `set "F=%~dp0${fileName}"`,
+    'set "N=%~n0"',
+    `if exist "%~dp0%N:${suffix}=%${ext}" set "F=%~dp0%N:${suffix}=%${ext}"`,
+  ];
+}
+/* 찾기 실패 이유별 안내 (파일 없음·이미지 기능 없음·OCR 없음) → $msg 덮어쓰기 */
+function psErrMsgs(imgName) {
+  const L = [];
+  if (imgName != null) {
+    L.push(`if($script:lastErr -eq 'nofile'){ $msg = ${psStr(`이미지 '${imgName}' 파일이 없어요: `)} + (ImgPath ${psStr(imgName)}) + ${psStr(' — 이미지 캡처 도우미로 이 이름으로 찍어 두세요')} }`);
+    L.push(`if($script:lastErr -eq 'noimg'){ $msg = '이 PC에서 이미지 찾기 기능을 쓸 수 없어요 (실행 창 맨 위의 [주의] 참고)' }`);
+  }
+  L.push(`if($script:lastErr -eq 'noocr'){ $msg = '이 PC에서 화면 글자 읽기(OCR)를 쓸 수 없어요' }`);
+  return L;
 }
 /* 화면 글자 읽기(OCR)·이미지 찾기가 필요한 동작이 있는지 */
 function needsOcr(steps) {
@@ -1858,12 +1963,14 @@ function needsOcr(steps) {
 function needsImg(steps) { return anyStep(steps, s => s.type === 'imgclick' || (s.type === 'if' && s.what === 'img')); }
 
 function genPS1(l) {
+  refreshOrphans(l);
   const P = [];
   P.push('# -*- 매크로: ' + (l.name || '').replace(/[\r\n]/g, ' ') + ' -*-');
   P.push('# 설치가 필요 없습니다. 함께 받은 "...-noinstall.bat"(폴더로 받았다면 "1-run-macro.bat") 를 더블클릭하세요.');
   P.push(`# 단축키:  ${CTRL_KEYS.pauseLabel} = 일시정지/재생   ${CTRL_KEYS.stopLabel} = 종료   ${CTRL_KEYS.restartLabel} = 처음부터 다시 실행`);
   P.push('try { chcp 65001 > $null } catch {}');
   P.push('try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}');
+  P.push(...psDpiFix());
   P.push('Add-Type @"');
   P.push('using System; using System.Runtime.InteropServices;');
   P.push('public class U {');
@@ -1874,31 +1981,73 @@ function genPS1(l) {
   P.push('  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int k);');
   P.push('  [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);');
   P.push('  [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, int extra);');
+  P.push('  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();');
+  P.push('  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint f);');
+  P.push('  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);');
+  P.push('  [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint f);');
+  P.push('  [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);');
+  P.push('  [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h, int id);');
+  P.push('  [DllImport("user32.dll")] static extern bool PeekMessage(out MSG m, IntPtr h, uint f1, uint f2, uint rm);');
   P.push('  [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();');
+  P.push('  [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int n);');
+  P.push('  [DllImport("kernel32.dll")] static extern bool GetConsoleMode(IntPtr h, out uint m);');
+  P.push('  [DllImport("kernel32.dll")] static extern bool SetConsoleMode(IntPtr h, uint m);');
+  P.push('  // 검은 창 "빠른 편집" 끄기: 창을 클릭해도 매크로가 멈춰 얼지 않게');
+  P.push('  public static void NoQuickEdit() { try { IntPtr h = GetStdHandle(-10); uint m; if (GetConsoleMode(h, out m)) SetConsoleMode(h, (m & ~0x40u) | 0x80u); } catch { } }');
+  P.push('  // F7~F10 을 이 매크로 전용 단축키로 등록 → 엑셀 등 앞에 있는 프로그램에 안 넘어감. 등록 못 한 키는 눌림 상태로 확인');
+  P.push('  static bool[] reg = new bool[4], prev = new bool[4];');
+  P.push('  public static void HookKeys() { for (int i = 0; i < 4; i++) { if (reg[i]) continue; try { reg[i] = RegisterHotKey(IntPtr.Zero, 0x7700 + i, 0x4000, (uint)(0x76 + i)); } catch { reg[i] = false; } } }');
+  P.push('  public static void FreeKeys() { for (int i = 0; i < 4; i++) { if (!reg[i]) continue; try { UnregisterHotKey(IntPtr.Zero, 0x7700 + i); } catch { } reg[i] = false; } }');
+  P.push('  // 지난번 확인 뒤 눌린 키: 1=F7, 2=F8, 4=F9, 8=F10');
+  P.push('  public static int Pressed() {');
+  P.push('    int r = 0; MSG m;');
+  P.push('    try { while (PeekMessage(out m, IntPtr.Zero, 0x0312, 0x0312, 1)) { int id = (int)m.wParam - 0x7700; if (id >= 0 && id < 4) r |= 1 << id; } } catch { }');
+  P.push('    for (int i = 0; i < 4; i++) { if (reg[i]) continue; bool d = (GetAsyncKeyState(0x76 + i) & 0x8000) != 0; if (d && !prev[i]) r |= 1 << i; prev[i] = d; }');
+  P.push('    return r;');
+  P.push('  }');
+  P.push('  // 오류 때: 실행 창을 맨 위에 보이게(키보드 포커스는 안 뺏음). 그 전에 앞에 있던 창을 돌려줌');
+  P.push('  static bool wasMin = false;');
+  P.push('  static IntPtr Con() { IntPtr h = GetConsoleWindow(); if (h == IntPtr.Zero) return h; IntPtr o = GetAncestor(h, 3); return o != IntPtr.Zero ? o : h; }');
+  P.push('  public static IntPtr ShowCon() {');
+  P.push('    IntPtr prevWin = GetForegroundWindow(), h = Con();');
+  P.push('    try { if (h != IntPtr.Zero) { wasMin = IsIconic(h); if (wasMin) ShowWindow(h, 4); SetWindowPos(h, new IntPtr(-1), 0, 0, 0, 0, 0x53); } } catch { }');
+  P.push('    return prevWin;');
+  P.push('  }');
+  P.push('  // 다시 시작할 때: 맨 위 고정을 풀고 원래 창 뒤로 보냄(찾을 화면을 가리지 않게)');
+  P.push('  public static void HideCon(IntPtr prevWin) {');
+  P.push('    IntPtr h = Con(); if (h == IntPtr.Zero) return;');
+  P.push('    try {');
+  P.push('      SetWindowPos(h, new IntPtr(-2), 0, 0, 0, 0, 0x13);');
+  P.push('      if (prevWin != IntPtr.Zero && prevWin != h) { if (GetForegroundWindow() == h) SetForegroundWindow(prevWin); SetWindowPos(h, prevWin, 0, 0, 0, 0, 0x13); }');
+  P.push('      if (wasMin) ShowWindow(h, 7);');
+  P.push('    } catch { }');
+  P.push('  }');
+  P.push('  // 멈춤으로 끝날 때: 실행 창을 앞으로');
+  P.push('  public static void FrontCon() { IntPtr h = Con(); if (h == IntPtr.Zero) return; try { if (IsIconic(h)) ShowWindow(h, 9); SetWindowPos(h, new IntPtr(-1), 0, 0, 0, 0, 0x53); SetWindowPos(h, new IntPtr(-2), 0, 0, 0, 0, 0x53); SetForegroundWindow(h); } catch { } }');
   P.push('}');
   P.push('public struct POINT { public int X; public int Y; }');
+  P.push('public struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam; public IntPtr lParam; public uint time; public POINT pt; }');
   P.push('"@');
   P.push('Add-Type -AssemblyName System.Windows.Forms');
   P.push('Add-Type -AssemblyName System.Drawing');
+  P.push('[U]::NoQuickEdit()');
+  P.push('[U]::HookKeys()');
   P.push('');
   P.push('$script:paused = $false');
-  P.push('$script:prevKey = $false');
   P.push('$script:canRestart = $false');
   P.push('$script:lastErr = ""');
+  P.push('$script:kq = 0   # 눌린 제어 키 모음 (1=F7, 2=F8, 4=F9, 8=F10)');
   P.push('function KeyDown($vk){ return (([int][U]::GetAsyncKeyState($vk)) -band 0x8000) -ne 0 }');
+  P.push('function TakeKey($bit){ $script:kq = $script:kq -bor [U]::Pressed(); if($script:kq -band $bit){ $script:kq = $script:kq -band (-bnot $bit); return $true }; return $false }');
   P.push('function Pump(){');
-  P.push('  $f8 = KeyDown 0x77   # F8');
-  P.push('  if($f8 -and -not $script:prevKey){ $script:paused = -not $script:paused; Write-Host $(if($script:paused){"|| 일시정지 (F8로 재생)"}else{"> 재생"}) }');
-  P.push('  $script:prevKey = $f8');
-  P.push('  if(KeyDown 0x78){ Write-Host "[] 종료"; exit }   # F9');
-  P.push('  if($script:canRestart -and (KeyDown 0x79)){ throw "RESTART" }   # F10 재실행');
+  P.push('  if(TakeKey 4){ Write-Host "[] 종료"; exit }   # F9');
+  P.push('  if((TakeKey 8) -and $script:canRestart){ throw "RESTART" }   # F10 재실행');
+  P.push('  if(TakeKey 2){ $script:paused = $true; Write-Host "|| 일시정지 (F8로 재생)" }   # F8');
   P.push('  while($script:paused){');
-  P.push('    Start-Sleep -Milliseconds 120');
-  P.push('    $f = KeyDown 0x77');
-  P.push('    if($f -and -not $script:prevKey){ $script:paused = $false; Write-Host "> 재생" }');
-  P.push('    $script:prevKey = $f');
-  P.push('    if(KeyDown 0x78){ Write-Host "[] 종료"; exit }');
-  P.push('    if($script:canRestart -and (KeyDown 0x79)){ $script:paused = $false; throw "RESTART" }');
+  P.push('    Start-Sleep -Milliseconds 100');
+  P.push('    if(TakeKey 4){ Write-Host "[] 종료"; exit }');
+  P.push('    if((TakeKey 8) -and $script:canRestart){ $script:paused = $false; throw "RESTART" }');
+  P.push('    if(TakeKey 2){ $script:paused = $false; Write-Host "> 재생" }');
   P.push('  }');
   P.push('}');
   P.push('function WaitMs($ms){ $end=[Environment]::TickCount+$ms; while([Environment]::TickCount -lt $end){ Pump; Start-Sleep -Milliseconds 80 } }');
@@ -1917,31 +2066,41 @@ function genPS1(l) {
   P.push('  [U]::mouse_event(0x04,0,0,0,0)');
   P.push('}');
   P.push('function Keys($s){ [System.Windows.Forms.SendKeys]::SendWait($s); Start-Sleep -Milliseconds 90 }');
-  P.push('function TypeText($s){ if("$s" -ne ""){ Set-Clipboard -Value $s; Start-Sleep -Milliseconds 90; Keys "^v" } }   # 클립보드로 붙여넣기(한글 OK)');
+  P.push('function SetClip($s){ for($i=0;$i -lt 5;$i++){ try { Set-Clipboard -Value $s -ErrorAction Stop; return $true } catch { Start-Sleep -Milliseconds 150 } }; return $false }   # 클립보드를 다른 프로그램이 잡고 있으면 잠깐 뒤 다시');
+  P.push('function GetClip(){ for($i=0;$i -lt 5;$i++){ try { return [string](Get-Clipboard -Raw -ErrorAction Stop) } catch { Start-Sleep -Milliseconds 150 } }; return "" }');
+  P.push('function TypeText($s){ if("$s" -ne ""){ if(SetClip $s){ Start-Sleep -Milliseconds 90; Keys "^v" } else { Write-Host "[주의] 클립보드를 쓸 수 없어 글자를 못 넣었어요" -ForegroundColor Yellow } } }   # 클립보드로 붙여넣기(한글 OK)');
   P.push('function AltTab(){ [U]::keybd_event(0x12,0,0,0); Start-Sleep -Milliseconds 40; [U]::keybd_event(0x09,0,0,0); [U]::keybd_event(0x09,0,2,0); Start-Sleep -Milliseconds 250; [U]::keybd_event(0x12,0,2,0); Start-Sleep -Milliseconds 120 }');
-  P.push('function KeyCombo($vks){ foreach($v in $vks){ [U]::keybd_event([byte]$v,0,0,0); Start-Sleep -Milliseconds 30 }; for($i=$vks.Length-1;$i -ge 0;$i--){ [U]::keybd_event([byte]$vks[$i],0,2,0); Start-Sleep -Milliseconds 30 }; Start-Sleep -Milliseconds 80 }   # Win 등 조합키 직접 전송');
+  P.push('function KeyCombo($vks){');
+  P.push('  $own = @($vks | Where-Object { $_ -ge 0x76 -and $_ -le 0x79 }).Count -gt 0   # F7~F10 을 보낼 땐 잠깐 단축키 등록을 풀어 매크로가 자기 키에 걸리지 않게');
+  P.push('  if($own){ [U]::FreeKeys() }');
+  P.push('  foreach($v in $vks){ [U]::keybd_event([byte]$v,0,0,0); Start-Sleep -Milliseconds 30 }; for($i=$vks.Length-1;$i -ge 0;$i--){ [U]::keybd_event([byte]$vks[$i],0,2,0); Start-Sleep -Milliseconds 30 }; Start-Sleep -Milliseconds 80');
+  P.push('  if($own){ [U]::HookKeys() }');
+  P.push('}   # Win 등 조합키 직접 전송');
   P.push('function ActivateWin($title){');
   P.push('  $p = Get-Process | Where-Object { $_.MainWindowTitle -and $_.MainWindowTitle.Contains($title) } | Select-Object -First 1');
-  P.push('  if($p){ [U]::SetForegroundWindow($p.MainWindowHandle) | Out-Null; Start-Sleep -Milliseconds 400 }');
+  P.push('  if($p){ [U]::SetForegroundWindow($p.MainWindowHandle) | Out-Null; Start-Sleep -Milliseconds 400 } else { Write-Host ("[주의] 제목에 \'" + $title + "\' 이(가) 든 창이 없어요") -ForegroundColor Yellow }');
   P.push('}');
   P.push("function Scroll($dir,$amt){ for($i=0;$i -lt $amt;$i++){ [U]::mouse_event(0x800,0,0,$(if($dir -eq 'up'){120}else{-120}),0); Start-Sleep -Milliseconds 50 } }");
   P.push('function OpenUrl($u){ Start-Process $u }');
-  P.push('function FocusConsole(){ try { $h = [U]::GetConsoleWindow(); if($h -ne [IntPtr]::Zero){ [U]::ShowWindow($h, 9) | Out-Null; [U]::SetForegroundWindow($h) | Out-Null } } catch {} }');
-  P.push('# 찾기 실패 등 오류: 실행 창을 앞으로 띄우고 멈춤. F8 = 다시 시도, F7 = 이 동작 건너뛰기, F9 = 종료');
+  P.push('function FocusConsole(){ [U]::FrontCon() }');
+  P.push('# 찾기 실패 등 오류: 실행 창을 맨 위에 띄우고 멈춤. F8 = 다시 시도, F7 = 이 동작 건너뛰기, F9 = 종료');
   P.push('function ErrorPause($msg){');
   P.push('  Write-Host ""');
   P.push('  Write-Host ("[오류] " + $msg) -ForegroundColor Red');
-  P.push('  Write-Host "   -> 화면을 맞춘 뒤(작업할 창을 클릭해 앞으로) F8 = 다시 찾기 / F7 = 이 동작 건너뛰기 / F9 = 종료" -ForegroundColor Yellow');
+  P.push('  Write-Host "   -> 화면을 맞춘 뒤 F8 = 다시 찾기 / F7 = 이 동작 건너뛰기 / F9 = 종료" -ForegroundColor Yellow');
   P.push('  try { [console]::Beep(880, 250) } catch {}');
-  P.push('  FocusConsole');
-  P.push('  while((KeyDown 0x77) -or (KeyDown 0x76)){ Start-Sleep -Milliseconds 50 }');
-  P.push('  while($true){');
+  P.push('  $prevWin = [U]::ShowCon()');
+  P.push('  $null = TakeKey 0; $script:kq = $script:kq -band (-bnot 3)   # 이전에 눌러 둔 F7·F8 은 무시');
+  P.push('  $r = ""');
+  P.push('  while($r -eq ""){');
   P.push('    Start-Sleep -Milliseconds 80');
-  P.push('    if(KeyDown 0x78){ Write-Host "[] 종료"; exit }');
-  P.push('    if($script:canRestart -and (KeyDown 0x79)){ throw "RESTART" }');
-  P.push('    if(KeyDown 0x77){ while(KeyDown 0x77){ Start-Sleep -Milliseconds 30 }; $script:prevKey = $false; Write-Host "> 다시 찾아요"; return "retry" }');
-  P.push('    if(KeyDown 0x76){ while(KeyDown 0x76){ Start-Sleep -Milliseconds 30 }; Write-Host "> 이 동작은 건너뛰어요"; return "skip" }');
+  P.push('    if(TakeKey 4){ Write-Host "[] 종료"; exit }');
+  P.push('    if((TakeKey 8) -and $script:canRestart){ [U]::HideCon($prevWin); throw "RESTART" }');
+  P.push('    if(TakeKey 2){ Write-Host "> 다시 찾아요"; $r = "retry" }');
+  P.push('    elseif(TakeKey 1){ Write-Host "> 이 동작은 건너뛰어요"; $r = "skip" }');
   P.push('  }');
+  P.push('  [U]::HideCon($prevWin)');
+  P.push('  return $r');
   P.push('}');
   P.push('# ==== PURE-BEGIN (변수·비교: 화면과 상관없는 계산) ====');
   P.push("function SetVar($k, $v){ $script:MacroVars[[string]$k] = [string]$v }");
@@ -1970,15 +2129,20 @@ function genPS1(l) {
   if (needsImg(l.steps)) P.push(...psImgFuncs());
   P.push('');
   P.push('# ==== RUN ====');
-  P.push(`Write-Host "단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.restartLabel} 재실행"`);
+  P.push(`Write-Host "단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.restartLabel} 재실행 (실행 중엔 이 키들이 다른 프로그램에 전달되지 않아요)"`);
+  const need = imgNames(l);
+  if (need.length) {   // 시작 전에 빠진 이미지 파일을 한 번에 알려줌
+    P.push(`foreach($n in @(${need.map(psStr).join(', ')})){ if(-not (Test-Path -LiteralPath (ImgPath $n))){ Write-Host ("[주의] 이미지 파일이 없어요: " + (ImgPath $n) + "  -> 이미지 캡처 도우미로 찍어 두세요") -ForegroundColor Yellow } }`);
+  }
   const p = hhmmParts(l.startAt);
   if (p) {
     P.push(`# 예약 시작: 다음 ${l.startAt} 까지 대기 (${CTRL_KEYS.startNowLabel} 즉시 시작)`);
     P.push(`$target = (Get-Date).Date.AddHours(${p.hh}).AddMinutes(${p.mm})`);
     P.push('if($target -le (Get-Date)){ $target = $target.AddDays(1) }');
     P.push('Write-Host "예약: $target 까지 대기"');
+    P.push('$null = TakeKey 0; $script:kq = 0');
     P.push('while((Get-Date) -lt $target){');
-    P.push(`  if(KeyDown 0x76){ break }   # ${CTRL_KEYS.startNowLabel}`);
+    P.push(`  if(TakeKey 1){ break }   # ${CTRL_KEYS.startNowLabel}`);
     P.push('  Pump; Start-Sleep -Seconds 1');
     P.push('}');
   }
@@ -2022,7 +2186,7 @@ function emitPS(steps, P, pad, ctx) {
         P.push(pad + '}');
       }
     } else if (s.type === 'break') {
-      P.push(pad + 'break   # 반복 빠져나가기');
+      P.push(pad + (ORPHAN.has(s.id) ? '# (반복문 밖의 "반복 빠져나가기"는 할 일이 없어 건너뜀)' : 'break   # 반복 빠져나가기'));
     } else if (s.type === 'stop') {
       P.push(pad + 'Write-Host "[] 멈춤"; exit');
     } else if (s.type === 'setvar') {
@@ -2037,13 +2201,13 @@ function emitPS(steps, P, pad, ctx) {
 }
 function genPSSetVar(s) {
   const k = psStr(cleanVarName(s.name));
-  if (s.from === 'clip') return [`SetVar ${k} ([string](Get-Clipboard -Raw))`];
+  if (s.from === 'clip') return [`SetVar ${k} (GetClip)`];
   if (s.from === 'read') {
     const L = psReadRegion('$txt', s.mode, s.region || {});
     if (s.read === 'number') L.push("$m = [regex]::Match([string]$txt, '-?\\d[\\d,]*(\\.\\d+)?'); $val = if($m.Success){ $m.Value -replace ',','' } else { '' }");
     else L.push('$val = ([string]$txt).Trim()');
     L.push(`SetVar ${k} $val`);
-    L.push(`if($val -eq ''){ Write-Host ${psStr('[주의] 변수 {' + cleanVarName(s.name) + '}: 화면에서 글자를 못 읽었어요 (빈 값)')} -ForegroundColor Yellow } else { Write-Host ("   {${cleanVarName(s.name).replace(/["`$]/g, '')}} = " + $val) }`);
+    L.push(`if($val -eq ''){ Write-Host ${psStr('[주의] 변수 {' + cleanVarName(s.name) + '}: 화면에서 글자를 못 읽었어요 (빈 값)')} -ForegroundColor Yellow } else { Write-Host (${psStr('   {' + cleanVarName(s.name) + '} = ')} + $val) }`);
     return L;
   }
   return [`SetVar ${k} ${psFill(s.value)}`];
@@ -2062,8 +2226,7 @@ function psFindStep(s) {
   const L = ['$p = $null', 'while($true){', `  $p = ${call}`, '  if($null -ne $p){ break }'];
   // 글자는 {변수}를 실제 값으로 바꿔 보여줌
   L.push(isImg ? `  $msg = ${psStr(what + tail)}` : `  $msg = "글자 '" + ${psFill(name)} + ${psStr("'" + tail)}`);
-  if (isImg) L.push(`  if($script:lastErr -eq 'nofile'){ $msg = ${psStr(`${what} 파일이 없어요: `)} + (ImgPath ${psStr(name)}) + ${psStr(' — 이미지 캡처 도우미로 이 이름으로 찍어 두세요')} }`);
-  L.push(`  if($script:lastErr -eq 'noocr'){ $msg = '이 PC에서 화면 글자 읽기(OCR)를 쓸 수 없어요' }`);
+  psErrMsgs(isImg ? name : null).forEach(x => L.push('  ' + x));
   if (s.notfound === 'continue') L.push('  Write-Host ("[주의] " + $msg + " -> 건너뛰어요") -ForegroundColor Yellow; break');
   else if (s.notfound === 'stop') L.push('  Write-Host ("[오류] " + $msg + " -> 매크로를 멈춰요") -ForegroundColor Red; FocusConsole; exit');
   else L.push("  if((ErrorPause $msg) -eq 'skip'){ break }");
@@ -2095,14 +2258,14 @@ function psOcrFuncs() {
     '  if(-not $script:ocrReady){ return $null }',
     '  if($x2 -le $x1 -or $y2 -le $y1){ $vs=[System.Windows.Forms.SystemInformation]::VirtualScreen; $x1=$vs.Left; $y1=$vs.Top; $x2=$vs.Right; $y2=$vs.Bottom }',
     '  $w=[int]($x2-$x1); $h=[int]($y2-$y1); if($w -lt 1 -or $h -lt 1){ return $null }',
-    '  $bmp=New-Object System.Drawing.Bitmap $w,$h',
-    '  $g=[System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen([int]$x1,[int]$y1,0,0,(New-Object System.Drawing.Size $w,$h)); $g.Dispose()',
     '  $mx=[Math]::Max($w,$h); $sc=1.0',
     '  if($mx -lt 1200 -and ($mx*2) -le $script:ocrMax){ $sc=2.0 } elseif($mx -gt $script:ocrMax){ $sc=$script:ocrMax/$mx }',
-    '  if($sc -ne 1.0){ $nw=[Math]::Max(1,[int]($w*$sc)); $nh=[Math]::Max(1,[int]($h*$sc)); $b2=New-Object System.Drawing.Bitmap $nw,$nh; $g2=[System.Drawing.Graphics]::FromImage($b2); $g2.InterpolationMode=[System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic; $g2.DrawImage($bmp,0,0,$nw,$nh); $g2.Dispose(); $bmp.Dispose(); $bmp=$b2 }',
     '  $ms=New-Object System.IO.MemoryStream',
-    '  $bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose(); $ms.Position=0',
-    '  try {',
+    '  try {   # 화면 잠금·보안 창 등으로 화면을 못 찍으면 "못 읽음"으로 처리(매크로가 죽지 않게)',
+    '    $bmp=New-Object System.Drawing.Bitmap $w,$h',
+    '    try { $g=[System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen([int]$x1,[int]$y1,0,0,(New-Object System.Drawing.Size $w,$h)); $g.Dispose() } catch { $bmp.Dispose(); throw }',
+    '    if($sc -ne 1.0){ $nw=[Math]::Max(1,[int]($w*$sc)); $nh=[Math]::Max(1,[int]($h*$sc)); $b2=New-Object System.Drawing.Bitmap $nw,$nh; $g2=[System.Drawing.Graphics]::FromImage($b2); $g2.InterpolationMode=[System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic; $g2.DrawImage($bmp,0,0,$nw,$nh); $g2.Dispose(); $bmp.Dispose(); $bmp=$b2 }',
+    '    $bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose(); $ms.Position=0',
     '    $ras=[System.IO.WindowsRuntimeStreamExtensions]::AsRandomAccessStream($ms)',
     '    $dec=Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($ras)) ([Windows.Graphics.Imaging.BitmapDecoder])',
     '    $sb=Await ($dec.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])',
@@ -2315,10 +2478,10 @@ function genPSReadPut(s) {
   const L = psReadRegion('$txt', s.mode, s.region || {});
   if (s.read === 'number') L.push("$m = [regex]::Match([string]$txt, '-?\\d[\\d,]*(\\.\\d+)?'); $val = if($m.Success){ $m.Value -replace ',','' } else { '' }");
   else L.push('$val = ([string]$txt).Trim()');
-  const lines = [`if($val -ne ""){ Set-Clipboard -Value $val; Start-Sleep -Milliseconds 90; Keys "^v"`];
+  const lines = [`if($val -ne "" -and (SetClip $val)){ Start-Sleep -Milliseconds 90; Keys "^v"`];
   if (s.after === 'enter') lines[0] += '; Keys "{ENTER}"';
   else if (s.after === 'tab') lines[0] += '; Keys "{TAB}"';
-  lines[0] += ' } else { Write-Host "[주의] 화면에서 글자를 못 읽어 붙여넣지 않았어요" -ForegroundColor Yellow }';
+  lines[0] += ' } else { Write-Host "[주의] 화면에서 글자를 못 읽었거나 클립보드를 못 써서 붙여넣지 않았어요" -ForegroundColor Yellow }';
   return L.concat(lines);
 }
 function psReadRegion(dest, mode, r) {
@@ -2328,14 +2491,17 @@ function psReadRegion(dest, mode, r) {
 /* 조건 → c 변수에 $true/$false. 못 읽으면(빈 값) "비었음" 말고는 모두 거짓 */
 function genPSCond(s, c) {
   const w = s.what || 'region';
-  if (w === 'img') {
-    const L = [`${c} = ($null -ne (FindImg (ImgPath ${psStr(cleanImgName(s.img))}) ${num(s.tol) || 25} ${Math.min(100, Math.max(50, num(s.sim) || 100))} $${s.bright ? 'true' : 'false'} ${psArea(s)} 1 1 0))`];
-    if (s.op === 'no') L.push(`${c} = -not ${c}`);
-    L.push(`Write-Host ("   이미지 보임: " + ${s.op === 'no' ? `(-not ${c})` : c})`);
-    return L;
-  }
-  if (w === 'text') {
-    const L = [`${c} = ($null -ne (FindText ${psFill(s.text)} ${psArea(s)} 1 1 0))`];
+  if (w === 'img' || w === 'text') {
+    // 한 번만 확인. 단, 파일이 없거나 기능을 못 쓰면 "안 보임"으로 넘기지 않고 오류로 멈춤 (F7 = 안 보이는 것으로 보고 진행)
+    const nm = cleanImgName(s.img);
+    const call = w === 'img'
+      ? `FindImg (ImgPath ${psStr(nm)}) ${num(s.tol) || 25} ${Math.min(100, Math.max(50, num(s.sim) || 100))} $${s.bright ? 'true' : 'false'} ${psArea(s)} 1 1 0`
+      : `FindText ${psFill(s.text)} ${psArea(s)} 1 1 0`;
+    const L = ['while($true){', `  $p = ${call}`, "  if($null -ne $p -or $script:lastErr -eq 'notfound' -or $script:lastErr -eq ''){ break }", "  $msg = '조건을 확인할 수 없어요'"];
+    psErrMsgs(w === 'img' ? nm : null).forEach(x => L.push('  ' + x));
+    L.push("  if((ErrorPause ($msg + ' (F7 = 안 보이는 것으로 보고 진행)')) -eq 'skip'){ $p = $null; break }", '}');
+    L.push(`${c} = ($null -ne $p)`);
+    L.push(`Write-Host ("   ${w === 'img' ? '이미지' : '글자'} 보임: " + ${c})`);
     if (s.op === 'no') L.push(`${c} = -not ${c}`);
     return L;
   }
@@ -2375,6 +2541,7 @@ function pyConf(s) {
   return Math.round(Math.min(0.99, Math.max(0.5, base + adj)) * 100) / 100;
 }
 function genPY(l) {
+  refreshOrphans(l);
   const P = [];
   P.push('# -*- coding: utf-8 -*-');
   P.push(`# 매크로: ${(l.name || '').replace(/[\r\n]/g, ' ')}`);
@@ -2384,10 +2551,20 @@ function genPY(l) {
   P.push('#  급할 때: 마우스를 화면 왼쪽 맨 위 구석으로 휙 옮기면 멈춥니다.');
   P.push('import time, webbrowser, datetime, os, sys, re');
   P.push('BASE_DIR = os.path.dirname(os.path.abspath(__file__))');
+  P.push('if sys.platform == "win32":   # 화면 배율(125·150%)·모니터 여러 대에서도 좌표·캡처가 같은 실제 픽셀 기준이 되게 (pyautogui 보다 먼저)');
+  P.push('    try:');
+  P.push('        import ctypes');
+  P.push('        if not ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)): ctypes.windll.user32.SetProcessDPIAware()');
+  P.push('    except Exception:');
+  P.push('        try: ctypes.windll.user32.SetProcessDPIAware()');
+  P.push('        except Exception: pass');
   P.push('try:');
   P.push('    import pyautogui');
   P.push('except ImportError:');
-  P.push('    raise SystemExit("먼저:  pip install pyautogui")');
+  P.push('    print("먼저:  pip install pyautogui")');
+  P.push('    try: input("엔터를 누르면 창을 닫아요...")');
+  P.push('    except Exception: pass');
+  P.push('    raise SystemExit(1)');
   P.push('try:');
   P.push('    import pygetwindow as gw');
   P.push('except Exception:');
@@ -2396,12 +2573,22 @@ function genPY(l) {
   P.push('pyautogui.PAUSE = 0.1');
   P.push("PASTE_MOD = 'command' if sys.platform == 'darwin' else 'ctrl'");
   P.push('_paused = {"v": False}; _stop = {"v": False}; _restart = {"v": False}; _can_restart = {"v": False}; _last_err = [""]');
+  P.push('_ev = {"f7": False, "f8": False}; _in_err = {"v": False}; _ign = {"v": False}');
   P.push('class _Restart(Exception): pass');
+  P.push('def _hk(fn):   # 매크로가 받은 F7~F10 은 앞 프로그램(엑셀 등)에 안 넘김. 매크로가 직접 보내는 F키(_ign)는 그대로 통과');
+  P.push('    def h():');
+  P.push('        if _ign["v"]: return True');
+  P.push('        fn(); return False');
+  P.push('    return h');
+  P.push('def _on_f8():');
+  P.push('    if _in_err["v"]: _ev["f8"] = True; return');
+  P.push('    _paused["v"] = not _paused["v"]; print("|| 일시정지 (F8로 재생)" if _paused["v"] else "> 재생")');
   P.push('try:');
   P.push('    import keyboard');
-  P.push("    keyboard.add_hotkey('f8', lambda: (_paused.__setitem__('v', not _paused['v']), print('|| 일시정지' if _paused['v'] else '> 재생')))");
-  P.push("    keyboard.add_hotkey('f9', lambda: _stop.__setitem__('v', True))");
-  P.push("    keyboard.add_hotkey('f10', lambda: _restart.__setitem__('v', True))");
+  P.push("    keyboard.add_hotkey('f8', _hk(_on_f8), suppress=True)");
+  P.push("    keyboard.add_hotkey('f7', _hk(lambda: _ev.__setitem__('f7', True)), suppress=True)");
+  P.push("    keyboard.add_hotkey('f9', _hk(lambda: _stop.__setitem__('v', True)), suppress=True)");
+  P.push("    keyboard.add_hotkey('f10', _hk(lambda: _restart.__setitem__('v', True)), suppress=True)");
   P.push(`    print("단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.restartLabel} 재실행")`);
   P.push('except Exception:');
   P.push('    keyboard = None');
@@ -2421,6 +2608,7 @@ function genPY(l) {
   P.push('        for w in gw.getWindowsWithTitle(title):');
   P.push('            w.activate(); time.sleep(0.4); return');
   P.push('    except Exception: pass');
+  P.push('    print("[주의] 제목에 \'" + str(title) + "\' 이(가) 든 창이 없어요")');
   P.push('');
   P.push('# ===== 클립보드 (한글 입력은 붙여넣기로) =====');
   P.push('def set_clip(s):');
@@ -2477,31 +2665,63 @@ function genPY(l) {
   P.push('        pyautogui.write(s, interval=0.02)');
   P.push('');
   P.push('# ===== 오류로 멈춤: F8 = 다시 시도, F7 = 이 동작 건너뛰기, F9 = 종료 =====');
-  P.push('def focus_console():');
+  P.push('def _con():   # 실행(검은) 창. 윈도우 터미널이면 그 바깥 창');
+  P.push('    import ctypes');
+  P.push('    k = ctypes.windll.kernel32; u = ctypes.windll.user32');
+  P.push('    k.GetConsoleWindow.restype = ctypes.c_void_p');
+  P.push('    u.GetAncestor.restype = ctypes.c_void_p; u.GetAncestor.argtypes = [ctypes.c_void_p, ctypes.c_uint]');
+  P.push('    h = k.GetConsoleWindow()');
+  P.push('    return (u.GetAncestor(h, 3) or h) if h else None');
+  P.push('def _wpos(h, after, flags):');
+  P.push('    import ctypes; u = ctypes.windll.user32');
+  P.push('    u.SetWindowPos.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint]');
+  P.push('    u.SetWindowPos(h, after, 0, 0, 0, 0, flags)');
+  P.push('def show_console():   # 실행 창을 맨 위에 보이게(키보드 포커스는 안 뺏음). 앞에 있던 창을 돌려줌');
   P.push('    try:');
-  P.push('        import ctypes');
-  P.push('        h = ctypes.windll.kernel32.GetConsoleWindow()');
-  P.push('        if h: ctypes.windll.user32.ShowWindow(h, 9); ctypes.windll.user32.SetForegroundWindow(h)');
+  P.push('        import ctypes; u = ctypes.windll.user32');
+  P.push('        u.GetForegroundWindow.restype = ctypes.c_void_p');
+  P.push('        prev = u.GetForegroundWindow(); h = _con(); mn = False');
+  P.push('        if h:');
+  P.push('            mn = bool(u.IsIconic(ctypes.c_void_p(h)))');
+  P.push('            if mn: u.ShowWindow(ctypes.c_void_p(h), 4)');
+  P.push('            _wpos(h, ctypes.c_void_p(-1), 0x53)');
+  P.push('        return (prev, mn)');
+  P.push('    except Exception: return (None, False)');
+  P.push('def hide_console(st):   # 다시 시작할 때: 맨 위 고정을 풀고 원래 창 뒤로(찾을 화면을 가리지 않게)');
+  P.push('    try:');
+  P.push('        import ctypes; u = ctypes.windll.user32');
+  P.push('        prev, mn = st; h = _con()');
+  P.push('        if not h: return');
+  P.push('        _wpos(h, ctypes.c_void_p(-2), 0x13)');
+  P.push('        u.GetForegroundWindow.restype = ctypes.c_void_p');
+  P.push('        if prev and prev != h:');
+  P.push('            if u.GetForegroundWindow() == h: u.SetForegroundWindow(ctypes.c_void_p(prev))');
+  P.push('            _wpos(h, ctypes.c_void_p(prev), 0x13)');
+  P.push('        if mn: u.ShowWindow(ctypes.c_void_p(h), 7)');
+  P.push('    except Exception: pass');
+  P.push('def focus_console():   # 멈춤으로 끝날 때 실행 창을 앞으로');
+  P.push('    try:');
+  P.push('        import ctypes; u = ctypes.windll.user32; h = _con()');
+  P.push('        if h: u.ShowWindow(ctypes.c_void_p(h), 9); u.SetForegroundWindow(ctypes.c_void_p(h))');
   P.push('    except Exception: pass');
   P.push('def error_pause(msg):');
   P.push('    print(); print("[오류] " + msg)');
-  P.push('    print("   -> 화면을 맞춘 뒤(작업할 창을 클릭해 앞으로) F8 = 다시 찾기 / F7 = 이 동작 건너뛰기 / F9 = 종료")');
-  P.push('    focus_console()');
-  P.push('    if keyboard:');
-  P.push("        while keyboard.is_pressed('f8') or keyboard.is_pressed('f7'): time.sleep(0.05)");
-  P.push('        while True:');
-  P.push('            time.sleep(0.08)');
-  P.push('            if _stop["v"]: raise SystemExit("종료")');
-  P.push('            if _restart["v"] and _can_restart["v"]: _restart["v"] = False; raise _Restart()');
-  P.push("            if keyboard.is_pressed('f8'):");
-  P.push("                while keyboard.is_pressed('f8'): time.sleep(0.03)");
-  P.push('                _paused["v"] = False; print("> 다시 찾아요"); return "retry"');
-  P.push("            if keyboard.is_pressed('f7'):");
-  P.push("                while keyboard.is_pressed('f7'): time.sleep(0.03)");
-  P.push('                _paused["v"] = False; print("> 이 동작은 건너뛰어요"); return "skip"');
-  P.push('    a = input("   엔터 = 다시 찾기, s = 건너뛰기, q = 종료 : ").strip().lower()');
-  P.push('    if a == "q": raise SystemExit("종료")');
-  P.push('    return "skip" if a == "s" else "retry"');
+  P.push('    print("   -> 화면을 맞춘 뒤 F8 = 다시 찾기 / F7 = 이 동작 건너뛰기 / F9 = 종료")');
+  P.push('    st = show_console()');
+  P.push('    try:');
+  P.push('        if keyboard:');
+  P.push('            _ev["f7"] = _ev["f8"] = False; _in_err["v"] = True   # 이전에 눌러 둔 키는 무시');
+  P.push('            while True:');
+  P.push('                time.sleep(0.08)');
+  P.push('                if _stop["v"]: raise SystemExit("종료")');
+  P.push('                if _restart["v"] and _can_restart["v"]: _restart["v"] = False; raise _Restart()');
+  P.push('                if _ev["f8"]: _ev["f8"] = False; print("> 다시 찾아요"); return "retry"');
+  P.push('                if _ev["f7"]: _ev["f7"] = False; print("> 이 동작은 건너뛰어요"); return "skip"');
+  P.push('        a = input("   엔터 = 다시 찾기, s = 건너뛰기, q = 종료 : ").strip().lower()');
+  P.push('        if a == "q": raise SystemExit("종료")');
+  P.push('        return "skip" if a == "s" else "retry"');
+  P.push('    finally:');
+  P.push('        _in_err["v"] = False; hide_console(st)');
   P.push('');
   P.push('# ==== PURE-BEGIN (변수·비교: 화면과 상관없는 계산) ====');
   P.push('V = {}');
@@ -2534,6 +2754,10 @@ function genPY(l) {
   P.push(`IMGDIR = ${pyJ(imgDirOf(l))}   # 이미지 폴더 (상대 경로면 이 파일이 있는 폴더 기준)`);
   P.push('if not os.path.isabs(IMGDIR): IMGDIR = os.path.join(BASE_DIR, IMGDIR)');
   P.push('def img_path(name): return os.path.join(IMGDIR, str(name) + ".png")');
+  P.push('def _vorigin():   # 모니터 여러 대일 때 전체 화면의 왼쪽 위 좌표(음수일 수 있음)');
+  P.push('    try:');
+  P.push('        import ctypes; u = ctypes.windll.user32; return u.GetSystemMetrics(76), u.GetSystemMetrics(77)');
+  P.push('    except Exception: return 0, 0');
   if (needsOcr(l.steps)) P.push(...pyOcrFuncs());
   if (needsImg(l.steps)) P.push(...pyImgFuncs());
   P.push('');
@@ -2546,9 +2770,10 @@ function genPY(l) {
     P.push(`    _target = _now.replace(hour=${p.hh}, minute=${p.mm}, second=0, microsecond=0)`);
     P.push('    if _target <= _now: _target += datetime.timedelta(days=1)');
     P.push('    print("예약:", _target, "까지 대기")');
+    P.push('    _ev["f7"] = False');
     P.push('    while datetime.datetime.now() < _target:');
     P.push('        control()');
-    P.push("        if keyboard and keyboard.is_pressed('f7'): break");
+    P.push('        if _ev["f7"]: _ev["f7"] = False; break');
     P.push('        time.sleep(1)');
   }
   P.push(`    time.sleep(${Number(l.delay) || 0})`);
@@ -2563,8 +2788,18 @@ function genPY(l) {
   P.push('        break');
   P.push('');
   P.push("if __name__ == '__main__':");
-  P.push('    run()');
-  P.push('    print("매크로가 끝났어요.")');
+  P.push('    try:');
+  P.push('        run()');
+  P.push('        print("매크로가 끝났어요.")');
+  P.push('    except SystemExit as e:');
+  P.push('        if e.code not in (None, 0): print(e.code)');
+  P.push('    except KeyboardInterrupt:');
+  P.push('        print("중단했어요.")');
+  P.push('    except Exception:');
+  P.push('        import traceback; traceback.print_exc(); print("[오류] 위 내용을 확인하세요.")');
+  P.push('    finally:   # 더블클릭으로 실행했을 때 창이 바로 닫혀 메시지를 못 보는 일 방지');
+  P.push('        try: input("엔터를 누르면 창을 닫아요...")');
+  P.push('        except Exception: pass');
   P.push(...designBlock(l, 'py'));
   return P.join('\r\n') + '\r\n';
 }
@@ -2578,6 +2813,7 @@ function emitPY(steps, out, ctx) {
     if (s.type === 'repeat') {
       out.push(num(s.count) > 0 ? `for _ in range(${num(s.count)}):` : 'while True:   # 무한 반복');
       const inner = ['control()']; emitPY(s.children, inner, ctx);
+      if (!(g > 0)) inner.push('time.sleep(0.01)   # 쉬는 틈 없는 반복이 CPU 를 잡아먹지 않게');
       push('    ', inner);
     } else if (s.type === 'if') {
       const c = `_c${ctx.n++}`;
@@ -2591,7 +2827,7 @@ function emitPY(steps, out, ctx) {
         push('    ', e.length ? e : ['pass']);
       }
     } else if (s.type === 'break') {
-      out.push('break   # 반복 빠져나가기');
+      out.push(ORPHAN.has(s.id) ? 'pass   # (반복문 밖의 "반복 빠져나가기"는 할 일이 없어 건너뜀)' : 'break   # 반복 빠져나가기');
     } else if (s.type === 'stop') {
       out.push('raise SystemExit("[멈춤] 매크로 종료")');
     } else if (s.type === 'setvar') {
@@ -2618,6 +2854,17 @@ function genPYSetVar(s) {
   }
   return [`V[${k}] = ${pyFill(s.value)}`];
 }
+/* 찾기 실패 이유별 안내 → _msg 덮어쓰기 */
+function pyErrMsgs(imgName) {
+  const L = [];
+  if (imgName != null) {
+    L.push(`if _last_err[0] == 'nofile': _msg = ${pyJ(`이미지 '${imgName}' 파일이 없어요: `)} + img_path(${pyJ(imgName)})`);
+    L.push(`if _last_err[0] == 'badfile': _msg = ${pyJ(`이미지 '${imgName}' 파일을 열 수 없어요(그림 파일이 맞는지 확인): `)} + img_path(${pyJ(imgName)})`);
+    L.push(`if _last_err[0] == 'nocv': _msg = "이미지 찾기엔 opencv 가 필요해요:  pip install opencv-python pillow"`);
+  }
+  L.push(`if _last_err[0] == 'noocr': _msg = "화면 글자 읽기엔 winocr 가 필요해요:  pip install winocr pillow"`);
+  return L;
+}
 /* 이미지·글자 찾기 → 못 찾으면 일시정지/멈춤/넘어감 → 클릭/이동/찾기만 → 결과 변수 */
 function pyFindStep(s) {
   const isImg = s.type === 'imgclick';
@@ -2632,9 +2879,7 @@ function pyFindStep(s) {
   const L = ['_p = None', 'while True:', `    _p = ${call}`, '    if _p: break'];
   // 글자는 {변수}를 실제 값으로 바꿔 보여줌
   L.push(isImg ? `    _msg = ${pyJ(what + tail)}` : `    _msg = "글자 '" + ${pyFill(name)} + ${pyJ("'" + tail)}`);
-  if (isImg) L.push(`    if _last_err[0] == 'nofile': _msg = ${pyJ(`${what} 파일이 없어요: `)} + img_path(${pyJ(name)})`);
-  L.push(`    if _last_err[0] == 'nocv': _msg = "이미지 찾기엔 opencv 가 필요해요:  pip install opencv-python"`);
-  L.push(`    if _last_err[0] == 'noocr': _msg = "화면 글자 읽기엔 winocr 가 필요해요:  pip install winocr pillow"`);
+  pyErrMsgs(isImg ? name : null).forEach(x => L.push('    ' + x));
   if (s.notfound === 'continue') L.push('    print("[주의] " + _msg + " -> 건너뛰어요"); break');
   else if (s.notfound === 'stop') L.push('    print("[오류] " + _msg + " -> 매크로를 멈춰요"); focus_console(); raise SystemExit("멈춤")');
   else L.push("    if error_pause(_msg) == 'skip': break");
@@ -2662,10 +2907,6 @@ function pyOcrFuncs() {
     '        try: return winocr.recognize_pil_sync(img, lang)',
     '        except Exception: continue',
     '    return None',
-    'def _vorigin():',
-    '    try:',
-    '        import ctypes; u = ctypes.windll.user32; return u.GetSystemMetrics(76), u.GetSystemMetrics(77)',
-    '    except Exception: return 0, 0',
     'def ocr_shot(bbox):',
     '    if not _ocr: return None',
     '    try:',
@@ -2722,24 +2963,30 @@ function pyImgFuncs() {
     '', '# ===== 이미지 찾기 (opencv 필요) =====',
     'try:',
     '    import cv2  # opencv-python',
+    '    from PIL import Image, ImageGrab',
     '    _imgcv = True',
     'except Exception:',
     '    _imgcv = False',
-    '    print("(이미지 찾기엔  pip install opencv-python  필요. 없으면 이미지 관련 동작은 실패로 처리)")',
+    '    print("(이미지 찾기엔  pip install opencv-python pillow  필요. 없으면 이미지 동작에서 오류로 멈춰요)")',
     'def find_img(path, conf, gray, bbox, nth, retries, every):   # 위→아래·왼→오른 순 n번째의 가운데 좌표',
     '    _last_err[0] = ""',
     '    if not os.path.exists(path): _last_err[0] = "nofile"; return None',
     '    if not _imgcv: _last_err[0] = "nocv"; return None',
-    '    region = (bbox[0], bbox[1], bbox[2] - bbox[0], bbox[3] - bbox[1]) if bbox else None',
+    '    try:   # 그림은 PIL 로 열어 넘김 (opencv 는 한글 경로를 못 열어서)',
+    '        needle = Image.open(path); needle.load()',
+    '    except Exception:',
+    '        _last_err[0] = "badfile"; return None',
     '    for k in range(retries):',
     '        control()',
-    '        try:',
-    '            boxes = list(pyautogui.locateAllOnScreen(path, confidence=conf, grayscale=gray, region=region))',
+    '        try:   # 모니터 여러 대 전체(또는 지정한 네모)를 찍어 그 안에서 찾음',
+    '            if bbox: hay = ImageGrab.grab(bbox=bbox, all_screens=True); ox, oy = bbox[0], bbox[1]',
+    '            else: hay = ImageGrab.grab(all_screens=True); ox, oy = _vorigin()',
+    '            boxes = list(pyautogui.locateAll(needle, hay, confidence=conf, grayscale=gray))',
     '        except Exception:',
-    '            boxes = []',
+    '            boxes = []; ox = oy = 0',
     '        pts = []',
     '        for b in boxes:',
-    '            cx, cy = int(b.left + b.width // 2), int(b.top + b.height // 2)',
+    '            cx, cy = int(ox + b.left + b.width // 2), int(oy + b.top + b.height // 2)',
     '            if all(abs(cx - x) > b.width // 2 or abs(cy - y) > b.height // 2 for x, y in pts): pts.append((cx, cy))',
     '        pts.sort(key=lambda p: (p[1] // 12, p[0]))',
     '        if len(pts) >= nth: return pts[nth - 1]',
@@ -2763,16 +3010,20 @@ function genPYStep(s) {
       const rk = resolveHotkey(s);
       if (!rk) { const h = buildHotkey(s); return h.singlePy ? [`pyautogui.press(${J(h.py[0])})`] : [`pyautogui.hotkey(${h.py.map(J).join(', ')})`]; }
       const L = [];
-      parseCombo(rk.combo).chords.forEach((c, i) => {
+      const chords = parseCombo(rk.combo).chords;
+      const own = chords.some(c => /^f(7|8|9|10)$/.test(c.key));   // 매크로 제어 키를 직접 보낼 땐 자기 단축키로 안 받게
+      if (own) L.push('_ign["v"] = True');
+      chords.forEach((c, i) => {
         if (i) L.push('time.sleep(0.12)');
         const k = chordPY(c);
         L.push(k.length === 1 ? `pyautogui.press(${J(k[0])})` : `pyautogui.hotkey(${k.map(J).join(', ')})`);
       });
+      if (own) L.push('time.sleep(0.15); _ign["v"] = False');
       return L;
     }
     case 'text': return [`type_text(${pyFill(s.text)})`];
     case 'win': return [`activate_window(${pyFill(s.title)})`];
-    case 'scroll': return [`pyautogui.scroll(${(s.dir === 'up' ? 1 : -1) * (num(s.amount) || 1) * 300})`];
+    case 'scroll': return [`pyautogui.scroll(${(s.dir === 'up' ? 1 : -1) * (num(s.amount) || 1) * 120})   # 120 = 휠 한 칸`];
     case 'wait': return [`time.sleep(${Number(s.sec) || 0})`];
     case 'readput': return genPYReadPut(s);
     default: return [];
@@ -2801,8 +3052,16 @@ function pyRegionArgs(mode, r) {
 /* 조건 → c 변수에 True/False. 못 읽으면(빈 값) "비었음" 말고는 모두 거짓 */
 function genPYCond(s, c) {
   const w = s.what || 'region';
-  if (w === 'img') return [`${c} = find_img(img_path(${pyJ(cleanImgName(s.img))}), ${pyConf(s)}, ${s.bright ? 'True' : 'False'}, ${pyBox(s)}, 1, 1, 0) is not None` + (s.op === 'no' ? `; ${c} = not ${c}` : '')];
-  if (w === 'text') return [`${c} = find_text(${pyFill(s.text)}, ${pyBox(s)}, 1, 1, 0) is not None` + (s.op === 'no' ? `; ${c} = not ${c}` : '')];
+  if (w === 'img' || w === 'text') {
+    // 한 번만 확인. 단, 파일이 없거나 기능을 못 쓰면 "안 보임"으로 넘기지 않고 오류로 멈춤 (F7 = 안 보이는 것으로 보고 진행)
+    const nm = cleanImgName(s.img);
+    const call = w === 'img' ? `find_img(img_path(${pyJ(nm)}), ${pyConf(s)}, ${s.bright ? 'True' : 'False'}, ${pyBox(s)}, 1, 1, 0)` : `find_text(${pyFill(s.text)}, ${pyBox(s)}, 1, 1, 0)`;
+    const L = ['while True:', `    _p = ${call}`, "    if _p is not None or _last_err[0] in ('notfound', ''): break", '    _msg = "조건을 확인할 수 없어요"'];
+    pyErrMsgs(w === 'img' ? nm : null).forEach(x => L.push('    ' + x));
+    L.push("    if error_pause(_msg + ' (F7 = 안 보이는 것으로 보고 진행)') == 'skip': _p = None; break");
+    L.push(`${c} = _p is not None` + (s.op === 'no' ? `; ${c} = not ${c}` : ''));
+    return L;
+  }
   const L = [];
   const two = w === 'region' && s.src === 'region2';
   if (w === 'var') {
@@ -2833,8 +3092,9 @@ function genPYCond(s, c) {
 function genFinder() {
   return [
     '# -*- 좌표 찾기 도우미 -*-  (마우스 위치의 X·Y 를 실시간으로 보여줘요 · 설치 불필요)',
-    '# ★ 무설치 매크로와 똑같은 방식이라 좌표가 정확히 일치해요. 끝내려면 창을 닫거나 Esc. ★',
+    '# ★ 무설치 매크로와 똑같은 기준(화면 배율과 상관없이 실제 픽셀)이라 좌표가 정확히 일치해요. 끝내려면 창을 닫거나 Esc. ★',
     'try {',
+    ...psDpiFix(),
     'Add-Type -AssemblyName System.Windows.Forms',
     'Add-Type -AssemblyName System.Drawing',
     'Add-Type @"',
@@ -2844,7 +3104,7 @@ function genFinder() {
     '"@',
     '$f = New-Object System.Windows.Forms.Form',
     '$f.Text = "좌표 찾기"; $f.TopMost = $true; $f.FormBorderStyle = "FixedToolWindow"',
-    '$f.Width = 250; $f.Height = 120; $f.StartPosition = "Manual"; $f.Left = 20; $f.Top = 20; $f.KeyPreview = $true',
+    '$f.Width = 320; $f.Height = 150; $f.StartPosition = "Manual"; $f.Left = 20; $f.Top = 20; $f.KeyPreview = $true',
     '$lbl = New-Object System.Windows.Forms.Label',
     '$lbl.Dock = "Fill"; $lbl.TextAlign = "MiddleCenter"',
     '$lbl.Font = New-Object System.Drawing.Font("Segoe UI", 14)',
@@ -2890,6 +3150,7 @@ function genRegionPicker() {
     '# -*- 영역 선택 도우미 -*-  (드래그로 네모 긁으면 그 영역 좌표를 알려줘요 · 설치 불필요)',
     '# 나온 네 숫자를 매크로 "조건" 동작의 영역 칸(왼쪽X·위Y·오른쪽X·아래Y)에 적으세요.',
     'try {',
+    ...psDpiFix(),
     'Add-Type -AssemblyName System.Windows.Forms',
     'Add-Type -AssemblyName System.Drawing',
     ...psSnipFn(),
@@ -2920,6 +3181,7 @@ function genImageCapturer(names, imgDir) {
     '# -*- 이미지 캡처 도우미 -*-  (드래그로 긁은 그림을 이미지 폴더에 "이름.png" 로 저장 · 설치 불필요)',
     '# 매크로가 실행될 때 이 그림을 화면에서 찾아요. 같은 이름으로 다시 찍으면 새 그림으로 바뀌어요.',
     'try {',
+    ...psDpiFix(),
     'Add-Type -AssemblyName System.Windows.Forms',
     'Add-Type -AssemblyName System.Drawing',
     'Add-Type -AssemblyName Microsoft.VisualBasic',
@@ -2984,7 +3246,8 @@ function genHelperBat(ps1Name) {
   // .bat 는 순수 ASCII + chcp 없음
   return [
     '@echo off',
-    `powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0${ps1Name}"`,
+    ...batPick(ps1Name, '-run'),
+    'powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%F%"',
     'echo.', 'pause', '',
   ].join('\r\n');
 }
@@ -3026,7 +3289,8 @@ function readmeText(l, names) {
     '[실행 중 단축키]',
     `  ${CTRL_KEYS.pauseLabel} 일시정지/재생   ${CTRL_KEYS.stopLabel} 종료   ${CTRL_KEYS.restartLabel} 처음부터 다시`,
     `  ${CTRL_KEYS.startNowLabel} 예약 시간을 기다리는 중이면 바로 시작 / 오류로 멈췄을 때는 그 동작 건너뛰기`,
-    '  이미지·글자를 끝내 못 찾으면 검은 창에 [오류]가 뜨고 멈춰요. 화면을 맞춘 뒤 F8 = 다시 찾기.',
+    '  이미지·글자를 끝내 못 찾거나 이미지 파일이 없으면 검은 창이 맨 위에 뜨고 [오류]로 멈춰요. 화면을 맞춘 뒤 F8 = 다시 찾기.',
+    '  매크로가 도는 동안 F7~F10 은 매크로 전용이라 엑셀 등 다른 프로그램에 전달되지 않아요.',
     '',
     '[폴더 안 파일]',
     `  ${dir}\\        찾을 이미지. 같은 이름의 png 로 바꿔 넣으면 그 그림으로 찾아요.`,
@@ -3041,6 +3305,8 @@ function readmeText(l, names) {
     '  macro.ps1 같은 코드 파일을 직접 고치면, 웹으로 불러올 때 그 고친 내용은 복원되지 않아요.',
     '  동작은 웹에서 고치고 다시 받으세요. (이미지·variables.txt 는 이 폴더에서 바로 바꿔도 돼요)',
     '  이미지를 찍을 때와 실행할 때의 화면 해상도·배율(100/125/150%)이 같아야 이미지를 찾아요.',
+    '  좌표(X·Y)는 화면 배율과 상관없이 "실제 픽셀" 기준이에요. 꼭 3-find-xy.bat 로 잰 숫자를 쓰세요.',
+    '  같은 파일을 여러 번 받아 "이름 (1).bat" 처럼 번호가 붙어도, 같은 번호의 짝 파일을 실행해요.',
     '',
   ].join('\r\n');
 }
@@ -3338,7 +3604,9 @@ const HELP = `
 <h4>⚠️ 조심할 점 · 자주 막히는 것</h4>
 <ul>
 <li>회사 보안 규정을 꼭 확인하세요. <b>내부 시스템 정보는 이 앱에 넣지 않아도 됩니다</b>(넣지 마세요).</li>
-<li><b>클릭이 빗나가요</b> → 해상도·화면 배율이 바뀌면 좌표가 달라져요. 좌표를 다시 잡거나 이미지·글자 찾기를 쓰세요.</li>
+<li><b>클릭이 빗나가요</b> → 좌표는 화면 배율(125·150%)과 상관없이 <b>실제 픽셀</b> 기준이에요. 꼭 "좌표 찾기 도우미"로 잰 숫자를 쓰고, 해상도를 바꿨다면 다시 재세요. 위치가 자주 바뀌면 이미지·글자 찾기를 쓰세요.</li>
+<li><b>왼쪽·위쪽 모니터</b>는 좌표가 <b>음수</b>(−)예요. 숫자 칸 옆 <b>±</b> 단추로 부호를 바꿔요(휴대폰 숫자 자판엔 − 키가 없어서).</li>
+<li><b>F7~F10</b>은 매크로가 도는 동안 <b>매크로 전용</b>이라 엑셀 등 다른 프로그램엔 전달되지 않아요(무설치·.ahk·파이썬). 이미지 파일이 없으면 "안 보임"으로 넘기지 않고 오류로 멈춰 알려줘요.</li>
 <li><b>실행이 막혀요</b> → 회사 보안 프로그램이 스크립트를 막은 경우예요(관리자 문의).</li>
 <li><b>너무 빨리 지나가요</b> → "동작 사이 텀"이나 중간 "대기"를 늘리세요.</li>
 <li>만든 내용은 <b>이 기기(브라우저)에만</b> 저장돼요. 기기를 바꾸면 "전체 백업"으로 옮기세요.</li>
