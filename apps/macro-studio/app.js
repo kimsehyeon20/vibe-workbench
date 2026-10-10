@@ -73,12 +73,17 @@ const HOTKEYS = {
 /* 가상 키코드(윈도우 keybd_event용): SendKeys 가 못 보내는 Win 조합 등을 직접 보냄 */
 const VK_MOD = { ctrl: 0x11, shift: 0x10, alt: 0x12, win: 0x5B };
 const VK_NAMED = { enter: 0x0D, tab: 0x09, esc: 0x1B, escape: 0x1B, space: 0x20, up: 0x26, down: 0x28, left: 0x25, right: 0x27, home: 0x24, end: 0x23, pageup: 0x21, pagedown: 0x22, delete: 0x2E, del: 0x2E, backspace: 0x08, insert: 0x2D };
+const VK_SYM = { ';': 0xBA, '=': 0xBB, ',': 0xBC, '-': 0xBD, '.': 0xBE, '/': 0xBF, '`': 0xC0, '[': 0xDB, '\\': 0xDC, ']': 0xDD, "'": 0xDE };
 function vkForKey(key) {
   key = String(key || '').trim().toLowerCase();
   if (!key) return null;
   if (VK_NAMED[key] != null) return VK_NAMED[key];
   const fm = key.match(/^f([1-9]|1[0-2])$/); if (fm) return 0x70 + (Number(fm[1]) - 1);
-  if (key.length === 1) { const c = key.toUpperCase().charCodeAt(0); if ((c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5A)) return c; }
+  if (key.length === 1) {
+    const c = key.toUpperCase().charCodeAt(0);
+    if ((c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5A)) return c;
+    if (VK_SYM[key] != null) return VK_SYM[key];   // ; . / 등 기호 키 (Win+. 이모지 등)
+  }
   return null;
 }
 /* 단축키 → VK 배열(수식키들 + 키 하나). 표현 불가하면 null */
@@ -1016,6 +1021,7 @@ function emitAHK(steps, L, pad, g) {
     if (s.type === 'repeat') {
       L.push(pad + (num(s.count) > 0 ? `Loop ${num(s.count)} {` : 'Loop {   ; 무한 반복'));
       emitAHK(s.children, L, pad + '    ', g);
+      if (g <= 0) L.push(pad + '    Sleep 10   ; 쉬는 틈 없는 반복이 CPU 를 잡아먹지 않게');
       L.push(pad + '}');
     } else if (s.type === 'if') {
       L.push(pad + '; [조건] 동작은 .ahk 에서 화면글자 읽기(OCR) 미지원이라 건너뜁니다 — "무설치(윈도우)"나 파이썬으로 받으세요.');
@@ -1386,7 +1392,9 @@ function genPSCond(s) {
   if (two) { L.push(...psReadRegion('$txt2', s.mode2, s.region2 || {})); L.push('Write-Host "조건 영역2 값: $txt2"'); }
   if (s.read === 'text') {
     const right = two ? '$txt2' : psStr(s.value);
-    L.push(`$cond = TextCmp $txt ${right} ${psStr(s.op)}`);
+    // OCR 이 아무것도 못 읽으면(빈 값) 조건을 '거짓'으로 — 숫자처럼 안전하게 건너뜀(엉뚱한 True 방지)
+    const guard = two ? '("$txt".Trim() -ne "") -and ("$txt2".Trim() -ne "") -and ' : '("$txt".Trim() -ne "") -and ';
+    L.push(`$cond = ${guard}(TextCmp $txt ${right} ${psStr(s.op)})`);
   } else {
     const op = { gt: '-gt', lt: '-lt', ge: '-ge', le: '-le', eq: '-eq', ne: '-ne' }[s.op] || '-ge';
     L.push('$v = ReadNumber $txt');
@@ -1633,7 +1641,9 @@ function genPYCond(s) {
   if (two) { const b = pyRegionArgs(s.mode2, s.region2 || {}); L.push(...b.pre); L.push(`_t2 = read_region(${b.args})`); L.push('print("조건 영역2 값:", _t2)'); }
   if (s.read === 'text') {
     const right = two ? '_t2' : J(s.value);
-    L.push(`_cond = text_cond(_t, ${right}, ${J(s.op)})`);
+    // OCR 이 아무것도 못 읽으면(빈 값) 조건을 거짓으로 — 엉뚱한 True 방지
+    const guard = two ? '(_t or "").strip() and (_t2 or "").strip() and ' : '(_t or "").strip() and ';
+    L.push(`_cond = bool(${guard}text_cond(_t, ${right}, ${J(s.op)}))`);
   } else {
     const op = { gt: '>', lt: '<', ge: '>=', le: '<=', eq: '==', ne: '!=' }[s.op] || '>=';
     L.push('_v = read_number(_t)');
@@ -1778,8 +1788,13 @@ function doExport(kind) {
   if (['ahk', 'ps', 'py'].includes(kind)) {
     if (!l.steps.length) { toast('먼저 동작을 추가하세요'); return; }
     if (hasIssues(l) && !confirm('입력이 빠진 동작이 있어요(빨간 ⚠). 그대로 내보낼까요?')) return;
-    if (kind === 'ahk' && anyStep(l.steps, s => s.type === 'if' || s.type === 'readput') &&
-      !confirm('.ahk 는 "조건"·"영역 값 읽어 입력" 동작을 건너뜁니다(조건 안에 담은 동작도 실행 안 됨). 이 동작을 쓰려면 "무설치(윈도우)"나 파이썬으로 받으세요. 그래도 .ahk 로 받을까요?')) return;
+    if (kind === 'ahk' && anyStep(l.steps, s => s.type === 'if' || s.type === 'readput')) {
+      const stopInIf = anyStep(l.steps, s => s.type === 'if' && anyStep([...(s.children || []), ...(s.elseChildren || [])], x => x.type === 'stop'));
+      const msg = '.ahk 는 "조건"·"영역 값 읽어 입력" 동작을 건너뜁니다(조건 안에 담은 동작도 실행 안 됨).'
+        + (stopInIf ? '\n\n⚠ 조건 안에 넣은 "멈춤"도 실행되지 않아요. 반복문이 스스로 멈추지 못하고 계속 돌 수 있으니 F9 또는 Esc로 끄세요.' : '')
+        + '\n\n조건을 쓰려면 "무설치(윈도우)"나 파이썬으로 받으세요. 그래도 .ahk 로 받을까요?';
+      if (!confirm(msg)) return;
+    }
   }
   if (kind === 'ahk') {
     const ahkName = fileName(l.name, 'ahk');
