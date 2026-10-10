@@ -26,45 +26,40 @@
 </header>
 
 <main class="wrap">
-  <!-- 루프(동작 묶음) 선택 줄 -->
+  <!-- 작업방(동작 묶음) 선택 줄 -->
   <section class="loops">
     <div class="loops-head">
-      <span class="label">루프 (업무 묶음)</span>
-      <button class="mini" id="add-loop">+ 새 루프</button>
+      <span class="label">작업방 (업무 묶음)</span>
+      <button class="mini" id="add-loop">+ 새 작업방</button>
     </div>
     <div class="chips" id="loop-chips"></div>
   </section>
 
-  <!-- 현재 루프 설정 -->
+  <!-- 현재 작업방 설정 -->
   <section class="card loop-settings" id="loop-settings">
     <div class="row">
       <label class="field grow">
-        <span>루프 이름</span>
+        <span>작업방 이름</span>
         <input type="text" id="loop-name" placeholder="예: 메일 보내기" autocomplete="off">
       </label>
     </div>
     <div class="row">
       <label class="field">
-        <span>반복 횟수</span>
-        <input type="number" id="loop-repeat" min="0" value="1" inputmode="numeric">
-        <em>0 = 멈출 때까지 무한</em>
-      </label>
-      <label class="field">
         <span>시작 전 대기(초)</span>
         <input type="number" id="loop-delay" min="0" step="0.5" value="3" inputmode="decimal">
         <em>창 전환할 시간</em>
       </label>
-    </div>
-    <div class="row">
       <label class="field">
         <span>동작 사이 텀(초)</span>
         <input type="number" id="loop-gap" min="0" step="0.1" value="0.5" inputmode="decimal">
         <em>각 동작 사이 기본 간격</em>
       </label>
-      <label class="field">
+    </div>
+    <div class="row">
+      <label class="field grow">
         <span>예약 시작 (선택)</span>
         <input type="time" id="loop-startat">
-        <em>이 시각까지 기다렸다 시작</em>
+        <em>이 시각까지 기다렸다 시작. 반복은 "반복문" 동작으로 묶으세요</em>
       </label>
     </div>
   </section>
@@ -92,7 +87,7 @@
 
   <!-- 내보내기 -->
   <section class="card export">
-    <h3>이 루프를 실행 파일로 내보내기</h3>
+    <h3>이 작업방을 실행 파일로 내보내기</h3>
     <p class="muted small">먼저 <b>▶ 미리보기</b>로 순서를 확인한 뒤, 내 PC에 맞는 파일을 받으세요.</p>
     <div class="export-grid">
       <button class="out" data-export="ps"><b>무설치 (윈도우)</b><span>설치 없이 더블클릭</span></button>

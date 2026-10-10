@@ -20,8 +20,27 @@ const TYPES = {
   wait:   { ico: '⏱️', label: '대기 (초)' },
   imgclick:{ ico: '🖼️', label: '이미지 찾아 클릭' },
   readput:{ ico: '📋', label: '영역 값 읽어 입력' },
-  if:     { ico: '❓', label: '조건 (영역을 읽어 분기)' },
+  repeat: { ico: '🔁', label: '반복문 (동작을 묶어 반복)' },
+  if:     { ico: '❓', label: '조건 (맞으면 동작 실행)' },
+  stop:   { ico: '🛑', label: '멈춤 (매크로 끝내기)' },
 };
+
+/* 묶음(컨테이너) 동작: 안에 다른 동작들을 담는 하위 목록 */
+const CONTAINERS = {
+  repeat: [{ key: 'children', label: '반복할 동작' }],
+  if:     [{ key: 'children', label: '맞으면 실행할 동작' }, { key: 'elseChildren', label: '아니면 (선택)' }],
+};
+function childListsOf(s) { return CONTAINERS[s.type] || null; }
+function isContainer(s) { return !!CONTAINERS[s.type]; }
+/* 트리 전체를 순회(묶음 안의 동작까지) */
+function walkSteps(steps, fn) {
+  (steps || []).forEach(s => {
+    fn(s);
+    const cl = childListsOf(s);
+    if (cl) cl.forEach(c => walkSteps(s[c.key] || [], fn));
+  });
+}
+function anyStep(steps, pred) { let hit = false; walkSteps(steps, s => { if (pred(s)) hit = true; }); return hit; }
 
 /* 이미지 찾기: 관대함(색 허용오차) 단계 */
 const TOLS = { 15: '엄격', 25: '보통', 40: '느슨' };
@@ -32,8 +51,8 @@ const AFTERS = { none: '(없음)', enter: '엔터(다음 줄)', tab: '탭(다음
 /* 조건 동작: 비교 연산자 */
 const OPS_NUM = { gt: '보다 큼 (>)', lt: '보다 작음 (<)', ge: '크거나 같음 (≥)', le: '작거나 같음 (≤)', eq: '같음 (=)', ne: '다름 (≠)' };
 const OPS_TEXT = { has: '포함', eq: '같음 (=)', ne: '다름 (≠)' };
-/* 조건 결과 행동 */
-const ACTS = { continue: '계속 진행', stop: '매크로 멈춤', skip: '다음 N개 동작 건너뛰기' };
+/* 이미지 찾아 클릭: 끝내 못 찾으면 */
+const NF = { stop: '매크로 멈춤', continue: '그냥 넘어가기' };
 
 const HOTKEYS = {
   copy:   { label: '복사 (Ctrl+C)',      ahk: '^c',      py: ['ctrl', 'c'], sk: '^c' },
@@ -47,8 +66,32 @@ const HOTKEYS = {
   enter:  { label: '엔터 (Enter)',       ahk: '{Enter}', py: ['enter'],     sk: '{ENTER}' },
   tab:    { label: '탭 (Tab)',           ahk: '{Tab}',   py: ['tab'],       sk: '{TAB}' },
   esc:    { label: 'ESC',               ahk: '{Esc}',   py: ['esc'],       sk: '{ESC}' },
+  winr:   { label: '실행창 열기 (Win+R)', ahk: '#r',      py: ['win', 'r'],  sk: '' },
   custom: { label: '직접 입력',           ahk: '',        py: [],            sk: '' },
 };
+
+/* 가상 키코드(윈도우 keybd_event용): SendKeys 가 못 보내는 Win 조합 등을 직접 보냄 */
+const VK_MOD = { ctrl: 0x11, shift: 0x10, alt: 0x12, win: 0x5B };
+const VK_NAMED = { enter: 0x0D, tab: 0x09, esc: 0x1B, escape: 0x1B, space: 0x20, up: 0x26, down: 0x28, left: 0x25, right: 0x27, home: 0x24, end: 0x23, pageup: 0x21, pagedown: 0x22, delete: 0x2E, del: 0x2E, backspace: 0x08, insert: 0x2D };
+function vkForKey(key) {
+  key = String(key || '').trim().toLowerCase();
+  if (!key) return null;
+  if (VK_NAMED[key] != null) return VK_NAMED[key];
+  const fm = key.match(/^f([1-9]|1[0-2])$/); if (fm) return 0x70 + (Number(fm[1]) - 1);
+  if (key.length === 1) { const c = key.toUpperCase().charCodeAt(0); if ((c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5A)) return c; }
+  return null;
+}
+/* 단축키 → VK 배열(수식키들 + 키 하나). 표현 불가하면 null */
+function hotkeyCombo(s) {
+  let mods = [], key = '';
+  if (s.preset && s.preset !== 'custom') { (HOTKEYS[s.preset].py || []).forEach(p => { if (VK_MOD[p] != null) mods.push(p); else key = p; }); }
+  else { mods = (s.mods || []).filter(m => VK_MOD[m] != null); key = (s.key || '').trim(); }
+  const kv = key ? vkForKey(key) : null;
+  if (key && kv == null) return null;
+  const vks = mods.map(m => VK_MOD[m]); if (kv != null) vks.push(kv);
+  return vks.length ? vks : null;
+}
+function hotkeyUsesWin(s) { return s.preset === 'custom' ? (s.mods || []).includes('win') : ((HOTKEYS[s.preset] || {}).py || []).includes('win'); }
 
 /* 실행 중 제어 단축키 (사람이 외우기 쉬운 키로 고정) */
 const CTRL_KEYS = { pauseLabel: 'F8', stopLabel: 'F9', startNowLabel: 'F7', restartLabel: 'F10' };
@@ -64,15 +107,42 @@ function normalize(s) {
     if (typeof l.gap !== 'number') l.gap = 0.5;
     if (typeof l.startAt !== 'string') l.startAt = '';
     if (!Array.isArray(l.steps)) l.steps = [];
+    l.steps.forEach(migrateStep);
+    // 옛 "작업방 반복 횟수"를 "반복문" 동작으로 감싸 그대로 유지
+    if (typeof l.repeat === 'number' && l.repeat !== 1 && l.steps.length) {
+      l.steps = [{ id: uid(), type: 'repeat', count: Math.max(0, l.repeat), children: l.steps }];
+    }
+    delete l.repeat;
   });
   return s;
+}
+
+/* 저장된 옛 동작을 새 구조로 맞춤(아이디·묶음 배열 보강, 옛 조건 변환) */
+function migrateStep(s) {
+  if (!s.id) s.id = uid();
+  if (s.type === 'if') {
+    if (!Array.isArray(s.children)) {
+      // 옛 조건: onTrue/onFalse(continue|stop|skip) → 맞으면/아니면 동작 목록으로
+      s.children = s.onTrue === 'stop' ? [{ id: uid(), type: 'stop' }] : [];
+      s.elseChildren = s.onFalse === 'stop' ? [{ id: uid(), type: 'stop' }] : [];
+    }
+    if (!Array.isArray(s.elseChildren)) s.elseChildren = [];
+    delete s.onTrue; delete s.onFalse; delete s.skip; delete s.skipElse;
+  }
+  if (s.type === 'repeat') {
+    if (!Array.isArray(s.children)) s.children = [];
+    if (typeof s.count !== 'number') s.count = 1;
+  }
+  if (s.type === 'imgclick' && s.notfound === 'skip') s.notfound = 'continue';
+  const cl = childListsOf(s);
+  if (cl) cl.forEach(c => (s[c.key] || (s[c.key] = [])).forEach(migrateStep));
 }
 
 function seed() {
   return {
     screen: { w: 1920, h: 1080 },
     loops: [{
-      id: uid(), name: '예시: 복사해서 다른 창에 붙여넣기', repeat: 1, delay: 3, gap: 0.5, startAt: '',
+      id: uid(), name: '예시: 복사해서 다른 창에 붙여넣기', delay: 3, gap: 0.5, startAt: '',
       steps: [
         { id: uid(), type: 'win', title: '엑셀' },
         { id: uid(), type: 'click', x: 600, y: 320, button: 'left', double: false },
@@ -85,6 +155,32 @@ function seed() {
     }],
   };
 }
+
+/* 트리에서 id로 동작을 찾아 {arr, idx, step, parent} 반환 */
+function locate(id, steps, parent) {
+  steps = steps || activeLoop().steps;
+  for (let i = 0; i < steps.length; i++) {
+    if (steps[i].id === id) return { arr: steps, idx: i, step: steps[i], parent: parent || null };
+    const cl = childListsOf(steps[i]);
+    if (cl) for (const c of cl) {
+      const r = locate(id, steps[i][c.key] || [], steps[i]);
+      if (r) return r;
+    }
+  }
+  return null;
+}
+/* id가 가리키는 동작의 하위 목록 배열(묶음 추가용) */
+function listOf(parentId, key) {
+  if (parentId == null) return activeLoop().steps;
+  const r = locate(parentId);
+  if (!r) return null;
+  return r.step[key] || (r.step[key] = []);
+}
+/* a가 b의 자손인지(묶음을 자기 안으로 넣는 것 방지) */
+function isDescendant(ancestor, id) {
+  return anyStep(childListsOf(ancestor) ? flatChildren(ancestor) : [], s => s.id === id);
+}
+function flatChildren(s) { const out = []; const cl = childListsOf(s); if (cl) cl.forEach(c => walkSteps(s[c.key] || [], x => out.push(x))); return out; }
 
 function uid() { return Math.random().toString(36).slice(2, 9); }
 function save() { store.set(state); }
@@ -109,7 +205,7 @@ function toastAction(msg, label, cb) {
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function num(v) { return Number.isFinite(Number(v)) ? Math.round(Number(v)) : 0; }
 
-/* ===== 렌더: 루프 칩 ===== */
+/* ===== 렌더: 작업방 칩 ===== */
 function renderChips() {
   const box = $('#loop-chips');
   box.innerHTML = '';
@@ -122,17 +218,15 @@ function renderChips() {
   });
 }
 
-/* ===== 렌더: 루프 설정 ===== */
+/* ===== 렌더: 작업방 설정 ===== */
 function renderSettings() {
   const l = activeLoop();
   $('#loop-name').value = l.name;
-  $('#loop-repeat').value = l.repeat;
   $('#loop-delay').value = l.delay;
   $('#loop-gap').value = l.gap;
   $('#loop-startat').value = l.startAt || '';
 }
 $('#loop-name').oninput = e => { activeLoop().name = e.target.value; save(); renderChips(); };
-$('#loop-repeat').oninput = e => { activeLoop().repeat = Math.max(0, parseInt(e.target.value) || 0); save(); };
 $('#loop-delay').oninput = e => { activeLoop().delay = Math.max(0, parseFloat(e.target.value) || 0); save(); };
 $('#loop-gap').oninput = e => { activeLoop().gap = Math.max(0, parseFloat(e.target.value) || 0); save(); };
 $('#loop-startat').oninput = e => { activeLoop().startAt = e.target.value || ''; save(); };
@@ -151,22 +245,25 @@ function stepDesc(s) {
     case 'win': return `제목에 "${s.title}" 있는 창 앞으로`;
     case 'scroll': return `${s.dir === 'up' ? '위' : '아래'}로 ${s.amount}칸 스크롤`;
     case 'wait': return `${s.sec}초 기다리기`;
-    case 'imgclick': { const nf = s.notfound === 'skip' ? `${s.skipN || 1}개 건너뜀` : s.notfound === 'continue' ? '계속' : '멈춤'; const btn = s.button === 'right' ? '우' : s.button === 'middle' ? '가운데' : ''; return `이미지 ${s.slot} 찾아 ${s.double ? '더블' : ''}${btn}클릭 (못 찾으면 ${nf})`; }
+    case 'imgclick': { const nf = s.notfound === 'continue' ? '넘어감' : '멈춤'; const btn = s.button === 'right' ? '우' : s.button === 'middle' ? '가운데' : ''; return `이미지 ${s.slot} 찾아 ${s.double ? '더블' : ''}${btn}클릭 (못 찾으면 ${nf})`; }
     case 'readput': return `영역의 ${s.read === 'number' ? '숫자' : '글자'}를 읽어 붙여넣기${s.after && s.after !== 'none' ? ` → ${s.after === 'enter' ? '엔터' : '탭'}` : ''}`;
+    case 'repeat': { const n = countOf(s.children); return `${s.count > 0 ? `${s.count}번 반복` : '멈출 때까지 반복'} (동작 ${n}개)`; }
     case 'if': return condDesc(s);
+    case 'stop': return '매크로를 끝내요';
     default: return '';
   }
 }
+function countOf(arr) { return Array.isArray(arr) ? arr.length : 0; }
 
 function condDesc(s) {
   const kind = s.read === 'text' ? '글자' : '숫자';
   const ops = s.read === 'text' ? OPS_TEXT : OPS_NUM;
   const opL = (ops[s.op] || '').replace(/\s*\(.*\)/, '');
-  const act = a => a === 'skip' ? `${s.skip || 1}개 건너뜀` : (ACTS[a] || '').replace('매크로 ', '');
   const head = s.src === 'region2'
     ? `두 영역의 ${kind}가 ${opL}`
     : `영역의 ${kind}가 "${s.value}" ${opL}`;
-  return `${head} → 맞으면 ${act(s.onTrue)}, 아니면 ${act(s.onFalse)}`;
+  const t = countOf(s.children), e = countOf(s.elseChildren);
+  return `${head}이면 → 동작 ${t}개 실행${e ? ` / 아니면 ${e}개` : ''}`;
 }
 
 /* 입력이 빠졌는지 검사 (빠진 채 내보내면 엉뚱하게 동작) */
@@ -183,6 +280,7 @@ function stepIssue(s) {
     case 'wait': return (bad(s.sec) || Number(s.sec) < 0) ? '대기 시간을 입력하세요' : null;
     case 'imgclick': return (bad(s.slot) || Number(s.slot) < 1) ? '이미지 슬롯 번호를 정하세요' : null;
     case 'readput': { const r = s.region || {}; return (bad(r.x1) || bad(r.y1) || bad(r.x2) || bad(r.y2)) ? '읽을 영역을 정하세요' : null; }
+    case 'repeat': { if (bad(s.count) || Number(s.count) < 0) return '반복 횟수를 정하세요 (0=무한)'; if (!countOf(s.children)) return '반복할 동작을 넣으세요'; return null; }
     case 'if': {
       const r = s.region || {};
       if (bad(r.x1) || bad(r.y1) || bad(r.x2) || bad(r.y2)) return '읽을 영역①을 정하세요';
@@ -190,12 +288,14 @@ function stepIssue(s) {
         const r2 = s.region2 || {};
         if (bad(r2.x1) || bad(r2.y1) || bad(r2.x2) || bad(r2.y2)) return '비교할 영역②를 정하세요';
       } else if ((s.value ?? '') === '') return '비교할 값을 입력하세요';
+      if (!countOf(s.children) && !countOf(s.elseChildren)) return '맞으면 실행할 동작을 넣으세요';
       return null;
     }
+    case 'stop': return null;
     default: return null;
   }
 }
-function hasIssues(l) { return l.steps.some(stepIssue); }
+function hasIssues(l) { return anyStep(l.steps, stepIssue); }
 
 /* ===== 렌더: 동작 목록 ===== */
 const ICON = {
@@ -207,18 +307,36 @@ const ICON = {
 function renderSteps() {
   const l = activeLoop();
   const ol = $('#steps');
-  ol.innerHTML = '';
+  renderInto(ol, l.steps, null);
   $('#steps-count').textContent = l.steps.length ? `${l.steps.length}개` : '';
   $('#empty-steps').hidden = l.steps.length > 0;
 
-  l.steps.forEach((s, i) => {
-    const t = TYPES[s.type] || { ico: '•', label: s.type };
-    const issue = stepIssue(s);
-    const li = document.createElement('li');
-    li.className = 'step' + (issue ? ' warn' : '');
-    li.dataset.i = i;
-    li.innerHTML = `
-      <span class="num drag-handle" title="끌어서 순서 바꾸기">${i + 1}</span>
+  let n = 0; walkSteps(l.steps, s => { if (stepIssue(s)) n++; });
+  const w = $('#step-warn');
+  if (n) { w.hidden = false; w.textContent = `⚠ 입력이 빠진 동작 ${n}개 — 내보내기 전에 확인하세요`; }
+  else w.hidden = true;
+}
+
+/* 한 목록(배열)을 ol 안에 그리기 — 묶음이면 하위 목록까지 재귀 */
+function renderInto(ol, arr, parentId) {
+  ol.innerHTML = '';
+  if (!arr.length && parentId != null) {
+    const em = document.createElement('li');
+    em.className = 'child-empty'; em.textContent = '여기에 동작을 넣으세요';
+    ol.appendChild(em); return;
+  }
+  arr.forEach((s, i) => ol.appendChild(stepLi(s, i)));
+}
+
+function stepLi(s, i) {
+  const t = TYPES[s.type] || { ico: '•', label: s.type };
+  const issue = stepIssue(s);
+  const li = document.createElement('li');
+  li.className = 'step' + (issue ? ' warn' : '') + (isContainer(s) ? ' container' : '');
+  li.dataset.id = s.id;
+  li.innerHTML = `
+    <div class="step-head">
+      <span class="num drag-handle" title="끌어서 이동">${i + 1}</span>
       <div class="st-main">
         <div class="st-type"><span class="st-ico">${t.ico}</span>${t.label}</div>
         <div class="st-desc">${escapeHtml(stepDesc(s))}</div>
@@ -228,83 +346,114 @@ function renderSteps() {
         <button data-act="up" aria-label="위로">${ICON.up}</button>
         <button data-act="down" aria-label="아래로">${ICON.down}</button>
         <button data-act="del" aria-label="삭제" class="danger">${ICON.trash}</button>
-      </div>`;
-    li.querySelector('.st-main').onclick = () => openStepSheet(i);
-    li.querySelectorAll('.step-actions button').forEach(btn => {
-      btn.onclick = e => { e.stopPropagation(); stepAction(btn.dataset.act, i); };
-    });
-    li.querySelector('.drag-handle').addEventListener('pointerdown', e => startStepDrag(e));
-    ol.appendChild(li);
+      </div>
+    </div>`;
+  li.querySelector('.st-main').onclick = () => openStepSheet(s.id);
+  li.querySelectorAll('.step-actions button').forEach(btn => {
+    btn.onclick = e => { e.stopPropagation(); stepAction(btn.dataset.act, s.id); };
   });
+  li.querySelector('.drag-handle').addEventListener('pointerdown', e => startStepDrag(e, s.id));
 
-  const n = l.steps.filter(stepIssue).length;
-  const w = $('#step-warn');
-  if (n) { w.hidden = false; w.textContent = `⚠ 입력이 빠진 동작 ${n}개 — 내보내기 전에 확인하세요`; }
-  else w.hidden = true;
+  const cl = childListsOf(s);
+  if (cl) {
+    const wrap = document.createElement('div');
+    wrap.className = 'step-children';
+    cl.forEach(c => {
+      const kids = s[c.key] || (s[c.key] = []);
+      const sec = document.createElement('div'); sec.className = 'child-sec';
+      const head = document.createElement('div'); head.className = 'child-head';
+      const lbl = document.createElement('span'); lbl.textContent = c.label;
+      const add = document.createElement('button'); add.className = 'child-add'; add.textContent = '+ 동작 넣기';
+      add.onclick = () => openStepSheet(null, s.id, c.key);
+      head.append(lbl, add);
+      const sub = document.createElement('ol'); sub.className = 'steps child-list';
+      sub.dataset.parent = s.id; sub.dataset.key = c.key;
+      renderInto(sub, kids, s.id);
+      sec.append(head, sub);
+      wrap.appendChild(sec);
+    });
+    li.appendChild(wrap);
+  }
+  return li;
 }
 
-/* 드래그로 순서 바꾸기 (터치·마우스 공용) */
-let dragI = null;
-function startStepDrag(e) {
+/* 드래그로 이동 (터치·마우스 공용, 묶음 안으로도 이동 가능) */
+let dragId = null;
+function within(container, id) { return anyStep(flatChildren(container), x => x.id === id); }
+function moveBefore(id, overId) {
+  const d = locate(id), o = locate(overId);
+  if (!d || !o || d.step === o.step) return;
+  if (isContainer(d.step) && (o.step === d.step || within(d.step, overId))) return;
+  const [moved] = d.arr.splice(d.idx, 1);
+  const o2 = locate(overId); if (!o2) { d.arr.splice(d.idx, 0, moved); return; }
+  o2.arr.splice(o2.idx, 0, moved);
+}
+function moveIntoEmpty(id, parentId, key) {
+  const d = locate(id); if (!d || parentId === id) return;
+  if (isContainer(d.step) && within(d.step, parentId)) return;
+  const [moved] = d.arr.splice(d.idx, 1);
+  const arr = listOf(parentId, key); if (!arr) { d.arr.splice(d.idx, 0, moved); return; }
+  arr.push(moved);
+}
+function startStepDrag(e, id) {
   if (e.button != null && e.button > 0) return;           // 왼쪽/터치만
   const li = e.target.closest('.step');
   if (!li) return;
   e.preventDefault();
-  dragI = Number(li.dataset.i);
+  dragId = id;
   li.classList.add('dragging');
+  const reapply = () => { save(); renderSteps(); const nl = document.querySelector(`.step[data-id="${dragId}"]`); if (nl) nl.classList.add('dragging'); };
   const onMove = ev => {
     const el = document.elementFromPoint(ev.clientX, ev.clientY);
-    const over = el && el.closest('.step');
-    if (!over || over.dataset.i == null) return;
-    const oi = Number(over.dataset.i);
-    if (oi !== dragI) {
-      const steps = activeLoop().steps;
-      const [moved] = steps.splice(dragI, 1);
-      steps.splice(oi, 0, moved);
-      dragI = oi;
-      renderSteps();
-      const nl = document.querySelector(`.step[data-i="${oi}"]`);
-      if (nl) nl.classList.add('dragging');
+    if (!el) return;
+    const empty = el.closest('.child-empty');
+    if (empty) {
+      const sub = empty.closest('.child-list');
+      if (sub) { moveIntoEmpty(dragId, sub.dataset.parent, sub.dataset.key); reapply(); }
+      return;
     }
+    const over = el.closest('.step');
+    if (!over || !over.dataset.id || over.dataset.id === dragId) return;
+    moveBefore(dragId, over.dataset.id);
+    reapply();
   };
   const onUp = () => {
     document.removeEventListener('pointermove', onMove);
     document.removeEventListener('pointerup', onUp);
     document.removeEventListener('pointercancel', onUp);
-    dragI = null; save(); renderSteps();
+    dragId = null; save(); renderSteps();
   };
   document.addEventListener('pointermove', onMove);
   document.addEventListener('pointerup', onUp);
   document.addEventListener('pointercancel', onUp);
 }
 
-function stepAction(act, i) {
-  const steps = activeLoop().steps;
+function stepAction(act, id) {
+  const r = locate(id);
+  if (!r) return;
+  const { arr, idx } = r;
   if (act === 'del') {
-    const removed = steps[i];
-    const loopId = activeId;
-    steps.splice(i, 1); save(); renderSteps();
+    const removed = arr.splice(idx, 1)[0]; save(); renderSteps();
     toastAction('동작을 지웠어요', '되돌리기', () => {
-      steps.splice(i, 0, removed);
-      if (activeId !== loopId && state.loops.some(l => l.id === loopId)) activeId = loopId;
-      save(); renderAll();
+      arr.splice(Math.min(idx, arr.length), 0, removed); save(); renderAll();
     });
     return;
   }
-  if (act === 'up' && i > 0) { [steps[i - 1], steps[i]] = [steps[i], steps[i - 1]]; }
-  else if (act === 'down' && i < steps.length - 1) { [steps[i + 1], steps[i]] = [steps[i], steps[i + 1]]; }
+  if (act === 'up' && idx > 0) { [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]]; }
+  else if (act === 'down' && idx < arr.length - 1) { [arr[idx + 1], arr[idx]] = [arr[idx], arr[idx + 1]]; }
   save(); renderSteps();
 }
 
 /* ===== 동작 추가/편집 시트 ===== */
-let draft = null, editingIndex = null;
+let draft = null, editingId = null, addTarget = { parentId: null, key: null };
 
-function openStepSheet(index) {
-  editingIndex = index;
-  if (index == null) draft = { type: 'click', x: 100, y: 100, button: 'left', double: false };
-  else draft = JSON.parse(JSON.stringify(activeLoop().steps[index]));
-  $('#sheet-title').textContent = index == null ? '동작 추가' : '동작 수정';
-  $('#sheet-dup').hidden = index == null;
+function openStepSheet(id, parentId, key) {
+  editingId = id;
+  addTarget = { parentId: parentId ?? null, key: key ?? null };
+  if (id == null) draft = { type: 'click', x: 100, y: 100, button: 'left', double: false };
+  else { const r = locate(id); draft = r ? JSON.parse(JSON.stringify(r.step)) : { type: 'click', x: 100, y: 100 }; }
+  $('#sheet-title').textContent = id == null ? '동작 추가' : '동작 수정';
+  $('#sheet-dup').hidden = id == null;
   renderSheetBody();
   showSheet('#sheet', '#sheet-bg');
 }
@@ -333,11 +482,16 @@ function setType(type) {
     win:    { type, title: '' },
     scroll: { type, dir: 'down', amount: 3 },
     wait:   { type, sec: 1 },
-    imgclick:{ type, slot: 1, tol: 25, retries: 8, every: 0.7, notfound: 'stop', skipN: 1, button: 'left', double: false },
+    imgclick:{ type, slot: 1, tol: 25, retries: 8, every: 0.7, notfound: 'stop', button: 'left', double: false },
     readput:{ type, read: 'text', mode: 'screen', region: { x1: 100, y1: 100, x2: 300, y2: 150 }, after: 'tab' },
-    if:     { type, read: 'number', mode: 'screen', region: { x1: 100, y1: 100, x2: 300, y2: 150 }, src: 'const', op: 'ge', value: '', mode2: 'screen', region2: { x1: 100, y1: 300, x2: 300, y2: 350 }, onTrue: 'continue', onFalse: 'stop', skip: 1, skipElse: 1 },
+    repeat: { type, count: 3, children: [] },
+    if:     { type, read: 'number', mode: 'screen', region: { x1: 100, y1: 100, x2: 300, y2: 150 }, src: 'const', op: 'ge', value: '', mode2: 'screen', region2: { x1: 100, y1: 300, x2: 300, y2: 350 }, children: [], elseChildren: [] },
+    stop:   { type },
   };
-  draft = d[type];
+  // 묶음 동작은 기존 하위 동작을 보존(종류만 바꿀 때)
+  const keep = {};
+  if (draft) (childListsOf({ type }) || []).forEach(c => { if (Array.isArray(draft[c.key])) keep[c.key] = draft[c.key]; });
+  draft = Object.assign(d[type], keep);
   renderSheetBody();
 }
 
@@ -375,7 +529,8 @@ function fieldsFor(type) {
           ${chk('mods', 'alt', 'Alt', (draft.mods || []).includes('alt'))}
           ${chk('mods', 'win', 'Win', (draft.mods || []).includes('win'))}
         </div></div>
-        <label class="field"><span>글자/키</span><input type="text" data-k="key" value="${escapeHtml(draft.key || '')}" placeholder="예: p, f5, enter" autocomplete="off"></label>`;
+        <label class="field"><span>글자/키</span><input type="text" data-k="key" value="${escapeHtml(draft.key || '')}" placeholder="예: r, f5, enter, tab, esc, up" autocomplete="off"></label>
+        <p class="hint">함께 누를 키(Ctrl/Shift/Alt/Win)를 고르고 글자/키 한 개를 적어요.<br>예) <b>실행창</b>: Win 체크 + <code>r</code> → "글자 입력 notepad" → "단축키 Enter". <code>f1~f12</code>·<code>enter</code>·<code>tab</code>·<code>esc</code>·<code>space</code>·<code>up/down/left/right</code>·<code>delete</code> 도 돼요.</p>`;
       }
       return h;
     }
@@ -393,7 +548,7 @@ function fieldsFor(type) {
     case 'wait':
       return `<label class="field"><span>기다릴 시간(초)</span><input type="number" data-k="sec" value="${draft.sec}" min="0" step="0.5" inputmode="decimal"></label>`;
     case 'imgclick': {
-      const nfSel = () => { let h = `<select data-k="notfound">`; for (const [v, lab] of Object.entries(ACTS)) h += `<option value="${v}"${draft.notfound === v ? ' selected' : ''}>${lab}</option>`; return h + '</select>'; };
+      const nfSel = () => { let h = `<select data-k="notfound">`; for (const [v, lab] of Object.entries(NF)) h += `<option value="${v}"${draft.notfound === v ? ' selected' : ''}>${lab}</option>`; return h + '</select>'; };
       return `
         <p class="hint" style="margin-top:0">화면에서 <b>저장해 둔 그림</b>을 찾아 그 자리를 클릭해요. 위치가 바뀌어도 그림으로 찾아갑니다. <b>.ahk</b>가 가장 정확하고 <b>무설치(윈도우)</b>도 돼요(베타). 글자·숫자는 "조건(OCR)"이 더 안정적이에요.</p>
         <div class="field"><span>이미지 슬롯 번호</span><input type="number" data-k="slot" value="${draft.slot}" min="1" inputmode="numeric"></div>
@@ -412,7 +567,6 @@ function fieldsFor(type) {
           <label class="field"><span>몇 번까지</span><input type="number" data-k="retries" value="${draft.retries}" min="1" inputmode="numeric"></label>
         </div>
         <div class="field"><span>끝내 못 찾으면</span>${nfSel()}</div>
-        ${draft.notfound === 'skip' ? `<label class="field"><span>건너뛸 동작 수</span><input type="number" data-k="skipN" value="${draft.skipN || 1}" min="1" inputmode="numeric"></label>` : ''}
         <p class="hint">캡처한 때와 실행할 때의 <b>화면 해상도·배율(100/125/150%)이 같아야</b> 찾아요. 다르면 다시 캡처하세요.</p>`;
     }
     case 'readput': {
@@ -442,7 +596,6 @@ function fieldsFor(type) {
       const ops = draft.read === 'text' ? OPS_TEXT : OPS_NUM;
       if (!ops[draft.op]) draft.op = draft.read === 'text' ? 'has' : 'ge';
       const opSel = (k) => { let h = `<select data-k="${k}">`; for (const [v, lab] of Object.entries(ops)) h += `<option value="${v}"${draft[k] === v ? ' selected' : ''}>${lab}</option>`; return h + '</select>'; };
-      const actSel = (k) => { let h = `<select data-k="${k}">`; for (const [v, lab] of Object.entries(ACTS)) h += `<option value="${v}"${draft[k] === v ? ' selected' : ''}>${lab}</option>`; return h + '</select>'; };
       const rin = (regKey, obj, lbl, key) => `<label class="field"><span>${lbl}</span><input type="number" data-k="${regKey}.${key}" value="${obj[key]}" inputmode="numeric"></label>`;
       const regionBlock = (regKey, obj, cur, title) => `
         <div class="field"><span>${title} 기준</span><div class="chk-row" data-group="${regKey === 'region' ? 'mode' : 'mode2'}">
@@ -467,11 +620,14 @@ function fieldsFor(type) {
         </div>
         ${draft.src === 'region2' ? `<div class="seg-title">영역 ②</div>${regionBlock('region2', r2, cursor2, '영역②')}
         <p class="hint">두 영역을 각각 읽어 ${draft.read === 'text' ? '글자' : '숫자'}로 비교해요. 글꼴·배율이 달라도 숫자는 숫자로, 글자는 앞뒤 공백을 지우고 비교합니다(완전히 똑같진 않을 수 있어요).</p>` : `<p class="hint">"영역 선택 도우미"로 F1·F2를 눌러 영역 좌표를 쉽게 구할 수 있어요.</p>`}
-        <div class="field"><span>조건이 맞으면</span>${actSel('onTrue')}</div>
-        ${draft.onTrue === 'skip' ? `<label class="field"><span>건너뛸 동작 수</span><input type="number" data-k="skip" value="${draft.skip || 1}" min="1" inputmode="numeric"></label>` : ''}
-        <div class="field"><span>아니면</span>${actSel('onFalse')}</div>
-        ${draft.onFalse === 'skip' ? `<label class="field"><span>건너뛸 동작 수</span><input type="number" data-k="skipElse" value="${draft.skipElse || 1}" min="1" inputmode="numeric"></label>` : ''}`;
+        <p class="hint" style="margin-top:12px">저장한 뒤, 목록에서 이 조건 아래 <b>"맞으면 실행할 동작"</b>과 <b>"아니면"</b> 칸에 <b>+ 동작 넣기</b>로 동작을 담으세요. 맞으면 담은 동작을 실행하고, 아니면 "아니면" 칸의 동작을 실행해요. (멈추려면 그 안에 <b>🛑 멈춤</b> 동작을 넣으세요)</p>`;
     }
+    case 'repeat':
+      return `<p class="hint" style="margin-top:0">안에 담은 동작들을 정한 횟수만큼 반복해요. 저장한 뒤 목록에서 <b>+ 동작 넣기</b>로 반복할 동작을 담으세요.</p>
+        <label class="field"><span>반복 횟수</span><input type="number" data-k="count" value="${draft.count}" min="0" inputmode="numeric"></label>
+        <p class="hint"><b>0</b>이면 멈출 때까지 무한 반복(${CTRL_KEYS.stopLabel}로 종료). 전체를 계속 돌리려면 모든 동작을 반복문 하나에 담고 0으로 두세요.</p>`;
+    case 'stop':
+      return `<p class="hint" style="margin-top:0">이 지점에서 매크로를 <b>완전히 끝내요</b>. 보통 <b>조건</b>의 "맞으면/아니면" 칸 안에 넣어 "어떤 값이면 멈춤"처럼 써요.</p>`;
     default: return '';
   }
 }
@@ -491,7 +647,7 @@ function bindFields() {
       const v = el.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value;
       if (k.includes('.')) { const [a, b] = k.split('.'); (draft[a] = draft[a] || {})[b] = v; }
       else draft[k] = v;
-      if (['preset', 'onTrue', 'onFalse', 'notfound'].includes(k)) renderSheetBody();
+      if (['preset', 'notfound'].includes(k)) renderSheetBody();
     };
   });
   body.querySelectorAll('.chk').forEach(btn => {
@@ -513,17 +669,25 @@ function bindFields() {
 }
 
 $('#sheet-save').onclick = () => {
-  const l = activeLoop();
-  if (editingIndex == null) l.steps.push(draft);
-  else l.steps[editingIndex] = draft;
+  if (editingId == null) {
+    if (!draft.id) draft.id = uid();
+    const arr = listOf(addTarget.parentId, addTarget.key) || activeLoop().steps;
+    arr.push(draft);
+  } else {
+    const r = locate(editingId);
+    if (r) { draft.id = editingId; r.arr[r.idx] = draft; }
+    else activeLoop().steps.push(draft);
+  }
   save(); renderSteps(); hideSheet('#sheet', '#sheet-bg');
 };
 $('#sheet-dup').onclick = () => {
-  if (editingIndex == null) return;
-  const l = activeLoop();
-  l.steps[editingIndex] = draft;                       // 현재 수정 내용 반영
-  const copy = JSON.parse(JSON.stringify(draft)); copy.id = uid();
-  l.steps.splice(editingIndex + 1, 0, copy);           // 바로 아래에 복제본
+  if (editingId == null) return;
+  const r = locate(editingId);
+  if (!r) return;
+  draft.id = editingId; r.arr[r.idx] = draft;            // 현재 수정 내용 반영
+  const copy = JSON.parse(JSON.stringify(draft));
+  walkSteps([copy], s => s.id = uid());                  // 복제본은 묶음 안까지 새 아이디
+  r.arr.splice(r.idx + 1, 0, copy);                      // 바로 아래에 복제본
   save(); renderSteps(); hideSheet('#sheet', '#sheet-bg'); toast('동작을 복제했어요');
 };
 $('#sheet-close').onclick = () => hideSheet('#sheet', '#sheet-bg');
@@ -533,9 +697,9 @@ $('#add-step').onclick = () => openStepSheet(null);
 function showSheet(s, bg) { $(bg).hidden = false; $(s).hidden = false; }
 function hideSheet(s, bg) { $(bg).hidden = true; $(s).hidden = true; }
 
-/* ===== 루프 추가/삭제 ===== */
+/* ===== 작업방 추가/삭제 ===== */
 $('#add-loop').onclick = () => {
-  const l = { id: uid(), name: `루프 ${state.loops.length + 1}`, repeat: 1, delay: 3, gap: 0.5, startAt: '', steps: [] };
+  const l = { id: uid(), name: `작업방 ${state.loops.length + 1}`, delay: 3, gap: 0.5, startAt: '', steps: [] };
   state.loops.push(l); activeId = l.id; save(); renderAll();
 };
 function addDeleteLoopButton() {
@@ -543,18 +707,18 @@ function addDeleteLoopButton() {
   const sec = $('#loop-settings');
   const row = document.createElement('div');
   row.className = 'row'; row.style.marginTop = '12px';
-  row.innerHTML = `<button class="mini ghost" id="dup-loop">루프 복제</button><button class="mini ghost danger" id="del-loop" style="margin-left:auto">이 루프 삭제</button>`;
+  row.innerHTML = `<button class="mini ghost" id="dup-loop">작업방 복제</button><button class="mini ghost danger" id="del-loop" style="margin-left:auto">이 작업방 삭제</button>`;
   sec.appendChild(row);
   $('#dup-loop').onclick = () => {
     const src = activeLoop();
     const copy = JSON.parse(JSON.stringify(src));
     copy.id = uid(); copy.name = src.name + ' 복사';
-    copy.steps.forEach(s => s.id = uid());
-    state.loops.push(copy); activeId = copy.id; save(); renderAll(); toast('루프를 복제했어요');
+    walkSteps(copy.steps, s => s.id = uid());
+    state.loops.push(copy); activeId = copy.id; save(); renderAll(); toast('작업방을 복제했어요');
   };
   $('#del-loop').onclick = () => {
-    if (state.loops.length <= 1) { toast('마지막 루프는 지울 수 없어요'); return; }
-    if (!confirm(`"${activeLoop().name}" 루프를 삭제할까요?`)) return;
+    if (state.loops.length <= 1) { toast('마지막 작업방은 지울 수 없어요'); return; }
+    if (!confirm(`"${activeLoop().name}" 작업방을 삭제할까요?`)) return;
     state.loops = state.loops.filter(l => l.id !== activeId);
     activeId = state.loops[0].id; save(); renderAll();
   };
@@ -606,10 +770,27 @@ function openPreview() {
 }
 function closePreview() { prev.cancel = true; prev.playing = false; prev.running = false; hideSheet('#preview', '#prev-bg'); }
 
+/* 묶음(반복문·조건)을 풀어 실제 실행 순서처럼 납작하게 만들기(미리보기용) */
+function flattenPreview(steps, out) {
+  (steps || []).forEach(s => {
+    if (out.length >= 80) return;              // 너무 길면 자름
+    if (s.type === 'repeat') {
+      const n = Number(s.count) > 0 ? Math.min(Number(s.count), 3) : 3;
+      for (let k = 0; k < n; k++) flattenPreview(s.children, out);
+    } else if (s.type === 'if') {
+      out.push(s);                             // 영역을 보여주고
+      flattenPreview(s.children, out);         // 맞다고 가정하고 담긴 동작 재생
+    } else {
+      out.push(s);
+    }
+  });
+  return out;
+}
 function buildPreviewSteps() {
   const box = $('#prev-steps');
   box.innerHTML = '';
-  activeLoop().steps.forEach((s, i) => {
+  prev.flat = flattenPreview(activeLoop().steps, []);
+  prev.flat.forEach((s, i) => {
     const t = TYPES[s.type] || { ico: '•' };
     const d = document.createElement('div');
     d.className = 'pv-chip'; d.dataset.i = i;
@@ -692,7 +873,8 @@ async function doStepPreview(s, fast) {
       pulse(s.button, s.double); return wait(c(500));
     }
     case 'readput': { drawRegion('prev-region', s.mode, s.region || {}, 'r1'); hideOne('prev-region2'); badge('📋 읽어 입력'); setCap(stepDesc(s)); const r = await wait(c(1300)); hideRegions(); return r; }
-    case 'if': { showRegions(s); badge(s.src === 'region2' ? '❓ 두 영역 비교' : '❓ 영역을 읽어 분기'); setCap(condDesc(s)); const r = await wait(c(1600)); hideRegions(); return r; }
+    case 'if': { showRegions(s); badge(s.src === 'region2' ? '❓ 두 영역 비교' : '❓ 조건 확인'); setCap(condDesc(s) + ' (미리보기는 "맞음"으로 가정)'); const r = await wait(c(1500)); hideRegions(); return r; }
+    case 'stop': badge('🛑 멈춤'); setCap('여기서 매크로를 끝내요'); return wait(c(700));
     default: return wait(200);
   }
 }
@@ -729,19 +911,20 @@ async function runPreview() {
   if (l.startAt) { setCap(`예약: 다음 ${l.startAt} 까지 대기 (실행 중 F7로 즉시 시작)`); if (done(await wait(1100))) return endPreview(); }
   setCap(`시작 전 ${l.delay}초 대기`); if (done(await wait(capMs((Number(l.delay) || 0) * 1000, fast)))) return endPreview();
 
-  const infinite = !(l.repeat && l.repeat > 0);
-  const rounds = infinite ? 3 : l.repeat;
-  for (let r = 0; r < rounds; r++) {
-    if (l.repeat > 1 || infinite) setCap(`${r + 1}바퀴째${infinite ? ' (무한이라 3바퀴만 미리보기)' : ` / ${rounds}`}`);
-    for (let i = 0; i < l.steps.length; i++) {
-      if (prev.cancel) return endPreview();
-      highlight(i);
-      if (done(await doStepPreview(l.steps[i], fast))) return endPreview();
-      if (done(await wait(capMs((Number(l.gap) || 0) * 1000, fast)))) return endPreview();
-    }
+  const flat = prev.flat || flattenPreview(l.steps, []);
+  const hasInfinite = anyStep(l.steps, s => s.type === 'repeat' && !(Number(s.count) > 0));
+  if (anyStep(l.steps, s => s.type === 'repeat')) setCap(`반복문은 최대 3바퀴만 미리보기${hasInfinite ? ' (무한 반복 포함)' : ''}`);
+  let stopped = false;
+  for (let i = 0; i < flat.length; i++) {
+    if (prev.cancel) return endPreview();
+    highlight(i);
+    const s = flat[i];
+    if (done(await doStepPreview(s, fast))) return endPreview();
+    if (s.type === 'stop') { stopped = true; break; }
+    if (done(await wait(capMs((Number(l.gap) || 0) * 1000, fast)))) return endPreview();
   }
   document.querySelectorAll('.pv-chip').forEach(c => c.classList.remove('on'));
-  setCap('✅ 미리보기 끝 — 실제 동작 순서가 이대로예요');
+  setCap(stopped ? '🛑 멈춤 동작에서 끝났어요' : '✅ 미리보기 끝 — 실제 동작 순서가 이대로예요');
   endPreview();
 }
 function endPreview() { prev.running = false; prev.playing = false; $('#prev-play').textContent = '▶ 재생'; }
@@ -815,13 +998,8 @@ function genAHK(l) {
     L.push('}');
   }
   L.push(`Sleep ${Math.round((l.delay || 0) * 1000)}   ; 시작 전 대기`);
-  L.push((l.repeat && l.repeat > 0) ? `Loop ${l.repeat} {` : 'Loop {   ; 무한 반복');
   const g = gapMs(l);
-  l.steps.forEach(s => {
-    genAHKStep(s).forEach(x => L.push('    ' + x));
-    if (g > 0) L.push(`    Sleep ${g}`);
-  });
-  L.push('}');
+  emitAHK(l.steps, L, '', g);
   L.push('MsgBox "매크로가 끝났어요.", "매크로 설계소"');
   L.push('ExitApp');
   L.push('');
@@ -831,6 +1009,23 @@ function genAHK(l) {
   L.push('*F10::Reload     ; 처음부터 다시 실행');
   L.push('*Esc::ExitApp');
   return L.join('\r\n') + '\r\n';
+}
+/* 묶음(반복문·조건)까지 재귀로 AHK 코드 생성 */
+function emitAHK(steps, L, pad, g) {
+  (steps || []).forEach(s => {
+    if (s.type === 'repeat') {
+      L.push(pad + (num(s.count) > 0 ? `Loop ${num(s.count)} {` : 'Loop {   ; 무한 반복'));
+      emitAHK(s.children, L, pad + '    ', g);
+      L.push(pad + '}');
+    } else if (s.type === 'if') {
+      L.push(pad + '; [조건] 동작은 .ahk 에서 화면글자 읽기(OCR) 미지원이라 건너뜁니다 — "무설치(윈도우)"나 파이썬으로 받으세요.');
+    } else if (s.type === 'stop') {
+      L.push(pad + 'ExitApp   ; [멈춤] 매크로 종료');
+    } else {
+      genAHKStep(s).forEach(x => L.push(pad + x));
+    }
+    if (g > 0) L.push(pad + `Sleep ${g}`);
+  });
 }
 function genAHKStep(s) {
   switch (s.type) {
@@ -849,7 +1044,6 @@ function genAHKStep(s) {
     case 'wait': return [`Sleep ${Math.round((Number(s.sec) || 0) * 1000)}`];
     case 'imgclick': return genAHKImg(s);
     case 'readput': return ['; [영역 값 읽어 입력] 은 .ahk 에서 지원되지 않아 건너뜁니다 — "무설치(윈도우)" 또는 파이썬으로 내보내세요.'];
-    case 'if': return ['; [조건] 동작은 .ahk 에서 지원되지 않아 건너뜁니다 — "무설치(윈도우)" 또는 파이썬으로 내보내세요.'];
     default: return [];
   }
 }
@@ -890,7 +1084,7 @@ function genAHKImg(s) {
   L.push(clickOpt ? `    Click cx " " cy " ${clickOpt}"` : '    Click cx " " cy');
   L.push('}');
   if (s.notfound === 'stop') { L.push('else'); L.push('    ExitApp   ; 못 찾으면 멈춤'); }
-  else L.push('; 못 찾으면 다음 동작으로 진행 (.ahk 는 "건너뛰기 N"을 계속 진행으로 처리해요)');
+  else L.push('; 못 찾으면 다음 동작으로 그냥 진행');
   return L;
 }
 
@@ -923,7 +1117,7 @@ function genPSBat(l, ps1Name) {
 function genPS1(l) {
   const P = [];
   P.push('# -*- 매크로: ' + (l.name || '').replace(/[\r\n]/g, ' ') + ' -*-');
-  P.push('# 설치가 필요 없습니다. 함께 받은 "...-무설치.bat" 를 더블클릭하세요.');
+  P.push('# 설치가 필요 없습니다. 함께 받은 "...-noinstall.bat" 를 더블클릭하세요.');
   P.push(`# 단축키:  ${CTRL_KEYS.pauseLabel} = 일시정지/재생   ${CTRL_KEYS.stopLabel} = 종료   ${CTRL_KEYS.restartLabel} = 처음부터 다시 실행`);
   P.push('try { chcp 65001 > $null } catch {}');
   P.push('try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}');
@@ -977,15 +1171,16 @@ function genPS1(l) {
   P.push('function Keys($s){ [System.Windows.Forms.SendKeys]::SendWait($s); Start-Sleep -Milliseconds 90 }');
   P.push('function TypeText($s){ if("$s" -ne ""){ Set-Clipboard -Value $s; Start-Sleep -Milliseconds 90; Keys "^v" } }   # 클립보드로 붙여넣기(한글 OK)');
   P.push('function AltTab(){ [U]::keybd_event(0x12,0,0,0); Start-Sleep -Milliseconds 40; [U]::keybd_event(0x09,0,0,0); [U]::keybd_event(0x09,0,2,0); Start-Sleep -Milliseconds 250; [U]::keybd_event(0x12,0,2,0); Start-Sleep -Milliseconds 120 }');
+  P.push('function KeyCombo($vks){ foreach($v in $vks){ [U]::keybd_event([byte]$v,0,0,0); Start-Sleep -Milliseconds 30 }; for($i=$vks.Length-1;$i -ge 0;$i--){ [U]::keybd_event([byte]$vks[$i],0,2,0); Start-Sleep -Milliseconds 30 }; Start-Sleep -Milliseconds 80 }   # Win 등 조합키 직접 전송');
   P.push('function ActivateWin($title){');
   P.push('  $p = Get-Process | Where-Object { $_.MainWindowTitle -and $_.MainWindowTitle.Contains($title) } | Select-Object -First 1');
   P.push('  if($p){ [U]::SetForegroundWindow($p.MainWindowHandle) | Out-Null; Start-Sleep -Milliseconds 400 }');
   P.push('}');
   P.push("function Scroll($dir,$amt){ for($i=0;$i -lt $amt;$i++){ [U]::mouse_event(0x800,0,0,$(if($dir -eq 'up'){120}else{-120}),0); Start-Sleep -Milliseconds 50 } }");
   P.push('function OpenUrl($u){ Start-Process $u }');
-  const hasOcr = l.steps.some(s => s.type === 'if' || s.type === 'readput');
+  const hasOcr = anyStep(l.steps, s => s.type === 'if' || s.type === 'readput');
   if (hasOcr) P.push(...psOcrFuncs());
-  const hasImg = l.steps.some(s => s.type === 'imgclick');
+  const hasImg = anyStep(l.steps, s => s.type === 'imgclick');
   if (hasImg) P.push(...psImgFuncs());
   P.push('');
   P.push(`Write-Host "단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.restartLabel} 재실행"`);
@@ -1001,31 +1196,49 @@ function genPS1(l) {
     P.push('}');
   }
   P.push(`WaitMs ${Math.round((l.delay || 0) * 1000)}   # 시작 전 대기`);
-  P.push(`$reps = ${l.repeat && l.repeat > 0 ? l.repeat : 0}   # 0 = 무한 반복`);
-  P.push('$skip = 0');
   P.push('$script:canRestart = $true   # 여기서부터 F10 재실행 가능');
   P.push('while($true){   # F10 재실행 바깥 루프');
   P.push('try {');
-  P.push('$i = 0');
-  P.push('while($reps -eq 0 -or $i -lt $reps){');
-  P.push('  $skip = 0');
   const g = gapMs(l);
-  const total = l.steps.length;
-  l.steps.forEach((s, idx) => {
-    P.push('  Pump');
-    P.push('  if($skip -gt 0){ $skip-- } else {');
-    P.push(`    Write-Host ${psStr(`▶ [${idx + 1}/${total}] ${stepDesc(s)}`)}`);
-    genPSStep(s).forEach(x => P.push('    ' + x));
-    if (g > 0) P.push(`    WaitMs ${g}`);
-    P.push('  }');
-  });
-  P.push('  $i++');
-  P.push('}');
+  const ctr = { n: 0 };
+  emitPS(l.steps, P, '', g, ctr);
   P.push('} catch { if("$($_.Exception.Message)" -eq "RESTART"){ Write-Host "↻ 처음부터 다시 실행"; continue } else { throw } }');
   P.push('break');
   P.push('}');
   P.push('Write-Host "✅ 매크로가 끝났어요."');
   return P.join('\r\n') + '\r\n';
+}
+/* 묶음(반복문·조건)까지 재귀로 PowerShell 코드 생성 */
+function emitPS(steps, P, pad, g, ctr) {
+  (steps || []).forEach(s => {
+    P.push(pad + 'Pump');
+    P.push(pad + `Write-Host ${psStr('▶ ' + stepDesc(s))}`);
+    if (s.type === 'repeat') {
+      const k = ctr.n++;
+      P.push(pad + `$rc${k} = ${num(s.count)}   # 0 = 무한`);
+      P.push(pad + `$ri${k} = 0`);
+      P.push(pad + `while($rc${k} -eq 0 -or $ri${k} -lt $rc${k}){`);
+      P.push(pad + '  Pump');
+      emitPS(s.children, P, pad + '  ', g, ctr);
+      P.push(pad + `  $ri${k}++`);
+      P.push(pad + '}');
+    } else if (s.type === 'if') {
+      genPSCond(s).forEach(x => P.push(pad + x));   // $cond 계산
+      P.push(pad + 'if($cond){');
+      emitPS(s.children, P, pad + '  ', g, ctr);
+      P.push(pad + '}');
+      if (countOf(s.elseChildren)) {
+        P.push(pad + 'else{');
+        emitPS(s.elseChildren, P, pad + '  ', g, ctr);
+        P.push(pad + '}');
+      }
+    } else if (s.type === 'stop') {
+      P.push(pad + 'Write-Host "[] 멈춤"; exit');
+    } else {
+      genPSStep(s).forEach(x => P.push(pad + x));
+    }
+    if (g > 0) P.push(pad + `WaitMs ${g}`);
+  });
 }
 function psOcrFuncs() {
   return [
@@ -1070,14 +1283,18 @@ function genPSStep(s) {
     case 'move': return [`MoveMouse ${num(s.x)} ${num(s.y)}`];
     case 'click': return [`ClickAt ${num(s.x)} ${num(s.y)} '${s.button || 'left'}' $${s.double ? 'true' : 'false'}`];
     case 'drag': return [`Drag ${num(s.x1)} ${num(s.y1)} ${num(s.x2)} ${num(s.y2)}`];
-    case 'hotkey': return s.preset === 'alttab' ? ['AltTab'] : [`Keys ${psStr(buildHotkey(s).sk)}`];
+    case 'hotkey': {
+      if (s.preset === 'alttab') return ['AltTab'];
+      const vks = hotkeyCombo(s);
+      if (vks && (s.preset === 'custom' || hotkeyUsesWin(s))) return [`KeyCombo @(${vks.map(v => '0x' + v.toString(16).toUpperCase()).join(', ')})`];
+      return [`Keys ${psStr(buildHotkey(s).sk)}`];
+    }
     case 'text': return [`TypeText ${psStr(s.text)}`];
     case 'win': return [`ActivateWin ${psStr(s.title)}`];
     case 'scroll': return [`Scroll '${s.dir === 'up' ? 'up' : 'down'}' ${num(s.amount) || 1}`];
     case 'wait': return [`WaitMs ${Math.round((Number(s.sec) || 0) * 1000)}`];
     case 'imgclick': return genPSImg(s);
     case 'readput': return genPSReadPut(s);
-    case 'if': return genPSCond(s);
     default: return [];
   }
 }
@@ -1087,7 +1304,6 @@ function genPSImg(s) {
   const btn = s.button || 'left', dbl = s.double ? '$true' : '$false';
   const L = [`$ok = FindClick ${slot} ${tol} ${retries} ${everyMs} '${btn}' ${dbl}`];
   if (s.notfound === 'stop') L.push('if(-not $ok){ exit }');
-  else if (s.notfound === 'skip') L.push(`if(-not $ok){ $skip = ${Math.max(1, num(s.skipN) || 1)} }`);
   return L;
 }
 function psImgFuncs() {
@@ -1158,7 +1374,6 @@ function genPSReadPut(s) {
   lines[0] += ' }';
   return L.concat(lines);
 }
-function psAct(a, n) { return a === 'stop' ? 'exit' : a === 'skip' ? `$skip = ${Math.max(1, num(n) || 1)}` : '$null = $null'; }
 function psReadRegion(dest, mode, r) {
   if (mode === 'cursor') return [`$c = CursorXY`, `${dest} = ReadRegion ($c[0] + (${num(r.x1)})) ($c[1] + (${num(r.y1)})) ($c[0] + (${num(r.x2)})) ($c[1] + (${num(r.y2)}))`];
   return [`${dest} = ReadRegion ${num(r.x1)} ${num(r.y1)} ${num(r.x2)} ${num(r.y2)}`];
@@ -1178,7 +1393,6 @@ function genPSCond(s) {
     if (two) { L.push('$v2 = ReadNumber $txt2'); L.push(`$cond = ($null -ne $v) -and ($null -ne $v2) -and ($v ${op} $v2)`); }
     else L.push(`$cond = ($null -ne $v) -and ($v ${op} ${numConst(s.value)})`);
   }
-  L.push(`if($cond){ ${psAct(s.onTrue, s.skip)} } else { ${psAct(s.onFalse, s.skipElse)} }`);
   return L;
 }
 
@@ -1202,7 +1416,7 @@ function genPY(l) {
   P.push('    gw = None');
   P.push('pyautogui.FAILSAFE = True');
   P.push('pyautogui.PAUSE = 0.1');
-  P.push('_paused = {"v": False}; _stop = {"v": False}; _restart = {"v": False}; _can_restart = {"v": False}; skip = [0]');
+  P.push('_paused = {"v": False}; _stop = {"v": False}; _restart = {"v": False}; _can_restart = {"v": False}');
   P.push('class _Restart(Exception): pass');
   P.push('try:');
   P.push('    import keyboard');
@@ -1228,9 +1442,9 @@ function genPY(l) {
   P.push('        for w in gw.getWindowsWithTitle(title):');
   P.push('            w.activate(); time.sleep(0.4); return');
   P.push('    except Exception: pass');
-  const hasOcr = l.steps.some(s => s.type === 'if' || s.type === 'readput');
+  const hasOcr = anyStep(l.steps, s => s.type === 'if' || s.type === 'readput');
   if (hasOcr) P.push(...pyOcrFuncs());
-  const hasImg = l.steps.some(s => s.type === 'imgclick');
+  const hasImg = anyStep(l.steps, s => s.type === 'imgclick');
   if (hasImg) P.push(...pyImgFuncs());
   P.push('');
   P.push('def run():');
@@ -1248,23 +1462,13 @@ function genPY(l) {
   }
   P.push(`    time.sleep(${Number(l.delay) || 0})`);
   const g = (Number(l.gap) || 0);
-  const iter = ['skip[0] = 0'];
-  const totalPy = l.steps.length;
-  l.steps.forEach((s, idx) => {
-    iter.push('control()');
-    iter.push('if skip[0] > 0:');
-    iter.push('    skip[0] -= 1');
-    iter.push('else:');
-    iter.push(`    print(${JSON.stringify(`▶ [${idx + 1}/${totalPy}] ${stepDesc(s)}`)})`);
-    genPYStep(s).forEach(x => iter.push('    ' + x));
-    if (g > 0) iter.push(`    time.sleep(${g})`);
-  });
   P.push('    _restart["v"] = False; _can_restart["v"] = True   # 여기서부터 F10 재실행 가능');
   P.push('    while True:   # F10 재실행 바깥 루프');
   P.push('        try:');
-  if (l.repeat && l.repeat > 0) P.push(`            for _ in range(${l.repeat}):`);
-  else P.push('            while True:   # 무한 반복');
-  iter.forEach(x => P.push('                ' + x));
+  const body = [];
+  emitPY(l.steps, body, g);
+  if (!body.length) body.push('pass');
+  body.forEach(x => P.push('            ' + x));
   P.push('        except _Restart:');
   P.push('            print("↻ 처음부터 다시 실행"); continue');
   P.push('        break');
@@ -1272,6 +1476,39 @@ function genPY(l) {
   P.push('run()');
   P.push('print("매크로가 끝났어요.")');
   return P.join('\r\n') + '\r\n';
+}
+/* 묶음(반복문·조건)까지 재귀로 파이썬 코드 생성 (들여쓰기 중요) */
+function emitPY(steps, out, g) {
+  const J = v => JSON.stringify(v == null ? '' : v);
+  const push = (pad, arr) => arr.forEach(x => out.push(pad + x));
+  (steps || []).forEach(s => {
+    out.push('control()');
+    out.push(`print(${J('▶ ' + stepDesc(s))})`);
+    if (s.type === 'repeat') {
+      out.push(num(s.count) > 0 ? `for _ in range(${num(s.count)}):` : 'while True:   # 무한 반복');
+      out.push('    control()');
+      const inner = []; emitPY(s.children, inner, g);
+      if (!inner.length) inner.push('pass');
+      push('    ', inner);
+    } else if (s.type === 'if') {
+      genPYCond(s).forEach(x => out.push(x));   // _cond 계산
+      out.push('if _cond:');
+      const t = []; emitPY(s.children, t, g);
+      if (!t.length) t.push('pass');
+      push('    ', t);
+      if (countOf(s.elseChildren)) {
+        out.push('else:');
+        const e = []; emitPY(s.elseChildren, e, g);
+        if (!e.length) e.push('pass');
+        push('    ', e);
+      }
+    } else if (s.type === 'stop') {
+      out.push('raise SystemExit("[멈춤] 매크로 종료")');
+    } else {
+      genPYStep(s).forEach(x => out.push(x));
+    }
+    if (g > 0) out.push(`time.sleep(${g})`);
+  });
 }
 function pyOcrFuncs() {
   return [
@@ -1329,7 +1566,6 @@ function genPYStep(s) {
     case 'wait': return [`time.sleep(${Number(s.sec) || 0})`];
     case 'imgclick': return genPYImg(s);
     case 'readput': return genPYReadPut(s);
-    case 'if': return genPYCond(s);
     default: return [];
   }
 }
@@ -1339,7 +1575,6 @@ function genPYImg(s) {
   const btn = JSON.stringify(s.button || 'left'), dbl = s.double ? 'True' : 'False';
   const L = [`_ok = find_click(${slot}, ${conf}, ${retries}, ${every}, button=${btn}, double=${dbl})`];
   if (s.notfound === 'stop') L.push('if not _ok: raise SystemExit("이미지 못 찾음: 멈춤")');
-  else if (s.notfound === 'skip') L.push(`if not _ok: skip[0] = ${Math.max(1, num(s.skipN) || 1)}`);
   return L;
 }
 function pyImgFuncs() {
@@ -1385,7 +1620,6 @@ function genPYReadPut(s) {
   else if (s.after === 'tab') L.push("    pyautogui.press('tab')");
   return L;
 }
-function pyAct(a, n) { return a === 'stop' ? 'raise SystemExit("조건: 멈춤")' : a === 'skip' ? `skip[0] = ${Math.max(1, num(n) || 1)}` : 'pass'; }
 function pyRegionArgs(mode, r) {
   if (mode === 'cursor') return { pre: ['_cx, _cy = pyautogui.position()'], args: `_cx + ${num(r.x1)}, _cy + ${num(r.y1)}, _cx + ${num(r.x2)}, _cy + ${num(r.y2)}` };
   return { pre: [], args: `${num(r.x1)}, ${num(r.y1)}, ${num(r.x2)}, ${num(r.y2)}` };
@@ -1406,10 +1640,6 @@ function genPYCond(s) {
     if (two) { L.push('_v2 = read_number(_t2)'); L.push(`_cond = (_v is not None and _v2 is not None and _v ${op} _v2)`); }
     else L.push(`_cond = (_v is not None and _v ${op} ${numConst(s.value)})`);
   }
-  L.push('if _cond:');
-  L.push('    ' + pyAct(s.onTrue, s.skip));
-  L.push('else:');
-  L.push('    ' + pyAct(s.onFalse, s.skipElse));
   return L;
 }
 
@@ -1548,8 +1778,8 @@ function doExport(kind) {
   if (['ahk', 'ps', 'py'].includes(kind)) {
     if (!l.steps.length) { toast('먼저 동작을 추가하세요'); return; }
     if (hasIssues(l) && !confirm('입력이 빠진 동작이 있어요(빨간 ⚠). 그대로 내보낼까요?')) return;
-    if (kind === 'ahk' && l.steps.some(s => s.type === 'if' || s.type === 'readput') &&
-      !confirm('.ahk 는 "조건"·"영역 값 읽어 입력" 동작을 건너뜁니다. 이 동작을 쓰려면 "무설치(윈도우)"나 파이썬으로 받으세요. 그래도 .ahk 로 받을까요?')) return;
+    if (kind === 'ahk' && anyStep(l.steps, s => s.type === 'if' || s.type === 'readput') &&
+      !confirm('.ahk 는 "조건"·"영역 값 읽어 입력" 동작을 건너뜁니다(조건 안에 담은 동작도 실행 안 됨). 이 동작을 쓰려면 "무설치(윈도우)"나 파이썬으로 받으세요. 그래도 .ahk 로 받을까요?')) return;
   }
   if (kind === 'ahk') {
     const ahkName = fileName(l.name, 'ahk');
@@ -1655,14 +1885,14 @@ const HELP = `
   ① 클릭(복사할 X·Y) → ② 단축키 '복사' → ③ 대기 1초 → ④ 단축키 '창 전환' → ⑤ 클릭(붙여넣을 X·Y) → ⑥ 단축키 '붙여넣기'</li>
 <li><b>확인</b>: <b>▶ 미리보기</b>를 눌러 순서가 맞는지 눈으로 봐요. (진짜 실행이 아니라 모의 재생이에요)</li>
 <li><b>파일 받기</b>: 맞으면 <b>무설치(윈도우)</b>를 받아요(설치가 필요 없어 가장 쉬워요).</li>
-<li><b>실행</b>: 받은 <code>...-무설치.bat</code>를 더블클릭! <b>시작 전 대기</b> 몇 초 동안 복사할 창을 미리 띄워 두면 돼요.</li>
+<li><b>실행</b>: 받은 <code>...-noinstall.bat</code>를 더블클릭! <b>시작 전 대기</b> 몇 초 동안 복사할 창을 미리 띄워 두면 돼요.</li>
 </ol>
-<div class="warn">급할 땐 <b>${CTRL_KEYS.stopLabel}</b>를 누르면 즉시 멈춰요. 처음엔 <b>반복 1회</b>로 천천히 확인한 뒤 횟수를 늘리세요.</div>
+<div class="warn">급할 땐 <b>${CTRL_KEYS.stopLabel}</b>를 누르면 즉시 멈춰요. 여러 번 돌리려면 동작들을 <b>🔁 반복문</b>에 담으세요.</div>
 
 <h4>📱 화면 구성</h4>
 <ul>
-<li><b>맨 위 칩</b> — 업무 묶음(루프)이에요. 여러 개 만들어 탭으로 전환해요.</li>
-<li><b>루프 설정</b> — 이름·반복 횟수·시작 전 대기·동작 사이 텀·예약 시작.</li>
+<li><b>맨 위 칩</b> — 업무 묶음(<b>작업방</b>)이에요. 여러 개 만들어 탭으로 전환해요.</li>
+<li><b>작업방 설정</b> — 이름·시작 전 대기·동작 사이 텀·예약 시작.</li>
 <li><b>화면 해상도</b> — 좌표·미리보기의 기준(모르면 그대로).</li>
 <li><b>동작 순서</b> — 쌓아 둔 동작들. 위에서 아래로 차례로 실행돼요.</li>
 <li><b>아래 버튼</b> — ▶ 미리보기 / + 동작 추가.</li>
@@ -1672,8 +1902,9 @@ const HELP = `
 <h4>➕ 동작을 추가·정리하는 법</h4>
 <ul>
 <li><b>추가</b>: 아래 <b>+ 동작 추가</b> → 종류 고르기 → 값 채우기 → <b>저장</b>.</li>
+<li><b>묶음 안에 넣기</b>: <b>🔁 반복문</b>이나 <b>❓ 조건</b> 동작을 저장하면 그 아래에 하위 칸이 생겨요. 그 칸의 <b>+ 동작 넣기</b>로 담으면 "반복할 동작"·"맞으면 실행할 동작"이 돼요.</li>
 <li><b>수정</b>: 목록에서 그 동작을 <b>탭</b>하면 편집 창이 열려요.</li>
-<li><b>순서 바꾸기</b>: 왼쪽 <b>번호(⠿)를 꾹 눌러 드래그</b>해 위아래로 옮기거나, 오른쪽 <b>∧ ∨</b> 버튼.</li>
+<li><b>순서 바꾸기</b>: 왼쪽 <b>번호(⠿)를 꾹 눌러 드래그</b> — 위아래로 옮기거나 <b>묶음 안으로</b>도 끌어 넣을 수 있어요. 또는 오른쪽 <b>∧ ∨</b> 버튼.</li>
 <li><b>복제</b>: 동작을 탭 → 편집 창의 <b>복제</b>(비슷한 동작을 빠르게 추가).</li>
 <li><b>삭제</b>: <b>🗑</b> 버튼. 잘못 지웠으면 바로 뜨는 <b>되돌리기</b>를 누르세요.</li>
 <li>값이 빠지면 그 동작에 <b>빨간 ⚠</b>가 떠요. 그대로 내보내면 엉뚱하게 동작하니 채워 주세요.</li>
@@ -1685,31 +1916,33 @@ const HELP = `
 <li><b>🖱️ 마우스 이동</b> — 커서를 특정 위치로 옮겨요. <em>설정:</em> 가로 <code>X</code>·세로 <code>Y</code>. (좌표는 "좌표 찾기 도우미"로)</li>
 <li><b>👆 클릭</b> — 그 자리를 클릭해요. <em>설정:</em> X·Y + 버튼(왼쪽/오른쪽/가운데) + 더블클릭 여부.</li>
 <li><b>✋ 드래그</b> — 한 점에서 다른 점까지 누른 채 끌어요. <em>설정:</em> 시작 X·Y, 끝 X·Y.</li>
-<li><b>⌨️ 단축키</b> — 복사·붙여넣기·창 전환 등. <em>설정:</em> 목록에서 고르거나, <b>직접 입력</b>으로 Ctrl·Shift·Alt + 글자/키(예: f5, enter)를 조합.</li>
+<li><b>⌨️ 단축키</b> — 복사·붙여넣기·창 전환 등. <em>설정:</em> 목록에서 고르거나, <b>직접 입력</b>으로 Ctrl·Shift·Alt·<b>Win</b> + 글자/키를 조합(예: <b>실행창</b> = Win+<code>r</code>). <code>enter</code>·<code>tab</code>·<code>esc</code>·<code>f1~f12</code>·<code>up/down</code> 등도 돼요.</li>
 <li><b>✏️ 글자 입력</b> — 글자를 타이핑해요. <em>설정:</em> 입력할 글자. (한글은 <b>.ahk</b> 파일이 가장 정확)</li>
 <li><b>🪟 창 활성화</b> — 제목으로 창을 찾아 앞으로 가져와요(위치가 바뀌어도 OK). <em>설정:</em> 창 제목의 일부. 모르면 아래 "F12 소스 분석"으로 뽑을 수 있어요.</li>
 <li><b>🖲️ 스크롤</b> — 위/아래로 굴려요. <em>설정:</em> 방향 + 몇 칸.</li>
 <li><b>⏱️ 대기</b> — 몇 초 기다려요. <em>설정:</em> 초. (창 뜨는 시간·로딩을 기다릴 때)</li>
 <li><b>🖼️ 이미지 찾아 클릭</b> — 저장해 둔 <b>그림(버튼·아이콘)</b>을 화면에서 찾아 그 자리를 클릭해요(위치가 바뀌어도 OK). <em>설정:</em> 이미지 슬롯 번호, 관대함(느슨/보통/엄격), 버튼·더블, 재시도, 못 찾을 때 할 일. 아래 "이미지 찾기" 참고. 무설치·.ahk·파이썬 지원(베타).</li>
 <li><b>📋 영역 값 읽어 입력</b> — 화면 영역의 글자/숫자를 읽어 <b>지금 커서가 있는 칸에 붙여넣어요</b>(자료수집용). <em>설정:</em> 글자/숫자, 영역 좌표, 붙여넣은 뒤 누를 키(없음/엔터/탭). 무설치·파이썬 전용(베타).</li>
-<li><b>❓ 조건</b> — 화면 영역을 읽어 다르게 진행해요(아래 "조건" 참고).</li>
+<li><b>🔁 반복문</b> — 안에 담은 동작들을 정한 횟수만큼 반복해요. <em>설정:</em> 반복 횟수(<b>0</b>=멈출 때까지 무한). 저장 후 <b>+ 동작 넣기</b>로 반복할 동작을 담아요. 반복문 안에 반복문·조건을 또 넣을 수도 있어요.</li>
+<li><b>❓ 조건</b> — 화면 영역을 읽어 <b>맞으면 담은 동작을 실행</b>해요(아래 "조건" 참고).</li>
+<li><b>🛑 멈춤</b> — 그 지점에서 매크로를 끝내요. 주로 <b>조건</b>의 "맞으면/아니면" 칸 안에 넣어 "어떤 값이면 멈춤"에 써요.</li>
 </ul>
-<p class="muted small">💡 <b>자료수집 예시</b>: [영역 값 읽어 입력(→탭)] 여러 개를 이어 붙이고 끝에 [단축키 엔터]로 다음 줄로 이동 → 반복. 화면의 값들을 엑셀로 자동으로 옮겨 적어요.</p>
+<p class="muted small">💡 <b>자료수집 예시</b>: <b>🔁 반복문</b> 안에 [영역 값 읽어 입력(→탭)] 여러 개 + 끝에 [단축키 엔터]를 담아 두면, 화면의 값들을 엑셀로 한 줄씩 자동으로 옮겨 적어요.</p>
 
-<h4>🗂 루프(업무 묶음) 다루기</h4>
+<h4>🗂 작업방(업무 묶음) 다루기</h4>
 <ul>
-<li><b>새 루프</b>: 위 <b>+ 새 루프</b>. 업무마다 따로 만들면 좋아요(예: "메일 보내기", "자료 수집").</li>
+<li><b>새 작업방</b>: 위 <b>+ 새 작업방</b>. 업무마다 따로 만들면 좋아요(예: "메일 보내기", "자료 수집").</li>
 <li><b>전환</b>: 맨 위 칩을 탭.</li>
-<li><b>복제/삭제</b>: 루프 설정 아래의 <b>루프 복제</b> / <b>이 루프 삭제</b>.</li>
-<li>루프는 <b>각각 따로</b> 실행 파일로 내보내요. 바탕화면에 두고 골라서 더블클릭하면 돼요.</li>
+<li><b>복제/삭제</b>: 작업방 설정 아래의 <b>작업방 복제</b> / <b>이 작업방 삭제</b>.</li>
+<li>작업방은 <b>각각 따로</b> 실행 파일로 내보내요. 바탕화면에 두고 골라서 더블클릭하면 돼요.</li>
 </ul>
 
-<h4>⚙️ 루프 설정</h4>
+<h4>⚙️ 작업방 설정</h4>
 <ul>
-<li><b>반복 횟수</b> — 숫자만큼 반복, <b>0</b>이면 멈출 때까지 무한.</li>
 <li><b>시작 전 대기(초)</b> — 더블클릭 후 이 시간 동안 기다려요. 그 사이 작업할 창을 띄워 두세요.</li>
 <li><b>동작 사이 텀(초)</b> — 각 동작 사이에 자동으로 두는 간격(기본 0.5초). 너무 빨라 놓치면 늘리세요.</li>
 <li><b>예약 시작</b> — 시간을 정하면 <b>다음 그 시각</b>까지 기다렸다 시작(이미 지났으면 다음 날 그 시각). 단, <b>PC가 켜져 있고 파일이 실행 중</b>이어야 해요.</li>
+<li><b>반복</b>은 설정이 아니라 <b>🔁 반복문</b> 동작으로 해요. 전체를 계속 돌리려면 모든 동작을 반복문 하나에 담고 횟수를 <b>0</b>으로 두세요.</li>
 </ul>
 
 <h4>▶ 미리보기</h4>
@@ -1727,7 +1960,7 @@ const HELP = `
 <li><b>${CTRL_KEYS.startNowLabel}</b> — 예약 시간을 기다리지 않고 즉시 시작</li>
 <li>파이썬만 <code>pip install keyboard</code> 후에 단축키가 켜져요.</li>
 </ul>
-<p class="muted small">실행 중 검은 창(cmd)에 <b>▶ [3/7] ...</b> 처럼 지금 어떤 동작인지 글자로 보여줘요.</p>
+<p class="muted small">실행 중 검은 창(cmd)에 <b>▶ 클릭 ...</b> 처럼 지금 어떤 동작인지 글자로 보여줘요.</p>
 
 <h4>🖼️ 이미지 찾아 클릭 — 베타</h4>
 <ul>
@@ -1737,25 +1970,26 @@ const HELP = `
 <li><b>꼭 알아야 할 점</b>: 캡처한 때와 실행할 때의 <b>해상도·배율(100/125/150%)이 같아야</b> 찾아요(다르면 다시 캡처). 아이콘·버튼처럼 <b>모양 고정된 그림</b>에 적합. 글자·숫자는 이미지보다 <b>조건(OCR)</b>이 안정적이에요. 같은 그림이 화면에 여러 개면 엉뚱한 걸 누를 수 있으니 기본은 "못 찾으면 멈춤".</li>
 </ul>
 
-<h4>❓ 조건 (영역을 읽어 분기) — 베타</h4>
+<h4>❓ 조건 (맞으면 동작 실행) — 베타</h4>
 <ul>
-<li>화면의 네모 영역에서 <b>글자/숫자</b>를 읽어(OCR), 결과에 따라 <b>계속 / 멈춤 / 다음 N개 건너뛰기</b>로 갈라져요.</li>
-<li><em>비교 대상 2가지:</em> <b>고정값</b>(예: "숫자가 0보다 크면 멈춤") 또는 <b>다른 영역 ②</b>.</li>
-<li><b>두 영역 비교</b>: "무엇과 비교하나요"에서 <b>다른 영역 ②</b>를 고르면, <b>영역①과 영역②를 각각 읽어 같은지/다른지</b> 비교해요(디자인이 서로 달라도 OK). 예: 한쪽 표의 금액과 다른 쪽 화면의 금액이 <b>같으면 계속, 다르면 멈춤</b>.</li>
-<li><em>설정:</em> ① 숫자/글자 ② 영역① 좌표 ③ 비교 대상(고정값/다른 영역②) ④ 비교(같음/다름/&gt; 등) ⑤ (영역②면) 영역② 좌표 ⑥ 맞으면/아니면 할 일.</li>
-<li>영역은 <b>영역 선택 도우미</b>로 왼쪽위 <b>F1</b>, 오른쪽아래 <b>F2</b>를 누르면 네 좌표가 나와요.</li>
-<li><b>무설치(윈도우)·파이썬</b>에서만 동작, <b>.ahk 는 건너뜁니다.</b> OCR은 글꼴·배율·대비에 따라 틀릴 수 있어 <b>숫자 비교가 더 안정적</b>이에요. 글자 비교는 앞뒤 공백만 지우고 대조합니다.</li>
+<li>화면의 네모 영역에서 <b>글자/숫자</b>를 읽어(OCR), <b>조건이 맞으면 그 아래 "맞으면 실행할 동작" 칸에 담은 동작을 실행</b>해요. 안 맞으면 "아니면" 칸의 동작을 실행하고요(아니면 칸은 비워 둬도 돼요).</li>
+<li><b>멈추고 싶으면</b> 그 칸 안에 <b>🛑 멈춤</b> 동작을 넣으세요. (예: "숫자가 0보다 크면 → 멈춤")</li>
+<li><em>비교 대상 2가지:</em> <b>고정값</b>(예: "숫자가 0보다 큼") 또는 <b>다른 영역 ②</b>.</li>
+<li><b>두 영역 비교</b>: "무엇과 비교하나요"에서 <b>다른 영역 ②</b>를 고르면, <b>영역①과 영역②를 각각 읽어 같은지/다른지</b> 비교해요(디자인이 서로 달라도 OK).</li>
+<li><em>설정:</em> ① 숫자/글자 ② 영역① 좌표 ③ 비교 대상(고정값/다른 영역②) ④ 비교(같음/다름/&gt; 등) ⑤ (영역②면) 영역② 좌표. 저장 후 아래 칸에 <b>+ 동작 넣기</b>.</li>
+<li>영역은 <b>영역 선택 도우미</b>로 드래그해 네 좌표를 구할 수 있어요.</li>
+<li><b>무설치(윈도우)·파이썬</b>에서만 동작, <b>.ahk 는 건너뜁니다</b>(조건 안에 담은 동작도 실행 안 됨). OCR은 글꼴·배율·대비에 따라 틀릴 수 있어 <b>숫자 비교가 더 안정적</b>이에요.</li>
 </ul>
 
 <h4>💾 내보내기 — 어떤 파일을 받나요?</h4>
 <ul>
-<li><b>무설치(윈도우)</b> — 설치·권한이 필요 없어요. 잘 모르면 이걸 먼저. <code>...-무설치.bat</code> 더블클릭.</li>
+<li><b>무설치(윈도우)</b> — 설치·권한이 필요 없어요. 잘 모르면 이걸 먼저. <code>...-noinstall.bat</code> 더블클릭.</li>
 <li><b>.ahk + .bat</b> — <code>autohotkey.com</code>에서 AutoHotkey v2를 설치할 수 있다면 가장 안정적이고 <b>한글 입력</b>도 잘 돼요.</li>
 <li><b>.py (파이썬)</b> — 맥이거나 파이썬을 쓰는 경우.</li>
 <li><b>좌표 찾기 도우미</b> — 클릭할 <b>한 지점</b>의 X·Y 숫자(점 하나). <em>클릭·이동 동작용.</em> (무설치 · 무설치 매크로와 좌표가 정확히 일치)</li>
 <li><b>영역 선택 도우미</b> — <b>드래그로 네모</b>를 긁으면 그 영역의 네 좌표를 알려줘요. <em>조건(OCR) 동작의 영역용.</em> (무설치)</li>
 <li><b>이미지 캡처 도우미</b> — <b>드래그로 긁은 그림</b>을 PNG로 저장. <em>"이미지 찾아 클릭" 동작용.</em> (무설치)</li>
-<li><b>전체 백업 저장 / 불러오기</b> — 만든 모든 루프를 파일로 저장하거나 되돌려요(기기를 바꿀 때).</li>
+<li><b>전체 백업 저장 / 불러오기</b> — 만든 모든 작업방을 파일로 저장하거나 되돌려요(기기를 바꿀 때).</li>
 </ul>
 
 <h4>⚠️ 조심할 점 · 자주 막히는 것</h4>

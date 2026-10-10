@@ -86,9 +86,18 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .steps-head .count { font-size: 13px; color: var(--text-3); font-weight: 650; }
 .steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .step {
-  display: flex; align-items: center; gap: 12px; padding: 12px 14px;
+  display: flex; flex-direction: column; padding: 12px 14px;
   background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
 }
+.step .step-head { display: flex; align-items: center; gap: 12px; }
+.step.container { background: var(--surface-2); }
+.step-children { margin-top: 10px; padding-left: 12px; border-left: 2px solid color-mix(in srgb, var(--accent) 35%, var(--line)); display: flex; flex-direction: column; gap: 12px; }
+.child-sec { display: flex; flex-direction: column; gap: 8px; }
+.child-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.child-head span { font-size: 12.5px; font-weight: 750; color: var(--text-2); }
+.child-add { font-size: 12px; font-weight: 750; color: var(--accent); background: var(--tint); padding: 5px 10px; border-radius: 9px; flex: none; }
+.child-list { min-height: 2px; }
+.child-empty { font-size: 12.5px; color: var(--text-3); padding: 10px 12px; border: 1px dashed var(--line); border-radius: 11px; text-align: center; }
 .step .num {
   width: 30px; height: 30px; border-radius: 8px; background: var(--tint); color: var(--accent);
   font-size: 13px; font-weight: 800; display: grid; place-items: center; flex: none;
