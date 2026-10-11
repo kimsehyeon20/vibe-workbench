@@ -2876,7 +2876,7 @@ function genPY(l) {
   const P = [];
   P.push('# -*- coding: utf-8 -*-');
   P.push(`# 매크로: ${(l.name || '').replace(/[\r\n]/g, ' ')} (설계소 ${APP_VERSION})`);
-  P.push('# 실행: 1) 파이썬 설치  2) pip install pyautogui pygetwindow keyboard pyperclip  3) python "이파일.py"');
+  P.push('# 실행: 같이 받은 "...-python.bat" 을 더블클릭 (처음 한 번 필요한 부품을 깔고 실행). 직접 하려면  pip install pyautogui pygetwindow keyboard pyperclip  후  python "이파일.py"');
   P.push('#  (화면 글자 읽기·글자 찾기:  pip install winocr pillow  / 이미지 찾기:  pip install opencv-python pillow  / 웹 요소 찾기:  pip install uiautomation )');
   P.push(`#  단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.startNowLabel} 예약 즉시시작·오류 때 건너뛰기, ${CTRL_KEYS.restartLabel} 재실행 (keyboard 설치 시)`);
   P.push('#  급할 때: 마우스를 화면 왼쪽 맨 위 구석으로 휙 옮기면 멈춥니다.');
@@ -3587,6 +3587,44 @@ function genHelperBat(ps1Name) {
   ].join('\r\n');
 }
 
+/* 파이썬 실행용 .bat (ASCII 만): 파이썬 찾기 → 이 매크로에 필요한 부품만 처음 한 번 설치 → 실행.
+   화면 글자 읽기(winocr)는 아직 파이썬 3.15 이상용 부품이 없어 3.14 이하를 권함 */
+function pyPackages(l) {
+  const mods = ['pyautogui', 'keyboard', 'pyperclip', 'pygetwindow'], pkgs = ['pyautogui', 'keyboard', 'pyperclip', 'pygetwindow'];
+  const ocr = needsOcr(l.steps), img = needsImg(l.steps), web = needsWeb(l.steps);
+  if (ocr) { mods.push('winocr', 'PIL'); pkgs.push('winocr', 'pillow'); }
+  if (img) { mods.push('cv2', 'PIL'); pkgs.push('opencv-python', 'pillow'); }
+  if (web) { mods.push('uiautomation'); pkgs.push('uiautomation'); }
+  return { mods: [...new Set(mods)], pkgs: [...new Set(pkgs)], ocr };
+}
+function genPyBat(l, pyName) {
+  const { mods, pkgs, ocr } = pyPackages(l);
+  return [
+    '@echo off',
+    'setlocal',
+    ...batPick(pyName, '-python'),
+    'set "PY="',
+    'py -3 -c "import sys" >nul 2>nul && set "PY=py -3"',
+    'if not defined PY python -c "import sys" >nul 2>nul && set "PY=python"',
+    'if not defined PY goto nopy',
+    ...(ocr ? ['%PY% -c "import sys; sys.exit(0 if sys.version_info[:2] <= (3, 14) else 1)" >nul 2>nul || echo  [!] This Python is newer than 3.14 - the screen-text reader (winocr) may not install yet. Python 3.14 is recommended.'] : []),
+    `%PY% -c "import ${mods.join(', ')}" >nul 2>nul && goto run`,
+    'echo  First run: installing required packages. This takes a minute or two...',
+    `%PY% -m pip install --user --disable-pip-version-check ${pkgs.join(' ')}`,
+    'if errorlevel 1 echo  [!] Package install failed. Check the internet connection or ask IT if pip is blocked.',
+    ':run',
+    '%PY% "%F%"',
+    'if errorlevel 1 pause',
+    'exit /b',
+    ':nopy',
+    'echo.',
+    'echo  [!] Python was not found. Install Python 3.14 from python.org - check "Add python.exe to PATH" -',
+    'echo      or from the Microsoft Store, then double-click this file again.',
+    'echo.',
+    'pause',
+    '',
+  ].join('\r\n');
+}
 /* .ahk 에서 안 되는 기능 목록 (내보낼 때 알려줌) */
 function ahkUnsupported(l) {
   const m = new Set();
@@ -3856,7 +3894,8 @@ function doExport(kind) {
     toast('무설치 실행 파일을 받았어요');
   } else if (kind === 'py') {
     download(`${stem}.py`, genPY(l), 'text/x-python;charset=utf-8');
-    toast('파이썬 파일을 받았어요');
+    download(`${stem}-python.bat`, genPyBat(l, `${stem}.py`), 'application/bat');
+    toast(`파이썬 파일을 받았어요 — ${stem}-python.bat 을 더블클릭하면 필요한 부품을 깔고 실행해요`);
   } else if (kind === 'finder') {
     const ps1 = 'coordinate-finder.ps1';
     download(ps1, genFinder(), 'text/plain;charset=utf-8');
@@ -4116,6 +4155,7 @@ const HELP = `
 <code>START.bat</code>(메뉴: 실행·이미지 찍기·변수 고치기·폴더 열기·좌표 찾기·영역 선택) · 작업방마다 <code>macro-N</code> 폴더(<code>RUN.bat</code>·<code>macro.ps1</code>, PC에서 생기는 <code>images</code>·<code>variables.txt</code>) · <code>tools</code>(공용 도구·백업).<br>
 <b>다시 받았을 땐</b> 새 zip 의 macro-studio 폴더를 같은 자리에 끌어다 놓고 "파일 바꾸기". zip 에는 이미지·variables.txt 가 없어서 <b>찍은 이미지와 고친 변수 값은 그대로</b>예요. 작업방 설정에 이 작업방의 PC 폴더(macro-N)가 보여요.</li>
 <li><b>파일 하나씩 받기 (고급)</b> — 지금 작업방의 무설치(.ps1+.bat) / .ahk / .py, 도우미 단독 파일. .ahk·.py 는 그 작업방 폴더에 넣으면 같은 이미지·변수 파일을 써요.</li>
+<li><b>파이썬으로 쓰기</b> — .py 를 받으면 <code>…-python.bat</code> 도 같이 받아요. 둘을 같은 폴더에 두고 <b>.bat 을 더블클릭</b>하면 처음 한 번 필요한 부품을 깔고 실행해요. 파이썬은 <b>3.14 권장</b>(화면 글자 읽기 부품이 아직 3.15 를 지원하지 않아요). python.org 에서 설치할 땐 <b>"Add python.exe to PATH"</b>에 체크하세요.</li>
 <li><b>불러오기(복원)</b>: 받은 <b>macro.ps1 / .py / .ahk</b> 파일을 고르거나 내용을 붙여넣으면 그 매크로가 <b>새 작업방으로 그대로 복원</b>돼요(파일 끝에 설계도가 있어요). 웹 데이터를 잃었거나 다른 기기에서 이어 하려면 PC의 <code>macro-studio\\tools</code> 안 <b>가장 최근 backup-날짜.json</b> 을 고르면 모든 작업방이 같은 폴더 번호로 돌아와요.</li>
 <li><b>주의</b>: 코드 파일을 <b>직접 고친 내용</b>은 복원되지 않아요(설계도만 읽어요). 동작 수정은 <b>여기(웹)</b>에서 하고 다시 받으세요. 이미지·variables.txt 는 폴더에서 바로 바꿔도 돼요.</li>
 <li><b>전체 백업 저장 / 불러오기</b> — 모든 작업방을 한 파일로(기기를 바꿀 때).</li>
