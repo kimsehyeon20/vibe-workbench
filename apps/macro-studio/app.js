@@ -2,6 +2,8 @@
 
 /* ===== 저장소 (이 기기에만 저장) ===== */
 const KEY = 'macro-studio';
+/* 앱 판 번호: 받은 파일 첫 줄에도 적혀서, 오류 메시지만 봐도 어느 판으로 받았는지 알 수 있음 (바꿀 때마다 올림) */
+const APP_VERSION = '2026.10.11-3';
 const store = {
   get(d) { try { const v = localStorage.getItem(KEY); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(v) { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch { /* 저장 불가 환경 */ } },
@@ -1663,7 +1665,7 @@ function genAHK(l) {
   L.push('#Requires AutoHotkey v2.0', '#SingleInstance Force', 'FileEncoding "UTF-8"', 'CoordMode "Mouse", "Screen"',
     'CoordMode "Pixel", "Screen"', 'SetTitleMatchMode 2', 'SetKeyDelay 30', 'SetMouseDelay 30',
     'try DllCall("SetThreadDpiAwarenessContext", "ptr", -4, "ptr")   ; 화면 배율과 상관없이 실제 픽셀 좌표 (무설치·도우미와 같은 기준)', '');
-  L.push(`; ===== 매크로: ${(l.name || '').replace(/[\r\n]/g, ' ')} =====`);
+  L.push(`; ===== 매크로: ${(l.name || '').replace(/[\r\n]/g, ' ')} (설계소 ${APP_VERSION}) =====`);
   L.push('; 이 파일을 더블클릭하면 시작합니다. (AutoHotkey v2 설치 필요)');
   L.push(`; 단축키:  ${CTRL_KEYS.pauseLabel} = 일시정지/재생   ${CTRL_KEYS.stopLabel} = 종료(Esc)   ${CTRL_KEYS.startNowLabel} = 예약 즉시 시작   ${CTRL_KEYS.restartLabel} = 처음부터 다시`);
   L.push('; ※ .ahk 는 화면 글자 읽기(OCR)를 못 해요: 글자 찾기·영역 읽기·글자 조건은 건너뜁니다.');
@@ -2139,7 +2141,7 @@ function genPS1(l, opts = {}) {
   const pack = !!opts.pack;   // PC로 받기(macro-studio 폴더) 안의 macro.ps1 이면 true
   psPackMode = pack;
   const P = [];
-  P.push('# -*- 매크로: ' + (l.name || '').replace(/[\r\n]/g, ' ') + ' -*-');
+  P.push('# -*- 매크로: ' + (l.name || '').replace(/[\r\n]/g, ' ') + ` (설계소 ${APP_VERSION}) -*-`);
   P.push('# 설치가 필요 없습니다. macro-studio 폴더의 START.bat(메뉴) 또는 이 폴더의 RUN.bat 을 더블클릭하세요. (따로 받았다면 "...-noinstall.bat")');
   P.push(`# 단축키:  ${CTRL_KEYS.pauseLabel} = 일시정지/재생   ${CTRL_KEYS.stopLabel} = 종료   ${CTRL_KEYS.restartLabel} = 처음부터 다시 실행`);
   P.push('param([switch]$Capture, [switch]$EditVars)   # -Capture = 이미지만 찍기, -EditVars = 변수 파일 열기 (START 메뉴가 씀)');
@@ -2745,7 +2747,7 @@ function genPY(l) {
   refreshOrphans(l);
   const P = [];
   P.push('# -*- coding: utf-8 -*-');
-  P.push(`# 매크로: ${(l.name || '').replace(/[\r\n]/g, ' ')}`);
+  P.push(`# 매크로: ${(l.name || '').replace(/[\r\n]/g, ' ')} (설계소 ${APP_VERSION})`);
   P.push('# 실행: 1) 파이썬 설치  2) pip install pyautogui pygetwindow keyboard pyperclip  3) python "이파일.py"');
   P.push('#  (화면 글자 읽기·글자 찾기:  pip install winocr pillow  / 이미지 찾기:  pip install opencv-python )');
   P.push(`#  단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.startNowLabel} 예약 즉시시작·오류 때 건너뛰기, ${CTRL_KEYS.restartLabel} 재실행 (keyboard 설치 시)`);
@@ -3605,7 +3607,7 @@ function packList() {
 }
 function packReadme(list, built) {
   return [
-    '매크로 설계소 — PC 실행 폴더' + (built ? `   (${built} 받음)` : ''),
+    '매크로 설계소 — PC 실행 폴더' + (built ? `   (${built} 받음)` : '') + `   판 ${APP_VERSION}`,
     '',
     '[늘 이것만]  START.bat 더블클릭 → 작업방 고르고 [실행]',
     '',
@@ -3665,7 +3667,7 @@ function packFiles(built, chain = []) {
     T('tools/menu.ps1', genMenu(), true),
     T('tools/find-xy.ps1', genFinder(), true),
     T('tools/pick-region.ps1', genRegionPicker(), true),
-    T('tools/macros.json', JSON.stringify({ kind: 'macro-studio-pack', v: 1, built: built || '', pack: chain[chain.length - 1] || '', chain, macros: list }, null, 1)),
+    T('tools/macros.json', JSON.stringify({ kind: 'macro-studio-pack', v: 1, app: APP_VERSION, built: built || '', pack: chain[chain.length - 1] || '', chain, macros: list }, null, 1)),
     // 받을 때마다 새 이름(덮어써지지 않게) → 웹 데이터를 잃어도 가장 최근 것으로 복원
     T(`tools/backup-${(built || '').replace(/[^0-9]/g, '').replace(/^(\d{8})(\d{4}).*$/, '$1-$2') || 'latest'}.json`, JSON.stringify({ ...state, packedAt: built || state.packedAt, packIds: chain.length ? chain : state.packIds }, null, 1)),
   ];
@@ -3968,6 +3970,7 @@ const HELP = `
 
 /* ===== 전체 렌더 ===== */
 function renderAll() {
+  const av = $('#app-ver'); if (av) av.textContent = `앱 판 ${APP_VERSION} — 받은 파일 첫 줄의 (설계소 …) 숫자와 같으면 최신으로 받은 거예요. 다르면 이 페이지를 새로고침한 뒤 다시 받으세요.`;
   renderChips();
   renderSettings();
   renderSteps();
