@@ -462,7 +462,7 @@ function stepDesc(s) {
       const pc = prettyCombo(rk.combo) || '(비어있음)';
       return rk.label ? `${rk.label} (${pc})` : pc;
     }
-    case 'text': return `"${(s.text || '').slice(0, 24)}" 입력`;
+    case 'text': { const t = String(s.text || ''); return `"${t.length > 40 ? t.slice(0, 40) + '…' : t}" 입력`; }
     case 'win': return `제목에 "${s.title}" 있는 창 앞으로`;
     case 'scroll': return `${s.dir === 'up' ? '위' : '아래'}로 ${s.amount}칸 스크롤`;
     case 'wait': return `${s.sec}초 기다리기`;
@@ -1586,9 +1586,17 @@ function designOf(l) {
   });
   return { kind: 'macro-studio-design', v: 1, screen: state.screen, loop, myKeys: used };
 }
+/* 설계도는 "읽을 수 있는 JSON 글자" 그대로 넣음.
+   ★ 예전엔 base64(알아볼 수 없는 긴 글자 덩어리)였는데, 회사 백신(AMSI)이 "숨겨 둔 악성 코드"로 오해해 .ps1 을 막을 수 있어 바꿈.
+   주석이 끝나지 않게 > * 는 \u 로 바꿔 적고, 줄마다 "| " 를 붙여 나눔(줄 끝이 빈칸이 되지 않게 자름) */
 function designBlock(l, style) {
-  const b = b64encodeUtf8(JSON.stringify(designOf(l)));
-  const rows = []; for (let i = 0; i < b.length; i += 76) rows.push(b.slice(i, i + 76));
+  const json = JSON.stringify(designOf(l)).replace(/[<>*]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+  const rows = [];
+  for (let i = 0; i < json.length;) {
+    let j = Math.min(json.length, i + 100);
+    while (j < json.length && /\s/.test(json[j - 1])) j++;
+    rows.push('| ' + json.slice(i, j)); i = j;
+  }
   const note = '웹 "매크로 설계소"의 [불러오기]로 이 파일을 고르면 동작이 그대로 복원돼요. 코드를 직접 고친 내용은 복원되지 않아요. 아래 줄은 지우지 마세요.';
   if (style === 'ps') return ['', '<#', note, DESIGN_BEGIN, ...rows, DESIGN_END, '#>'];
   if (style === 'ahk') return ['', '/*', note, DESIGN_BEGIN, ...rows, DESIGN_END, '*/'];
@@ -1600,7 +1608,11 @@ function parseDesignText(text) {
   try { return JSON.parse(text); } catch { /* 코드 파일일 수 있음 */ }
   const m = text.match(/^[#\s]*MACRO-STUDIO-DESIGN-BEGIN[^\n]*\n([\s\S]*?)^[#\s]*MACRO-STUDIO-DESIGN-END/m);
   if (!m) return null;
-  try { return JSON.parse(b64decodeUtf8(m[1].replace(/[#\s]/g, ''))); } catch { return null; }
+  const lines = m[1].replace(/\r/g, '').split('\n');
+  if (lines.some(x => /^\s*(#\s?)?\| /.test(x))) {   // 새 형식: 줄마다 "| " 뒤가 JSON 조각
+    try { return JSON.parse(lines.map(x => { const k = x.match(/^\s*(?:#\s?)?\| (.*)$/); return k ? k[1] : ''; }).join('')); } catch { return null; }
+  }
+  try { return JSON.parse(b64decodeUtf8(m[1].replace(/[#\s]/g, ''))); } catch { return null; }   // 예전 형식(base64)도 읽음
 }
 
 /* --- ZIP 만들기 (압축 없이 묶기만, 외부 라이브러리 없음) --- */
@@ -2034,13 +2046,13 @@ function psVarsFileFns(l, pack) {
   const inside = !isAbsDir(dir) && segs.length > 0 && !segs.includes('..');   // 이미지 폴더가 이 작업방 폴더 "안의 하위 폴더"일 때만 옛 이미지를 치움
   return [
     '# 변수 파일(variables.txt): 없으면 웹의 처음 값으로 만듦. PC에서 고친 값은 그대로 두고, 안 고친 값은 웹에서 바뀌면 따라 바꿈',
-    '# (.variables-web.txt = 마지막으로 적어 준 웹 값 기록. 숨김 파일)',
+    '# (.variables-web.txt = 마지막으로 적어 준 웹 값 기록. 지우지 마세요)',
     `$script:VarNames = @(${vs.map(x => psStr(x.n)).join(', ')})`,
     `$script:VarVals = @(${vs.map(x => psStr(x.v)).join(', ')})`,
-    'function WriteHiddenText($path, $text){',
+    '# 기록 파일 쓰기 (예전 판이 숨김으로 만든 파일도 쓸 수 있게 보통 파일로 되돌린 뒤 씀)',
+    'function WriteSideText($path, $text){',
     '  if(Test-Path -LiteralPath $path){ try { [System.IO.File]::SetAttributes($path, [System.IO.FileAttributes]::Normal) } catch {} }',
     '  [System.IO.File]::WriteAllText($path, $text, (New-Object System.Text.UTF8Encoding($true)))',
-    '  try { [System.IO.File]::SetAttributes($path, [System.IO.FileAttributes]::Hidden) } catch {}',
     '}',
     'function EnsureVarsFile(){',
     '  if($script:VarNames.Count -eq 0){ return }',
@@ -2082,7 +2094,7 @@ function psVarsFileFns(l, pack) {
     '      }',
     '    }',
     '    $sideNew = ($side.Keys | ForEach-Object { $_ + "=" + $side[$_] }) -join $nl',
-    '    if($sideNew -cne $sideOld -or -not (Test-Path -LiteralPath $sf)){ WriteHiddenText $sf ($sideNew + $nl) }',
+    '    if($sideNew -cne $sideOld -or -not (Test-Path -LiteralPath $sf)){ WriteSideText $sf ($sideNew + $nl) }',
     "  } catch { Write-Host ('[주의] variables.txt 를 만들거나 고치지 못했어요(메모장으로 열려 있으면 닫아 주세요): ' + $_.Exception.Message) -ForegroundColor Yellow }",
     '}',
     '# 이 폴더의 주인(작업방) 확인: 전에 다른 작업방이 쓰던 폴더면 옛 이미지·변수 파일이 섞이지 않게 치울지 물어봄',
@@ -2110,7 +2122,7 @@ function psVarsFileFns(l, pack) {
     '        Write-Host "옛 파일은 -old- 가 붙은 이름으로 남겨 뒀어요 (필요 없으면 지워도 돼요)."',
     '      }',
     '    }',
-    '    WriteHiddenText $of ($script:OwnerId + "`r`n" + $script:OwnerName + "`r`n")',
+    '    WriteSideText $of ($script:OwnerId + "`r`n" + $script:OwnerName + "`r`n")',
     "  } catch { Write-Host ('[주의] 폴더 주인 확인을 못 했어요: ' + $_.Exception.Message) -ForegroundColor Yellow }",
     '}',
   ];
@@ -3476,6 +3488,7 @@ function genStartBat() {
 function genRunBat() {
   return ['@echo off', 'if not exist "%~dp0macro.ps1" goto noext',
     'powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0macro.ps1"',
+    'if errorlevel 1 echo  [!] Error above? If it says the script was blocked by antivirus, see README.txt (macro-studio folder).',
     'echo.', 'pause', 'exit /b', ...NOEXT_BAT, ''].join('\r\n');
 }
 /* START 메뉴 (작업방 목록은 tools\macros.json 에서 읽음 → 메뉴 코드는 늘 같음) */
@@ -3492,12 +3505,12 @@ function genMenu() {
     '  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int n);',
     '}',
     '"@',
-    '[void][MenuWin]::ShowWindow([MenuWin]::GetConsoleWindow(), 0)   # 검은 창은 숨기고 메뉴만 보이게',
+    '[void][MenuWin]::ShowWindow([MenuWin]::GetConsoleWindow(), 6)   # 검은 창은 작업 표시줄로 내리고 메뉴만 보이게',
     '[System.Windows.Forms.Application]::EnableVisualStyles()',
     '$root = Split-Path -Parent $PSScriptRoot',
     "$pack = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $PSScriptRoot 'macros.json') | ConvertFrom-Json",
     '$items = @($pack.macros)',
-    '# 지난번에 본 받기 기록을 모르는(다른 기기에서 따로 고친) 파일로 덮어썼으면 한 번 알려줌. 기록은 숨김 파일 tools\\.seen-pack',
+    '# 지난번에 본 받기 기록을 모르는(다른 기기에서 따로 고친) 파일로 덮어썼으면 한 번 알려줌. 기록은 tools\\.seen-pack',
     'try {',
     "  $seenFile = Join-Path $PSScriptRoot '.seen-pack'; $cur = [string]$pack.pack; $chain = @(@($pack.chain) | ForEach-Object { [string]$_ })",
     '  if($cur -ne ""){',
@@ -3505,7 +3518,7 @@ function genMenu() {
     '    if($seen -ne "" -and $seen -ne $cur -and -not ($chain -contains $seen)){',
     '      [void][System.Windows.Forms.MessageBox]::Show("주의: 이 macro-studio 폴더에 덮어쓴 파일은, 지난번에 받은 내용을 모르는 다른 기기(브라우저)에서 받은 거예요.`n두 기기에서 따로 고친 게 있다면 한쪽 내용이 빠졌을 수 있어요.`n`n바로잡기: 가장 최근에 고친 기기에서 [PC로 받기]를 다시 하거나, tools 폴더의 가장 최근 backup 파일을 웹 [불러오기]로 가져온 뒤 다시 받으세요.`n(앞으로는 한 기기에서만 고치고 받는 걸 추천해요)", "매크로 설계소")',
     '    }',
-    '    if($seen -ne $cur){ if(Test-Path -LiteralPath $seenFile){ [System.IO.File]::SetAttributes($seenFile, [System.IO.FileAttributes]::Normal) }; [System.IO.File]::WriteAllText($seenFile, $cur); try { [System.IO.File]::SetAttributes($seenFile, [System.IO.FileAttributes]::Hidden) } catch {} }',
+    '    if($seen -ne $cur){ if(Test-Path -LiteralPath $seenFile){ [System.IO.File]::SetAttributes($seenFile, [System.IO.FileAttributes]::Normal) }; [System.IO.File]::WriteAllText($seenFile, $cur) }',
     '  }',
     '} catch {}',
     "$psExe = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'",
@@ -3564,11 +3577,11 @@ function genMenu() {
     '$bVar = Btn "변수 고치기" {',
     '  $m = Sel; if(-not $m){ return }',
     '  if([int]$m.vars -eq 0){ Say "이 작업방은 변수를 쓰지 않아요."; return }',
-    "  RunPs (Join-Path (DirOf $m) 'macro.ps1') ' -EditVars' 'Hidden'",
+    "  RunPs (Join-Path (DirOf $m) 'macro.ps1') ' -EditVars' 'Minimized'",
     '}',
     '$bDir = Btn "폴더 열기" { $m = Sel; if($m){ Start-Process explorer.exe -ArgumentList (\'"\' + (DirOf $m) + \'"\') -ErrorAction Stop } }',
-    "$bXY = Btn \"좌표 찾기\" { RunPs (Join-Path $PSScriptRoot 'find-xy.ps1') '' 'Hidden' }",
-    "$bReg = Btn \"영역 선택\" { RunPs (Join-Path $PSScriptRoot 'pick-region.ps1') '' 'Hidden' }",
+    "$bXY = Btn \"좌표 찾기\" { RunPs (Join-Path $PSScriptRoot 'find-xy.ps1') '' 'Minimized' }",
+    "$bReg = Btn \"영역 선택\" { RunPs (Join-Path $PSScriptRoot 'pick-region.ps1') '' 'Minimized' }",
     '$bEnd = Btn "닫기" { $form.Close() }',
     '$lb.Add_DoubleClick({ $bRun.PerformClick() })',
     '$form.AcceptButton = $bRun; $form.CancelButton = $bEnd',
@@ -3621,6 +3634,12 @@ function packReadme(list, built) {
     `  ${CTRL_KEYS.pauseLabel} 일시정지/재생   ${CTRL_KEYS.stopLabel} 종료   ${CTRL_KEYS.restartLabel} 처음부터 다시`,
     `  ${CTRL_KEYS.startNowLabel} 예약 시간을 기다리는 중이면 바로 시작 / 오류로 멈췄을 때는 그 동작 건너뛰기`,
     '  이미지·글자를 끝내 못 찾으면 검은 창이 맨 위에 뜨고 [오류]로 멈춰요. 화면을 맞춘 뒤 F8 = 다시 찾기.',
+    '',
+    '[백신이 막을 때]',
+    '  "악성 콘텐츠가 있어서 바이러스 백신 소프트웨어에 의해 차단" 이 뜨면 회사 백신이 실행 파일을 막은 거예요.',
+    '  1) 웹에서 최신 판으로 다시 받아 덮어 보세요 (백신이 오해하기 쉬운 부분을 계속 고치고 있어요).',
+    '  2) 그래도 막히면 회사 IT 담당자에게 이 macro-studio 폴더(.ps1)의 예외 등록을 요청하거나,',
+    '     웹 "파일 하나씩 받기"의 .ahk(AutoHotkey) 방식을 쓰세요. 백신을 직접 끄지는 마세요.',
     '',
     '[주의]',
     '  이미지를 찍을 때와 실행할 때의 화면 해상도·배율(100/125/150%)이 같아야 이미지를 찾아요.',
@@ -3941,7 +3960,7 @@ const HELP = `
 <li><b>클릭이 빗나가요</b> → 좌표는 화면 배율(125·150%)과 상관없이 <b>실제 픽셀</b> 기준이에요. 꼭 START 메뉴 <b>[좌표 찾기]</b>로 잰 숫자를 쓰고, 해상도를 바꿨다면 다시 재세요. 위치가 자주 바뀌면 이미지·글자 찾기를 쓰세요.</li>
 <li><b>왼쪽·위쪽 모니터</b>는 좌표가 <b>음수</b>(−)예요. 숫자 칸 옆 <b>±</b> 단추로 부호를 바꿔요(휴대폰 숫자 자판엔 − 키가 없어서).</li>
 <li><b>F7~F10</b>은 매크로가 도는 동안 <b>매크로 전용</b>이라 엑셀 등 다른 프로그램엔 전달되지 않아요(무설치·.ahk·파이썬). 이미지 파일이 없으면 "안 보임"으로 넘기지 않고 오류로 멈춰 알려줘요.</li>
-<li><b>실행이 막혀요</b> → 회사 보안 프로그램이 스크립트를 막은 경우예요(관리자 문의).</li>
+<li><b>실행이 막혀요</b> / <b>"악성 콘텐츠 … 백신에 의해 차단"</b> → 회사 백신이 .ps1 을 오해해 막은 경우예요. 최신 판으로 다시 받아 덮어 보고, 그래도 막히면 IT 담당자에게 macro-studio 폴더 예외 등록을 요청하거나 <b>.ahk</b>(파일 하나씩 받기)를 쓰세요. 백신을 직접 끄지는 마세요.</li>
 <li><b>너무 빨리 지나가요</b> → "동작 사이 텀"이나 중간 "대기"를 늘리세요.</li>
 <li>만든 내용은 <b>이 기기(브라우저)에만</b> 저장돼요. 기기를 바꾸면 "전체 백업"으로 옮기세요.</li>
 </ul>
