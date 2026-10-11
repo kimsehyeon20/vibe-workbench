@@ -196,9 +196,9 @@ const CTRL_KEYS = { pauseLabel: 'F8', stopLabel: 'F9', startNowLabel: 'F7', rest
 /* 이름 정리 — 이미지 파일·변수 이름에 쓰면 안 되는 글자를 뺌.
    변수·이미지·별명은 서로 다른 칸에 저장되고 코드에서도 "문자열 열쇠"로만 쓰여, 이름이 겹쳐도 서로 섞이지 않음 */
 function cleanImgName(v) { return String(v == null ? '' : v).replace(/\.png$/i, '').replace(/[\\/:*?"<>|\r\n\t`]/g, '').trim().slice(0, 60); }
-function cleanVarName(v) { return String(v == null ? '' : v).replace(/[{}=\r\n\t`]/g, '').trim().slice(0, 40); }
+function cleanVarName(v) { return String(v == null ? '' : v).replace(/[{}=\r\n\t`]/g, '').trim().replace(/^#+\s*/, '').slice(0, 40); }   // # 로 시작하면 variables.txt 에서 메모 줄이 돼서 뗌
 function imgDirOf(l) { const d = String((l && l.imgDir) || '').replace(/["'`\r\n\t]/g, '').trim().replace(/[\\/]+$/, ''); return d || 'images'; }
-function isAbsDir(d) { return /^[A-Za-z]:[\\/]?/.test(d) || /^\\\\/.test(d); }
+function isAbsDir(d) { return /^[A-Za-z]:/.test(d) || /^[\\/]/.test(d); }   // C:… · \\서버 · \폴더 (PowerShell 기준 고정 경로)
 /* 이 작업방에서 쓰는 변수·이미지 이름 목록 */
 function varNames(l) {
   const s = new Set();
@@ -231,7 +231,21 @@ function refreshOrphans(l) {
 
 /* ===== 상태 ===== */
 let state = normalize(store.get(null));
+ensureFolders(); save();
 let activeId = state.loops[0].id;
+
+/* PC 폴더 번호(macro-1, macro-2 …): 한 번 정하면 작업방 이름을 바꾸거나 다른 작업방을 지워도 그대로.
+   번호를 다시 쓰지 않아서 찍어 둔 이미지·variables.txt 가 다른 작업방과 섞이지 않음 */
+function ensureFolders(s = state) {
+  if (!Number.isInteger(s.folderSeq) || s.folderSeq < 0) s.folderSeq = 0;
+  const used = new Set();
+  s.loops.forEach(l => {
+    const m = /^macro-(\d{1,4})$/.exec(l.folder || '');
+    if (m && !used.has(l.folder)) { used.add(l.folder); s.folderSeq = Math.max(s.folderSeq, Number(m[1])); }
+    else l.folder = '';
+  });
+  s.loops.forEach(l => { if (!l.folder) l.folder = `macro-${++s.folderSeq}`; });
+}
 
 function normalize(s) {
   if (!s || !Array.isArray(s.loops) || s.loops.length === 0) s = seed();
@@ -385,6 +399,7 @@ function renderSettings() {
   $('#loop-gap').value = l.gap;
   $('#loop-startat').value = l.startAt || '';
   $('#loop-imgdir').value = l.imgDir || 'images';
+  const pf = $('#loop-folder'); if (pf) pf.textContent = `PC 폴더: macro-studio\\${l.folder}  (이 작업방의 실행 파일·이미지·변수 파일이 여기에)`;
   renderVars();
 }
 $('#loop-name').oninput = e => { activeLoop().name = e.target.value; save(); renderChips(); };
@@ -393,7 +408,7 @@ $('#loop-gap').oninput = e => { activeLoop().gap = Math.max(0, parseFloat(e.targ
 $('#loop-startat').oninput = e => { activeLoop().startAt = e.target.value || ''; save(); };
 $('#loop-imgdir').oninput = e => { activeLoop().imgDir = e.target.value; save(); };
 
-/* 변수 목록 (작업방마다 "처음 값"). 실행 중 "변수에 값 저장"으로 바뀌고, 받은 폴더의 variables.txt 로도 고칠 수 있음 */
+/* 변수 목록 (작업방마다 "처음 값"). 실행 중 "변수에 값 저장"으로 바뀌고, PC 작업방 폴더의 variables.txt 값이 우선 */
 function renderVars() {
   const l = activeLoop(), box = $('#var-list');
   box.innerHTML = '';
@@ -865,7 +880,7 @@ function areaBlock() {
   return chips('찾을 범위', 'area', { screen: '화면 전체', region: '지정한 네모 안만' })
     + (draft.area === 'region'
       ? `<div class="two">${inpNeg('왼쪽 X', 'region.x1')}${inpNeg('위 Y', 'region.y1')}</div><div class="two">${inpNeg('오른쪽 X', 'region.x2')}${inpNeg('아래 Y', 'region.y2')}</div>
-         <p class="hint">범위를 좁히면 더 빠르고, 같은 것이 여러 개일 때 엉뚱한 걸 덜 골라요. "영역 선택 도우미"로 네 숫자를 구하세요.</p>`
+         <p class="hint">범위를 좁히면 더 빠르고, 같은 것이 여러 개일 때 엉뚱한 걸 덜 골라요. START 메뉴의 [영역 선택]으로 네 숫자를 구하세요.</p>`
       : `<p class="hint">지금 <b>화면에 보이는 모습</b>에서 찾아요(뒤에 가려진 창·스크롤 밖은 못 찾아요).</p>`);
 }
 /* 찾은 다음 할 일 */
@@ -1005,7 +1020,7 @@ function fieldsFor(type) {
       const nm = cleanImgName(draft.img) || '이름';
       return `<p class="hint" style="margin-top:0">미리 찍어 둔 <b>그림(버튼·아이콘·글자 모양)</b>을 화면에서 찾아 그 자리를 눌러요. 위치가 바뀌어도 그림으로 찾아갑니다.</p>`
         + inpT('이미지 이름', 'img', '예: 확인버튼', 'list="dl-img"')
-        + `<p class="hint">파일: <code>${escapeHtml(imgDirOf(activeLoop()))}\\${escapeHtml(nm)}.png</code> — 받은 폴더의 "이미지 캡처 도우미"가 이 이름으로 찍어 저장해요. 폴더 위치는 작업방 설정에서 바꿔요.</p>`
+        + `<p class="hint">파일: <code>${escapeHtml(imgDirOf(activeLoop()))}\\${escapeHtml(nm)}.png</code> — PC에서 실행할 때 없으면 "지금 찍을까요?"가 떠요(다시 찍기: START 메뉴 [이미지 찍기]). 폴더 위치는 작업방 설정에서 바꿔요.</p>`
         + areaBlock()
         + inpN('여러 개면 몇 번째', 'nth', 'min="1"')
         + `<p class="hint">위→아래, 왼쪽→오른쪽 순서로 셉니다. 1 = 맨 위 첫 번째. (.ahk 는 첫 번째만)</p>`
@@ -1071,7 +1086,7 @@ function fieldsFor(type) {
         h += draft.op === 'empty'
           ? `<p class="hint"><b>비었음</b> = 화면에서 글자/숫자를 <b>못 읽었거나</b> 변수가 비어 있을 때 맞아요. 인식 오류를 알아내는 데 써요.</p>`
           : `<p class="hint">글자를 못 읽으면(빈 값) "비었음"을 뺀 모든 비교는 <b>안 맞음</b>으로 처리돼요(엉뚱하게 실행되지 않게).</p>`;
-        if (w === 'region') h += `<p class="hint">"영역 선택 도우미"로 드래그해 영역 좌표를 쉽게 구할 수 있어요. 무설치·파이썬 전용.</p>`;
+        if (w === 'region') h += `<p class="hint">START 메뉴의 [영역 선택]으로 드래그해 영역 좌표를 쉽게 구할 수 있어요. 무설치·파이썬 전용.</p>`;
         else h += varHint();
       }
       return h + `<p class="hint" style="margin-top:12px">저장한 뒤 목록에서 이 조건 아래 <b>"맞으면 실행할 동작"</b>·<b>"아니면"</b> 칸에 <b>+ 동작 넣기</b>로 담으세요. 멈추려면 그 안에 <b>🛑 멈춤</b>, 반복을 끝내려면 <b>⏏️ 반복 빠져나가기</b>를 넣어요.</p>`;
@@ -1090,7 +1105,7 @@ function fieldsFor(type) {
 }
 
 function coordHint() {
-  return `<p class="hint">X·Y 숫자를 모르면 "좌표 찾기 도우미"를 받아 PC에서 실행하고, 마우스를 원하는 곳에 올리면 숫자가 보여요.</p>`;
+  return `<p class="hint">X·Y 숫자를 모르면 PC로 받은 폴더의 START 메뉴 [좌표 찾기]를 눌러 마우스를 원하는 곳에 올려 보세요. 숫자가 보여요.</p>`;
 }
 function chk(group, value, label, on) {
   const active = on !== undefined ? on : String(draft[group]) === String(value);
@@ -1242,7 +1257,7 @@ function hideSheet(s, bg) { $(bg).hidden = true; $(s).hidden = true; captureTarg
 /* ===== 작업방 추가/삭제 ===== */
 $('#add-loop').onclick = () => {
   const l = { id: uid(), name: `작업방 ${state.loops.length + 1}`, delay: 3, gap: 0.5, startAt: '', imgDir: 'images', vars: [], steps: [] };
-  state.loops.push(l); activeId = l.id; save(); renderAll();
+  state.loops.push(l); ensureFolders(); activeId = l.id; save(); renderAll();
 };
 function addDeleteLoopButton() {
   if ($('#del-loop')) return;
@@ -1254,13 +1269,13 @@ function addDeleteLoopButton() {
   $('#dup-loop').onclick = () => {
     const src = activeLoop();
     const copy = JSON.parse(JSON.stringify(src));
-    copy.id = uid(); copy.name = src.name + ' 복사';
+    copy.id = uid(); copy.name = src.name + ' 복사'; copy.folder = '';   // 복제본은 새 PC 폴더 (이미지는 따로 찍어요)
     walkSteps(copy.steps, s => s.id = uid());
-    state.loops.push(copy); activeId = copy.id; save(); renderAll(); toast('작업방을 복제했어요');
+    state.loops.push(copy); ensureFolders(); activeId = copy.id; save(); renderAll(); toast('작업방을 복제했어요');
   };
   $('#del-loop').onclick = () => {
     if (state.loops.length <= 1) { toast('마지막 작업방은 지울 수 없어요'); return; }
-    if (!confirm(`"${activeLoop().name}" 작업방을 삭제할까요?`)) return;
+    if (!confirm(`"${activeLoop().name}" 작업방을 삭제할까요?\n(PC의 macro-studio\\${activeLoop().folder} 폴더는 저절로 지워지지 않아요. 필요 없으면 직접 지우세요)`)) return;
     state.loops = state.loops.filter(l => l.id !== activeId);
     activeId = state.loops[0].id; save(); renderAll();
   };
@@ -1520,8 +1535,7 @@ function fileName(base, ext) {
 function stemOf(l) {
   const ascii = String(l.name == null ? '' : l.name).replace(/[^\x20-\x7E]+/g, '').replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '').replace(/-+/g, '-');
   if (ascii.length >= 2) return ascii;
-  const idx = state.loops.indexOf(l);
-  return `macro-${idx >= 0 ? idx + 1 : 1}`;
+  ensureFolders(); return l.folder;   // PC 폴더 번호와 같게 (그 폴더에 넣어 쓰기 쉽게)
 }
 function download(name, data, mime = 'text/plain;charset=utf-8') {
   // .ps1/.ahk 는 윈도우 PowerShell·AutoHotkey가 한글을 깨지 않게 UTF-8 BOM 을 붙임
@@ -1835,7 +1849,7 @@ function ahkFindImg(s) {
   L.push(`    found := FindImage(${path}, ${ahkTol(s)}, ${ahkArea(s)}, ${retries}, ${everyMs}, &fx, &fy)`);
   L.push('    if found');
   L.push('        break');
-  const msg = `(ImgErr = "nofile" ? "이미지 '${ahkStr(name)}' 파일이 없어요 (이미지 캡처 도우미로 찍어 두세요).\`n" : ImgErr = "bad" ? "이미지 '${ahkStr(name)}' 파일을 읽을 수 없어요.\`n" : "이미지 '${ahkStr(name)}' 을(를) 화면에서 찾을 수 없어요 (${retries}번 시도).\`n") ${path}`;
+  const msg = `(ImgErr = "nofile" ? "이미지 '${ahkStr(name)}' 파일이 없어요 (이미지 캡처 도우미나 PC로 받기 폴더의 START 메뉴 [이미지 찍기] 로 찍어 두세요).\`n" : ImgErr = "bad" ? "이미지 '${ahkStr(name)}' 파일을 읽을 수 없어요.\`n" : "이미지 '${ahkStr(name)}' 을(를) 화면에서 찾을 수 없어요 (${retries}번 시도).\`n") ${path}`;
   if (s.notfound === 'continue') {
     L.push('    break   ; 못 찾으면 그냥 넘어감');
   } else if (s.notfound === 'stop') {
@@ -1946,14 +1960,160 @@ function batPick(fileName, suffix) {
   ];
 }
 /* 찾기 실패 이유별 안내 (파일 없음·이미지 기능 없음·OCR 없음) → $msg 덮어쓰기 */
+let psPackMode = false;   // genPS1 이 PC로 받기(macro-studio 폴더)용을 만드는 중인지 → 안내 문구가 달라짐
 function psErrMsgs(imgName) {
   const L = [];
   if (imgName != null) {
-    L.push(`if($script:lastErr -eq 'nofile'){ $msg = ${psStr(`이미지 '${imgName}' 파일이 없어요: `)} + (ImgPath ${psStr(imgName)}) + ${psStr(' — 이미지 캡처 도우미로 이 이름으로 찍어 두세요')} }`);
+    L.push(`if($script:lastErr -eq 'nofile'){ $msg = ${psStr(`이미지 '${imgName}' 파일이 없어요: `)} + (ImgPath ${psStr(imgName)}) + ${psStr(psPackMode ? ' — START 메뉴 [이미지 찍기] 로 찍어 두세요 (다시 실행해도 찍을지 물어봐요)' : ' — 매크로를 다시 실행하면 지금 찍을지 물어봐요')} }`);
     L.push(`if($script:lastErr -eq 'noimg'){ $msg = '이 PC에서 이미지 찾기 기능을 쓸 수 없어요 (실행 창 맨 위의 [주의] 참고)' }`);
   }
   L.push(`if($script:lastErr -eq 'noocr'){ $msg = '이 PC에서 화면 글자 읽기(OCR)를 쓸 수 없어요' }`);
   return L;
+}
+/* 맨 위에 뜨는 알림 창 + 이미지 찍기(작업방마다 macro.ps1 안에) + 변수 파일 만들기 → 따로 된 캡처 도우미가 필요 없음 */
+function psAskTop() {
+  return [
+    '# 맨 위에 뜨는 알림 창 (검은 창 뒤에 숨지 않게). 누른 단추(OK/Yes/No/Cancel)를 글자로 돌려줌',
+    'function AskTop($text, $btn){',
+    '  $o = New-Object System.Windows.Forms.Form',
+    '  $o.TopMost = $true; $o.ShowInTaskbar = $false; $o.Opacity = 0; $o.FormBorderStyle = "None"; $o.StartPosition = "CenterScreen"; $o.Size = New-Object System.Drawing.Size 1,1',
+    '  $o.Show()',
+    '  try { return [string][System.Windows.Forms.MessageBox]::Show($o, [string]$text, "매크로 설계소", [System.Windows.Forms.MessageBoxButtons]$btn) } finally { $o.Close(); $o.Dispose() }',
+    '}',
+  ];
+}
+function psCaptureFns() {
+  return [
+    ...psSnipFn(),
+    '# 드래그로 긁은 부분을 이미지 폴더에 "이름.png" 로 저장 (Esc 면 $false)',
+    'function Shoot($name){',
+    '  while($true){',
+    '    $r = Snip',
+    '    if($r -eq "esc"){ return $false }',
+    '    if($r -eq "ok"){ break }',
+    "    $null = AskTop '너무 작아요. 조금 더 크게 드래그하세요.' 'OK'",
+    '  }',
+    '  Start-Sleep -Milliseconds 200',
+    '  $bmp = New-Object System.Drawing.Bitmap $script:rect.Width, $script:rect.Height',
+    '  $g = [System.Drawing.Graphics]::FromImage($bmp)',
+    '  $g.CopyFromScreen($script:vsLeft + $script:rect.X, $script:vsTop + $script:rect.Y, 0, 0, (New-Object System.Drawing.Size $script:rect.Width, $script:rect.Height))',
+    '  $g.Dispose()',
+    '  $out = ImgPath $name',
+    '  $bmp.Save($out, [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()',
+    '  Write-Host ("저장했어요: " + $out)',
+    '  return $true',
+    '}',
+    '# 이미지 찍기: 찍는 동안 검은 창은 내려 둠. $askEach = 이미 있는 것도 다시 찍을지 물어봄',
+    'function CaptureImages($list, $askEach){',
+    '  if(-not (Test-Path -LiteralPath $IMGDIR)){ New-Item -ItemType Directory -Path $IMGDIR -Force | Out-Null }',
+    '  [U]::MinCon()',
+    '  try {',
+    '    foreach($nm in @($list)){',
+    '      if($askEach -and (Test-Path -LiteralPath (ImgPath $nm))){',
+    "        $a = AskTop (\"'\" + $nm + \"' 이미지가 이미 있어요. 다시 찍을까요?`n[예] 다시 찍기   [아니요] 그대로 두고 다음   [취소] 그만\") 'YesNoCancel'",
+    "        if($a -eq 'Cancel'){ break }",
+    "        if($a -eq 'No'){ continue }",
+    '      } else {',
+    "        $a = AskTop (\"찍을 이미지:  \" + $nm + \"`n`n찾을 버튼·그림이 화면에 보이게 띄운 뒤 [확인]을 누르세요.`n화면이 어두워지면 그 부분을 마우스로 드래그해 긁어요. (Esc = 그만)\") 'OKCancel'",
+    "        if($a -eq 'Cancel'){ break }",
+    '      }',
+    '      if(-not (Shoot $nm)){ break }',
+    '    }',
+    '  } finally { [U]::RestoreCon() }',
+    '}',
+  ];
+}
+/* variables.txt 첫머리 (웹에서 받는 zip 에는 이 파일을 넣지 않음 → PC에서 고친 값이 덮어써지지 않음) */
+const VARS_HEAD = ['# 변수 값 (한 줄에 하나:  이름=값 )   # 로 시작하는 줄은 메모예요.',
+  '# 여기서 고친 값이 우선이에요. 안 고친 값은 웹에서 바꾸면 다음 실행 때 따라 바뀌어요. 웹 값으로 되돌리려면 그 줄을 지우세요.'];
+function psVarsFileFns(l, pack) {
+  if (!pack) return ['function EnsureVarsFile(){}   # 따로 받은 파일은 variables.txt 를 만들지 않음 (직접 만든 파일만 읽음)', 'function CheckOwner(){}'];
+  const vs = (l.vars || []).map(v => ({ n: cleanVarName(v.name), v: String(v.value ?? '').replace(/[\r\n]+/g, ' ') })).filter(x => x.n);
+  const dir = imgDirOf(l);
+  const segs = dir.replace(/\\/g, '/').split('/').filter(x => x && x !== '.');
+  const inside = !isAbsDir(dir) && segs.length > 0 && !segs.includes('..');   // 이미지 폴더가 이 작업방 폴더 "안의 하위 폴더"일 때만 옛 이미지를 치움
+  return [
+    '# 변수 파일(variables.txt): 없으면 웹의 처음 값으로 만듦. PC에서 고친 값은 그대로 두고, 안 고친 값은 웹에서 바뀌면 따라 바꿈',
+    '# (.variables-web.txt = 마지막으로 적어 준 웹 값 기록. 숨김 파일)',
+    `$script:VarNames = @(${vs.map(x => psStr(x.n)).join(', ')})`,
+    `$script:VarVals = @(${vs.map(x => psStr(x.v)).join(', ')})`,
+    'function WriteHiddenText($path, $text){',
+    '  if(Test-Path -LiteralPath $path){ try { [System.IO.File]::SetAttributes($path, [System.IO.FileAttributes]::Normal) } catch {} }',
+    '  [System.IO.File]::WriteAllText($path, $text, (New-Object System.Text.UTF8Encoding($true)))',
+    '  try { [System.IO.File]::SetAttributes($path, [System.IO.FileAttributes]::Hidden) } catch {}',
+    '}',
+    'function EnsureVarsFile(){',
+    '  if($script:VarNames.Count -eq 0){ return }',
+    "  $vf = Join-Path $PSScriptRoot 'variables.txt'",
+    "  $sf = Join-Path $PSScriptRoot '.variables-web.txt'",
+    '  $nl = "`r`n"',
+    '  try {',
+    "    $web = New-Object 'System.Collections.Generic.Dictionary[string,string]'",
+    '    for($i = 0; $i -lt $script:VarNames.Count; $i++){ $web[[string]$script:VarNames[$i]] = [string]$script:VarVals[$i] }',
+    "    $side = New-Object 'System.Collections.Generic.Dictionary[string,string]'",
+    '    if(Test-Path -LiteralPath $sf){ foreach($ln in @(Get-Content -LiteralPath $sf -Encoding UTF8)){ $t = [string]$ln; $q = $t.IndexOf("="); if($q -gt 0){ $side[$t.Substring(0, $q)] = $t.Substring($q + 1) } } }',
+    '    $sideOld = ($side.Keys | ForEach-Object { $_ + "=" + $side[$_] }) -join $nl',
+    '    if(-not (Test-Path -LiteralPath $vf)){',
+    `      $lines = @(${VARS_HEAD.map(psStr).join(', ')})`,
+    '      foreach($k in $web.Keys){ $lines += ($k + "=" + $web[$k]) }',
+    '      [System.IO.File]::WriteAllText($vf, (($lines -join $nl) + $nl), (New-Object System.Text.UTF8Encoding($true)))',
+    '      $side.Clear(); foreach($k in $web.Keys){ $side[$k] = $web[$k] }',
+    '      Write-Host ("variables.txt 를 만들었어요 (변수 값은 여기서 고쳐요): " + $vf)',
+    '    } else {',
+    '      $lines = New-Object System.Collections.ArrayList',
+    '      foreach($ln in @(Get-Content -LiteralPath $vf -Encoding UTF8)){ [void]$lines.Add([string]$ln) }',
+    "      $cur = New-Object 'System.Collections.Generic.Dictionary[string,string]'",
+    '      foreach($t in $lines){ if($t.TrimStart().StartsWith("#")){ continue }; $q = $t.IndexOf("="); if($q -gt 0){ $cur[$t.Substring(0, $q).Trim()] = $t.Substring($q + 1) } }',
+    '      $add = @(); $upd = @()',
+    '      foreach($k in $web.Keys){',
+    '        $w = $web[$k]',
+    '        if(-not $cur.ContainsKey($k)){ $add += ($k + "=" + $w); $side[$k] = $w; continue }',
+    '        # 파일 값이 지난번에 적어 준 웹 값 그대로(= PC에서 안 고침)이고 웹 값이 바뀌었으면 → 새 웹 값으로',
+    '        if($side.ContainsKey($k) -and ($cur[$k] -ceq $side[$k]) -and ($w -cne $side[$k])){',
+    '          for($j = 0; $j -lt $lines.Count; $j++){ $t = [string]$lines[$j]; if($t.TrimStart().StartsWith("#")){ continue }; $q = $t.IndexOf("="); if($q -gt 0 -and ($t.Substring(0, $q).Trim() -ceq $k)){ $lines[$j] = $t.Substring(0, $q + 1) + $w } }',
+    '          $side[$k] = $w; $upd += $k',
+    '        }',
+    '      }',
+    '      if($add.Count -gt 0){ [void]$lines.Add("# 웹에서 새로 생긴 변수"); foreach($x in $add){ [void]$lines.Add($x) } }',
+    '      if($add.Count -gt 0 -or $upd.Count -gt 0){',
+    '        [System.IO.File]::WriteAllText($vf, (($lines -join $nl) + $nl), (New-Object System.Text.UTF8Encoding($true)))',
+    '        if($add.Count -gt 0){ Write-Host ("variables.txt 에 새 변수를 더했어요: " + (($add | ForEach-Object { $_.Substring(0, $_.IndexOf("=")) }) -join ", ")) }',
+    '        if($upd.Count -gt 0){ Write-Host ("variables.txt 를 웹의 새 값으로 바꿨어요(PC에서 안 고친 것만): " + ($upd -join ", ")) }',
+    '      }',
+    '    }',
+    '    $sideNew = ($side.Keys | ForEach-Object { $_ + "=" + $side[$_] }) -join $nl',
+    '    if($sideNew -cne $sideOld -or -not (Test-Path -LiteralPath $sf)){ WriteHiddenText $sf ($sideNew + $nl) }',
+    "  } catch { Write-Host ('[주의] variables.txt 를 만들거나 고치지 못했어요(메모장으로 열려 있으면 닫아 주세요): ' + $_.Exception.Message) -ForegroundColor Yellow }",
+    '}',
+    '# 이 폴더의 주인(작업방) 확인: 전에 다른 작업방이 쓰던 폴더면 옛 이미지·변수 파일이 섞이지 않게 치울지 물어봄',
+    `$script:OwnerId = ${psStr(l.id)}`,
+    `$script:OwnerName = ${psStr(String(l.name || '').replace(/[\r\n]/g, ' '))}`,
+    'function CheckOwner(){',
+    "  $of = Join-Path $PSScriptRoot '.owner'",
+    '  try {',
+    '    $old = @(); if(Test-Path -LiteralPath $of){ $old = @(Get-Content -LiteralPath $of -Encoding UTF8) }',
+    '    $oldId = if($old.Count -gt 0){ ([string]$old[0]).Trim() } else { "" }',
+    '    if($oldId -ceq $script:OwnerId){ return }',
+    '    if($oldId -ne ""){',
+    '      $oldName = if($old.Count -gt 1){ [string]$old[1] } else { "다른 작업방" }',
+    '      $a = AskTop ("이 폴더(" + (Split-Path -Leaf $PSScriptRoot) + ")는 전에 \'" + $oldName + "\' 작업방이 쓰던 곳이에요.`n그 작업방이 찍은 이미지·변수 값이 남아 있어 섞일 수 있어요.`n`n[예] 옛 이미지·변수 파일을 따로 치워 두고 새로 시작 (권장)`n[아니요] 그대로 같이 쓰기") \'YesNo\'',
+    "      if($a -eq 'Yes'){",
+    "        $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'",
+    '        try {',
+    ...(inside ? ['          $sep = [System.IO.Path]::DirectorySeparatorChar; $full = [System.IO.Path]::GetFullPath($IMGDIR).TrimEnd($sep); $base = [System.IO.Path]::GetFullPath($PSScriptRoot).TrimEnd($sep)',
+      '          if($full.StartsWith($base + $sep, [System.StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $full)){ Rename-Item -LiteralPath $full -NewName ((Split-Path -Leaf $full) + "-old-" + $stamp) -Force -ErrorAction Stop }'] : []),
+    "          foreach($fn in @('variables.txt', '.variables-web.txt')){ $p = Join-Path $PSScriptRoot $fn; if(Test-Path -LiteralPath $p){ Rename-Item -LiteralPath $p -NewName ($fn.Replace('.txt', '-old-' + $stamp + '.txt')) -Force -ErrorAction Stop } }",
+    '        } catch {',
+    "          $null = AskTop ('옛 파일을 옮기지 못했어요: ' + $_.Exception.Message + \"`n`n이미지 보기 창·메모장 등 그 파일을 연 프로그램을 닫고 다시 실행해 주세요.\") 'OK'",
+    '          exit',
+    '        }',
+    '        Write-Host "옛 파일은 -old- 가 붙은 이름으로 남겨 뒀어요 (필요 없으면 지워도 돼요)."',
+    '      }',
+    '    }',
+    '    WriteHiddenText $of ($script:OwnerId + "`r`n" + $script:OwnerName + "`r`n")',
+    "  } catch { Write-Host ('[주의] 폴더 주인 확인을 못 했어요: ' + $_.Exception.Message) -ForegroundColor Yellow }",
+    '}',
+  ];
 }
 /* 화면 글자 읽기(OCR)·이미지 찾기가 필요한 동작이 있는지 */
 function needsOcr(steps) {
@@ -1962,12 +2122,15 @@ function needsOcr(steps) {
 }
 function needsImg(steps) { return anyStep(steps, s => s.type === 'imgclick' || (s.type === 'if' && s.what === 'img')); }
 
-function genPS1(l) {
+function genPS1(l, opts = {}) {
   refreshOrphans(l);
+  const pack = !!opts.pack;   // PC로 받기(macro-studio 폴더) 안의 macro.ps1 이면 true
+  psPackMode = pack;
   const P = [];
   P.push('# -*- 매크로: ' + (l.name || '').replace(/[\r\n]/g, ' ') + ' -*-');
-  P.push('# 설치가 필요 없습니다. 함께 받은 "...-noinstall.bat"(폴더로 받았다면 "1-run-macro.bat") 를 더블클릭하세요.');
+  P.push('# 설치가 필요 없습니다. macro-studio 폴더의 START.bat(메뉴) 또는 이 폴더의 RUN.bat 을 더블클릭하세요. (따로 받았다면 "...-noinstall.bat")');
   P.push(`# 단축키:  ${CTRL_KEYS.pauseLabel} = 일시정지/재생   ${CTRL_KEYS.stopLabel} = 종료   ${CTRL_KEYS.restartLabel} = 처음부터 다시 실행`);
+  P.push('param([switch]$Capture, [switch]$EditVars)   # -Capture = 이미지만 찍기, -EditVars = 변수 파일 열기 (START 메뉴가 씀)');
   P.push('try { chcp 65001 > $null } catch {}');
   P.push('try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}');
   P.push(...psDpiFix());
@@ -2023,6 +2186,9 @@ function genPS1(l) {
   P.push('    } catch { }');
   P.push('  }');
   P.push('  // 멈춤으로 끝날 때: 실행 창을 앞으로');
+  P.push('  // 이미지를 찍는 동안 검은 창을 내려 둠 / 다시 올림');
+  P.push('  public static void MinCon() { IntPtr h = Con(); if (h != IntPtr.Zero) ShowWindow(h, 6); }');
+  P.push('  public static void RestoreCon() { IntPtr h = Con(); if (h != IntPtr.Zero) ShowWindow(h, 9); }');
   P.push('  public static void FrontCon() { IntPtr h = Con(); if (h == IntPtr.Zero) return; try { if (IsIconic(h)) ShowWindow(h, 9); SetWindowPos(h, new IntPtr(-1), 0, 0, 0, 0, 0x53); SetWindowPos(h, new IntPtr(-2), 0, 0, 0, 0, 0x53); SetForegroundWindow(h); } catch { } }');
   P.push('}');
   P.push('public struct POINT { public int X; public int Y; }');
@@ -2031,7 +2197,6 @@ function genPS1(l) {
   P.push('Add-Type -AssemblyName System.Windows.Forms');
   P.push('Add-Type -AssemblyName System.Drawing');
   P.push('[U]::NoQuickEdit()');
-  P.push('[U]::HookKeys()');
   P.push('');
   P.push('$script:paused = $false');
   P.push('$script:canRestart = $false');
@@ -2127,13 +2292,37 @@ function genPS1(l) {
   P.push("function ImgPath($name){ return (Join-Path $IMGDIR ([string]$name + '.png')) }");
   if (needsOcr(l.steps)) P.push(...psOcrFuncs());
   if (needsImg(l.steps)) P.push(...psImgFuncs());
+  const need = imgNames(l);
+  P.push(`$script:ImgsNeeded = @(${need.map(psStr).join(', ')})   # 이 매크로가 찾는 이미지 이름`);
+  P.push('function MissingImages(){ return @($script:ImgsNeeded | Where-Object { -not (Test-Path -LiteralPath (ImgPath $_)) }) }');
+  P.push(...psAskTop());
+  if (need.length) P.push(...psCaptureFns());
+  P.push(...psVarsFileFns(l, pack));
+  P.push('# START 메뉴의 [변수 고치기] / [이미지 찍기] 로 불렸을 때는 그 일만 하고 끝냄');
+  P.push('if($EditVars){');
+  P.push('  CheckOwner; EnsureVarsFile');
+  P.push("  $vf = Join-Path $PSScriptRoot 'variables.txt'");
+  P.push(`  if(Test-Path -LiteralPath $vf){ Start-Process notepad.exe -ArgumentList ('"' + $vf + '"') } else { $null = AskTop '이 작업방은 변수를 쓰지 않아요.' 'OK' }`);
+  P.push('  exit');
+  P.push('}');
+  P.push('if($Capture){');
+  P.push(need.length ? '  CheckOwner; CaptureImages $script:ImgsNeeded $true' : "  $null = AskTop '이 작업방은 이미지 찾기를 쓰지 않아요.' 'OK'");
+  P.push('  exit');
+  P.push('}');
   P.push('');
   P.push('# ==== RUN ====');
   P.push(`Write-Host "단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.restartLabel} 재실행 (실행 중엔 이 키들이 다른 프로그램에 전달되지 않아요)"`);
-  const need = imgNames(l);
-  if (need.length) {   // 시작 전에 빠진 이미지 파일을 한 번에 알려줌
-    P.push(`foreach($n in @(${need.map(psStr).join(', ')})){ if(-not (Test-Path -LiteralPath (ImgPath $n))){ Write-Host ("[주의] 이미지 파일이 없어요: " + (ImgPath $n) + "  -> 이미지 캡처 도우미로 찍어 두세요") -ForegroundColor Yellow } }`);
+  P.push('CheckOwner');
+  P.push('EnsureVarsFile');
+  if (need.length) {   // 빠진 이미지가 있으면 시작 전에 바로 찍을지 물어봄
+    P.push('$miss = @(MissingImages)');
+    P.push('if($miss.Count -gt 0){');
+    P.push('  $ans = AskTop ("이 매크로에 필요한 이미지 " + $miss.Count + "개가 아직 없어요:`n" + ($miss -join ", ") + "`n`n지금 찍을까요?`n[예] 지금 찍기   [아니요] 그냥 시작") \'YesNo\'');
+    P.push("  if($ans -eq 'Yes'){ CaptureImages $miss $false }");
+    P.push(`  foreach($n in @(MissingImages)){ Write-Host ("[주의] 이미지 파일이 없어요: " + (ImgPath $n) + "  -> ${pack ? 'START 메뉴 [이미지 찍기] 로 찍어 두세요' : '다시 실행하면 찍을지 물어봐요'}") -ForegroundColor Yellow }`);
+    P.push('}');
   }
+  P.push('[U]::HookKeys()   # 여기서부터 F7~F10 은 매크로 전용');
   const p = hhmmParts(l.startAt);
   if (p) {
     P.push(`# 예약 시작: 다음 ${l.startAt} 까지 대기 (${CTRL_KEYS.startNowLabel} 즉시 시작)`);
@@ -3190,7 +3379,7 @@ function genImageCapturer(names, imgDir) {
     'if(-not (Test-Path -LiteralPath $dir)){ New-Item -ItemType Directory -Path $dir -Force | Out-Null }',
     `$need = @(${list.map(psStr).join(', ')})`,
     ...psSnipFn(),
-    'function Clean($n){ return ([string]$n -replace \'[\\\\/:*?"<>|`]\', \'\').Trim() }',
+    'function Clean($n){ return (([string]$n -replace \'[\\\\/:*?"<>|`]\', \'\') -replace \'\\.png$\', \'\').Trim() }   # 끝의 .png 는 뗌',
     '# 드래그로 찍어 저장 (Esc 면 $false)',
     'function Shoot($name){',
     '  while($true){',
@@ -3272,88 +3461,222 @@ function ahkLostExit(l) {
     && anyStep([...(s.children || []), ...(s.elseChildren || [])], x => x.type === 'stop' || x.type === 'break'));
 }
 
-function readmeText(l, names) {
-  const dir = imgDirOf(l);
-  const vars = (l.vars || []).map(v => cleanVarName(v.name)).filter(Boolean);
+/* =========================================================
+   PC로 받기: macro-studio 폴더 하나 (작업방마다 macro-N 폴더 + START.bat 메뉴 + 공용 도구)
+   - zip 에는 웹이 만드는 파일만 넣음. PC에서 생기는 파일(images·variables.txt)은 절대 넣지 않음
+     → 새 zip 을 기존 폴더에 덮어 풀어도 찍은 이미지·고친 변수 값은 그대로
+   ========================================================= */
+const NOEXT_BAT = [':noext', 'echo.', 'echo  [!] Drag the macro-studio folder OUT of the zip first (to the Desktop), then run START.bat', 'echo.', 'pause'];
+function genStartBat() {
+  // ASCII 만, chcp 없음. 메뉴 창이 검은 창을 숨김. 메뉴 파일에 문법 오류가 있으면 창이 남아 이유를 보여줌
+  return ['@echo off', 'if not exist "%~dp0tools\\menu.ps1" goto noext',
+    'powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0tools\\menu.ps1"',
+    'if errorlevel 1 pause', 'exit /b', ...NOEXT_BAT, ''].join('\r\n');
+}
+function genRunBat() {
+  return ['@echo off', 'if not exist "%~dp0macro.ps1" goto noext',
+    'powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0macro.ps1"',
+    'echo.', 'pause', 'exit /b', ...NOEXT_BAT, ''].join('\r\n');
+}
+/* START 메뉴 (작업방 목록은 tools\macros.json 에서 읽음 → 메뉴 코드는 늘 같음) */
+function genMenu() {
   return [
-    `매크로: ${l.name || ''}`,
-    '만든 곳: 매크로 설계소 (웹)',
+    '# -*- 매크로 설계소 메뉴 -*-  (START.bat 이 여는 창: 작업방을 골라 실행·이미지 찍기·변수 고치기)',
+    'try {',
+    'Add-Type -AssemblyName System.Windows.Forms',
+    'Add-Type -AssemblyName System.Drawing',
+    'Add-Type @"',
+    'using System; using System.Runtime.InteropServices;',
+    'public class MenuWin {',
+    '  [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();',
+    '  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int n);',
+    '}',
+    '"@',
+    '[void][MenuWin]::ShowWindow([MenuWin]::GetConsoleWindow(), 0)   # 검은 창은 숨기고 메뉴만 보이게',
+    '[System.Windows.Forms.Application]::EnableVisualStyles()',
+    '$root = Split-Path -Parent $PSScriptRoot',
+    "$pack = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $PSScriptRoot 'macros.json') | ConvertFrom-Json",
+    '$items = @($pack.macros)',
+    '# 지난번에 본 받기 기록을 모르는(다른 기기에서 따로 고친) 파일로 덮어썼으면 한 번 알려줌. 기록은 숨김 파일 tools\\.seen-pack',
+    'try {',
+    "  $seenFile = Join-Path $PSScriptRoot '.seen-pack'; $cur = [string]$pack.pack; $chain = @(@($pack.chain) | ForEach-Object { [string]$_ })",
+    '  if($cur -ne ""){',
+    '    $seen = ""; if(Test-Path -LiteralPath $seenFile){ $seen = ([System.IO.File]::ReadAllText($seenFile)).Trim() }',
+    '    if($seen -ne "" -and $seen -ne $cur -and -not ($chain -contains $seen)){',
+    '      [void][System.Windows.Forms.MessageBox]::Show("주의: 이 macro-studio 폴더에 덮어쓴 파일은, 지난번에 받은 내용을 모르는 다른 기기(브라우저)에서 받은 거예요.`n두 기기에서 따로 고친 게 있다면 한쪽 내용이 빠졌을 수 있어요.`n`n바로잡기: 가장 최근에 고친 기기에서 [PC로 받기]를 다시 하거나, tools 폴더의 가장 최근 backup 파일을 웹 [불러오기]로 가져온 뒤 다시 받으세요.`n(앞으로는 한 기기에서만 고치고 받는 걸 추천해요)", "매크로 설계소")',
+    '    }',
+    '    if($seen -ne $cur){ if(Test-Path -LiteralPath $seenFile){ [System.IO.File]::SetAttributes($seenFile, [System.IO.FileAttributes]::Normal) }; [System.IO.File]::WriteAllText($seenFile, $cur); try { [System.IO.File]::SetAttributes($seenFile, [System.IO.FileAttributes]::Hidden) } catch {} }',
+    '  }',
+    '} catch {}',
+    "$psExe = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'",
+    "if(-not (Test-Path -LiteralPath $psExe)){ $psExe = 'powershell.exe' }",
+    'function DirOf($m){ return [System.IO.Path]::Combine($root, [string]$m.folder) }',
+    '# 이미지 개수 (없는 드라이브·이상한 경로여도 메뉴는 열리게: 못 세면 ?)',
+    'function HaveImgs($m){',
+    '  try {',
+    '    $d = [string]$m.imgDir; if(-not [System.IO.Path]::IsPathRooted($d)){ $d = [System.IO.Path]::Combine((DirOf $m), $d) }',
+    '    return @(@($m.images) | Where-Object { [System.IO.File]::Exists([System.IO.Path]::Combine($d, [string]$_ + ".png")) }).Count',
+    '  } catch { return "?" }',
+    '}',
+    'function LabelOf($m){',
+    '  $t = [string]$m.name + "    (" + [string]$m.folder + ")"',
+    '  if([int]$m.steps -eq 0){ return ($t + "  · 동작 없음") }',
+    '  $n = @($m.images).Count',
+    '  if($n -gt 0){ $t += ("  · 이미지 " + (HaveImgs $m) + "/" + $n) }',
+    '  if([int]$m.vars -gt 0){ $t += ("  · 변수 " + [int]$m.vars + "개") }',
+    '  return $t',
+    '}',
+    "function RunPs($file, $extra, $style){ Start-Process -FilePath $psExe -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -STA -File \"' + $file + '\"' + $extra) -WindowStyle $style -ErrorAction Stop }",
+    '$form = New-Object System.Windows.Forms.Form',
+    '$form.Text = "매크로 설계소" + $(if($pack.built){ "  (" + [string]$pack.built + " 받음)" } else { "" })',
+    '$form.StartPosition = "CenterScreen"; $form.ClientSize = New-Object System.Drawing.Size 600, 440; $form.MinimumSize = New-Object System.Drawing.Size 460, 360',
+    '$form.Font = New-Object System.Drawing.Font("Malgun Gothic", 10)',
+    '$head = New-Object System.Windows.Forms.Label',
+    '$head.Dock = "Top"; $head.Height = 52; $head.Padding = New-Object System.Windows.Forms.Padding 10, 8, 10, 0',
+    '$head.Text = "작업방을 고르고 [실행]을 누르세요 (두 번 클릭해도 실행).`n이미지가 없으면 실행할 때 지금 찍을지 물어봐요."',
+    '$lb = New-Object System.Windows.Forms.ListBox',
+    '$lb.Dock = "Fill"; $lb.IntegralHeight = $false; $lb.Font = New-Object System.Drawing.Font("Malgun Gothic", 11)',
+    '$bar = New-Object System.Windows.Forms.FlowLayoutPanel',
+    '$bar.Dock = "Bottom"; $bar.Height = 100; $bar.Padding = New-Object System.Windows.Forms.Padding 6',
+    '# 단추마다 오류가 나도 메뉴가 죽지 않고 알림으로 보여줌',
+    'function Btn($text, $act){ $b = New-Object System.Windows.Forms.Button; $b.Text = $text; $b.AutoSize = $true; $b.MinimumSize = New-Object System.Drawing.Size 90, 36; $b.Tag = $act; $b.Add_Click({ param($sender, $e) try { & $sender.Tag } catch { Say ("오류: " + $_.Exception.Message) } }); [void]$bar.Controls.Add($b); return $b }',
+    'function Sel(){ $i = $lb.SelectedIndex; if($i -lt 0 -or $i -ge $items.Count){ return $null }; return $items[$i] }',
+    'function Say($t){ [void][System.Windows.Forms.MessageBox]::Show($form, [string]$t, "매크로 설계소") }',
+    'function Fill(){',
+    '  $keep = $lb.SelectedIndex; $lb.BeginUpdate(); $lb.Items.Clear()',
+    '  foreach($m in $items){ $t = [string]$m.name + "    (" + [string]$m.folder + ")"; try { $t = LabelOf $m } catch {}; [void]$lb.Items.Add($t) }',
+    '  if($items.Count -eq 0){ [void]$lb.Items.Add("(작업방이 없어요 — 웹에서 만든 뒤 다시 받으세요)") }',
+    '  $lb.EndUpdate()',
+    '  if($items.Count -gt 0){ $lb.SelectedIndex = [Math]::Max(0, [Math]::Min($keep, $items.Count - 1)) }',
+    '}',
+    '$bRun = Btn "실행" {',
+    '  $m = Sel; if(-not $m){ return }',
+    "  $bat = Join-Path (DirOf $m) 'RUN.bat'",
+    '  if(-not (Test-Path -LiteralPath $bat)){ Say ("실행 파일이 없어요: " + $bat); return }',
+    "  Start-Process -FilePath $env:ComSpec -ArgumentList ('/c \"\"' + $bat + '\"\"') -WorkingDirectory (DirOf $m) -ErrorAction Stop   # cmd 로 열면 받은 파일 보안 경고가 매번 뜨지 않음",
+    '  $form.Close()',
+    '}',
+    '$bCap = Btn "이미지 찍기" {',
+    '  $m = Sel; if(-not $m){ return }',
+    '  if(@($m.images).Count -eq 0){ Say "이 작업방은 이미지 찾기를 쓰지 않아요."; return }',
+    "  RunPs (Join-Path (DirOf $m) 'macro.ps1') ' -Capture' 'Minimized'",
+    '}',
+    '$bVar = Btn "변수 고치기" {',
+    '  $m = Sel; if(-not $m){ return }',
+    '  if([int]$m.vars -eq 0){ Say "이 작업방은 변수를 쓰지 않아요."; return }',
+    "  RunPs (Join-Path (DirOf $m) 'macro.ps1') ' -EditVars' 'Hidden'",
+    '}',
+    '$bDir = Btn "폴더 열기" { $m = Sel; if($m){ Start-Process explorer.exe -ArgumentList (\'"\' + (DirOf $m) + \'"\') -ErrorAction Stop } }',
+    "$bXY = Btn \"좌표 찾기\" { RunPs (Join-Path $PSScriptRoot 'find-xy.ps1') '' 'Hidden' }",
+    "$bReg = Btn \"영역 선택\" { RunPs (Join-Path $PSScriptRoot 'pick-region.ps1') '' 'Hidden' }",
+    '$bEnd = Btn "닫기" { $form.Close() }',
+    '$lb.Add_DoubleClick({ $bRun.PerformClick() })',
+    '$form.AcceptButton = $bRun; $form.CancelButton = $bEnd',
+    '$form.Add_Activated({ Fill })   # 이미지를 찍고 돌아오면 개수를 다시 셈',
+    '$form.Controls.Add($lb); $form.Controls.Add($bar); $form.Controls.Add($head)',
+    'Fill',
+    '[void]$form.ShowDialog()',
+    '} catch {',
+    '  try { [void][MenuWin]::ShowWindow([MenuWin]::GetConsoleWindow(), 5) } catch {}',
+    '  try { [void][System.Windows.Forms.MessageBox]::Show("메뉴를 여는 중 오류가 났어요:`n" + $_.Exception.Message, "매크로 설계소") } catch {}',
+    '  Write-Host ("오류: " + $_.Exception.Message)',
+    '  exit 1',
+    '}',
     '',
-    '[처음 쓰는 법]',
-    '1) 이 zip 파일을 "압축 풀기" 해서 폴더째 원하는 곳(예: 바탕화면)에 두세요.',
-    names.length
-      ? `2) 먼저 "2-capture-images.bat" 를 더블클릭해 필요한 이미지를 찍으세요 → "${dir}" 폴더에 "이름.png" 로 저장돼요.\r\n   필요한 이미지: ${names.join(', ')}`
-      : '2) (이미지 찾기 동작이 없으면 건너뛰세요) 이미지가 필요하면 "2-capture-images.bat" 로 찍어요.',
-    '3) "1-run-macro.bat" 를 더블클릭하면 매크로가 시작돼요. (설치 필요 없음)',
+  ].join('\r\n');
+}
+function countSteps(l) { let n = 0; walkSteps(l.steps, () => n++); return n; }
+function packList() {
+  return state.loops.map(l => ({ folder: l.folder, name: String(l.name || '').replace(/[\r\n]/g, ' '), steps: countSteps(l),
+    images: imgNames(l), imgDir: imgDirOf(l), vars: (l.vars || []).filter(v => cleanVarName(v.name)).length }));
+}
+function packReadme(list, built) {
+  return [
+    '매크로 설계소 — PC 실행 폴더' + (built ? `   (${built} 받음)` : ''),
+    '',
+    '[늘 이것만]  START.bat 더블클릭 → 작업방 고르고 [실행]',
+    '',
+    '[처음 한 번]',
+    '1) macro-studio.zip 을 더블클릭해 열고, 안의 macro-studio 폴더를 바탕화면으로 끌어다 놓으세요.',
+    '2) 그 폴더의 START.bat 더블클릭 → 작업방을 고르고 [실행].',
+    '   이미지가 필요한 매크로는 처음 실행할 때 "지금 찍을까요?"가 떠요. [예] → 찾을 버튼을 마우스로 드래그.',
+    '',
+    '[웹에서 고쳤거나 작업방을 더했을 때]',
+    '새로 받은 zip 을 열고 macro-studio 폴더를 같은 자리(바탕화면)에 다시 끌어다 놓은 뒤 "파일 바꾸기"를 고르세요.',
+    '찍어 둔 이미지와 variables.txt(PC에서 고친 변수 값)는 zip 에 들어 있지 않아서 그대로 남아요.',
+    '폴더 이름을 바꿨다면, zip 속 macro-studio 폴더를 열어 안의 내용을 전부 그 폴더로 끌어다 놓으세요.',
+    '',
+    '[폴더 안]',
+    '  START.bat         메뉴 (실행 · 이미지 찍기 · 변수 고치기 · 폴더 열기 · 좌표 찾기 · 영역 선택)',
+    '  macro-N\\          작업방 하나에 폴더 하나 (아래 표). RUN.bat = 메뉴 없이 바로 실행',
+    '     images\\           찍은 이미지 (처음 찍을 때 생겨요)',
+    '     variables.txt     변수 값 (처음 실행할 때 생겨요. PC에서 고친 값은 그대로, 안 고친 값은 웹에서 바꾸면 따라 바뀌어요)',
+    '  tools\\            메뉴·좌표 찾기·영역 선택·설계 백업 (열 필요 없음)',
+    '',
+    '[작업방 ↔ 폴더]',
+    ...(list.length ? list.map(m => `  ${m.folder}  =  ${m.name}` + (m.steps ? '' : '  (동작 없음)') + (m.images.length ? `  · 이미지 ${m.images.length}개: ${m.images.join(', ')}` : '') + (m.vars ? `  · 변수 ${m.vars}개` : '')) : ['  (없음)']),
+    '  웹에서 지운 작업방의 폴더는 저절로 지워지지 않아요. 필요 없으면 직접 지우세요.',
     '',
     '[실행 중 단축키]',
     `  ${CTRL_KEYS.pauseLabel} 일시정지/재생   ${CTRL_KEYS.stopLabel} 종료   ${CTRL_KEYS.restartLabel} 처음부터 다시`,
     `  ${CTRL_KEYS.startNowLabel} 예약 시간을 기다리는 중이면 바로 시작 / 오류로 멈췄을 때는 그 동작 건너뛰기`,
-    '  이미지·글자를 끝내 못 찾거나 이미지 파일이 없으면 검은 창이 맨 위에 뜨고 [오류]로 멈춰요. 화면을 맞춘 뒤 F8 = 다시 찾기.',
-    '  매크로가 도는 동안 F7~F10 은 매크로 전용이라 엑셀 등 다른 프로그램에 전달되지 않아요.',
-    '',
-    '[폴더 안 파일]',
-    `  ${dir}\\        찾을 이미지. 같은 이름의 png 로 바꿔 넣으면 그 그림으로 찾아요.`,
-    '  variables.txt  변수 값. "이름=값" 줄을 고치면 웹에서 다시 받지 않아도 그 값으로 실행돼요.',
-    vars.length ? `                 지금 변수: ${vars.join(', ')}` : '                 (변수를 쓰지 않으면 비워 둬도 돼요)',
-    '  macro-design.json  설계도. 웹 매크로 설계소의 [불러오기]로 이 파일(또는 macro.ps1)을 고르면 동작이 그대로 복원돼요.',
-    '  3-find-xy.bat     좌표 찾기 도우미 (클릭할 X·Y 알아내기)',
-    '  4-pick-region.bat 영역 선택 도우미 (드래그한 네모의 좌표 알아내기)',
-    '  option-...        다른 실행 방식(선택): AutoHotkey(.ahk), 파이썬(.py)',
+    '  이미지·글자를 끝내 못 찾으면 검은 창이 맨 위에 뜨고 [오류]로 멈춰요. 화면을 맞춘 뒤 F8 = 다시 찾기.',
     '',
     '[주의]',
-    '  macro.ps1 같은 코드 파일을 직접 고치면, 웹으로 불러올 때 그 고친 내용은 복원되지 않아요.',
-    '  동작은 웹에서 고치고 다시 받으세요. (이미지·variables.txt 는 이 폴더에서 바로 바꿔도 돼요)',
     '  이미지를 찍을 때와 실행할 때의 화면 해상도·배율(100/125/150%)이 같아야 이미지를 찾아요.',
-    '  좌표(X·Y)는 화면 배율과 상관없이 "실제 픽셀" 기준이에요. 꼭 3-find-xy.bat 로 잰 숫자를 쓰세요.',
-    '  같은 파일을 여러 번 받아 "이름 (1).bat" 처럼 번호가 붙어도, 같은 번호의 짝 파일을 실행해요.',
+    '  좌표(X·Y)는 메뉴의 [좌표 찾기]로 잰 숫자를 쓰세요(배율과 상관없이 실제 픽셀 기준).',
+    '  동작은 웹에서 고치고 다시 받으세요. macro.ps1 을 직접 고친 내용은 웹으로 복원되지 않아요.',
+    '  웹 데이터를 잃었거나 다른 기기에서 이어 하려면, tools 폴더의 가장 최근 backup-날짜.json 을 웹 [불러오기]로 고르세요. 모든 작업방이 같은 폴더 번호로 돌아와요.',
+    '  .ahk / .py 를 쓰려면 웹 "파일 하나씩 받기"로 받아 그 작업방 폴더(macro-N)에 넣으세요. 같은 images·variables.txt 를 써요.',
     '',
   ].join('\r\n');
 }
-function variablesText(l) {
-  const rows = (l.vars || []).filter(v => cleanVarName(v.name)).map(v => `${cleanVarName(v.name)}=${String(v.value ?? '').replace(/[\r\n]+/g, ' ')}`);
-  return ['# 변수 값 (한 줄에 하나:  이름=값 )   # 로 시작하는 줄은 메모예요.',
-    '# 여기를 고치면 매크로를 다시 받지 않아도 바뀐 값으로 실행돼요. (웹의 처음 값보다 이 파일이 우선)',
-    ...rows, ''].join('\r\n');
-}
-function imagesReadme(names) {
-  return ['이 폴더에 매크로가 찾을 이미지를 "이름.png" 로 넣어요.',
-    '"2-capture-images.bat" 로 찍으면 자동으로 여기 저장돼요.',
-    names.length ? `필요한 이미지: ${names.map(n => n + '.png').join(', ')}` : '', ''].join('\r\n');
-}
-/* 폴더(zip) 하나에 실행 파일·도우미·이미지 폴더·설계도를 모두 담기 */
-function folderFiles(l, stem) {
-  const T = (name, text, bom) => ({ name: `${stem}/${name}`, data: utf8((bom ? '﻿' : '') + text) });
-  const names = imgNames(l);
-  const dir = imgDirOf(l);
+function nowStamp() { const d = new Date(), z = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}`; }
+/* zip 안 파일 목록. 맨 위는 macro-studio/ 폴더 하나 → 열어서 그 폴더를 끌어다 놓기만 하면 설치·업데이트 */
+function packFiles(built, chain = []) {
+  ensureFolders();
+  const R = 'macro-studio/';
+  const T = (name, text, bom) => ({ name: R + name, data: utf8((bom ? '﻿' : '') + text) });
+  const list = packList();
   const files = [
-    { name: `${stem}/`, data: null },
-    T('README.txt', readmeText(l, names), true),
-    T('1-run-macro.bat', genPSBat(l, 'macro.ps1')),
-    T('macro.ps1', genPS1(l), true),
-    T('2-capture-images.bat', genHelperBat('capture-images.ps1')),
-    T('capture-images.ps1', genImageCapturer(names, dir), true),
-    T('3-find-xy.bat', genHelperBat('find-xy.ps1')),
-    T('find-xy.ps1', genFinder(), true),
-    T('4-pick-region.bat', genHelperBat('pick-region.ps1')),
-    T('pick-region.ps1', genRegionPicker(), true),
-    T('variables.txt', variablesText(l), true),
-    T('macro-design.json', JSON.stringify(designOf(l), null, 2)),
-    T('option-ahk-run.bat', genBAT(l, 'option-ahk-macro.ahk')),
-    T('option-ahk-macro.ahk', genAHK(l), true),
-    T('option-python-macro.py', genPY(l)),
+    { name: R, data: null },
+    T('START.bat', genStartBat()),
+    T('README.txt', packReadme(list, built), true),
+    { name: R + 'tools/', data: null },
+    T('tools/menu.ps1', genMenu(), true),
+    T('tools/find-xy.ps1', genFinder(), true),
+    T('tools/pick-region.ps1', genRegionPicker(), true),
+    T('tools/macros.json', JSON.stringify({ kind: 'macro-studio-pack', v: 1, built: built || '', pack: chain[chain.length - 1] || '', chain, macros: list }, null, 1)),
+    // 받을 때마다 새 이름(덮어써지지 않게) → 웹 데이터를 잃어도 가장 최근 것으로 복원
+    T(`tools/backup-${(built || '').replace(/[^0-9]/g, '').replace(/^(\d{8})(\d{4}).*$/, '$1-$2') || 'latest'}.json`, JSON.stringify({ ...state, packedAt: built || state.packedAt, packIds: chain.length ? chain : state.packIds }, null, 1)),
   ];
-  // 이미지 폴더(상대 경로·영문일 때만 미리 만들어 둠 — 한글 폴더명은 압축 해제 때 깨질 수 있어 도우미가 만들게 둠)
-  if (!isAbsDir(dir) && /^[\x20-\x7E]+$/.test(dir)) {
-    const d = dir.replace(/\\/g, '/');
-    files.splice(1, 0, { name: `${stem}/${d}/`, data: null }, T(`${d}/README.txt`, imagesReadme(names), true));
-  }
+  state.loops.forEach(l => {
+    files.push({ name: `${R}${l.folder}/`, data: null }, T(`${l.folder}/RUN.bat`, genRunBat()), T(`${l.folder}/macro.ps1`, genPS1(l, { pack: true }), true));
+  });
+  // 안전장치: 영문 이름만, PC에서 생기는 파일(이미지·variables.txt)은 절대 넣지 않음
+  const bad = files.filter(f => /[^\x20-\x7E]/.test(f.name) || /(^|\/)variables\.txt$|\.png$|\/images\//i.test(f.name));
+  if (bad.length) throw new Error('pack: ' + bad.map(f => f.name).join(', '));
   return files;
 }
 
 function doExport(kind) {
   const l = activeLoop();
-  if (['ahk', 'ps', 'py', 'zip'].includes(kind)) {
+  if (kind === 'zip') {   // PC로 받기: 모든 작업방을 macro-studio 폴더 하나로
+    const bad = state.loops.filter(x => x.steps.length && hasIssues(x));
+    if (bad.length && !confirm(`입력이 빠진 동작(빨간 ⚠)이 있는 작업방: ${bad.map(x => x.name).join(', ')}\n그대로 받을까요?`)) return;
+    // 이 기기에서 처음 받을 때: PC에 이미 폴더가 있으면 백업부터 가져오라고 안내 (안 그러면 같은 번호 폴더의 실행 파일이 바뀜)
+    if (!state.packedAt && !confirm('이 기기(브라우저)에서 PC로 처음 받아요.\n\nPC에 이미 macro-studio 폴더가 있다면, 먼저 그 폴더 tools 안의 가장 최근 backup-날짜.json 을 아래 [불러오기]로 가져온 뒤 받으세요. 그래야 작업방과 폴더 번호가 그대로 이어져요.\n\n처음 쓰는 거라면 [확인]을 누르세요.')) return;
+    ensureFolders();
+    const built = nowStamp();
+    // 받을 때마다 꼬리표(이 기기에서 이어 온 받기 기록). PC 메뉴가 "더 새 내용을 모르는 기기에서 받은 파일"인지 알아봄
+    const chain = [...(Array.isArray(state.packIds) ? state.packIds : []), 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)].slice(-30);
+    download('macro-studio.zip', zipBytes(packFiles(built, chain)), 'application/zip');
+    state.packedAt = built; state.packIds = chain; save();
+    toast('macro-studio.zip 을 받았어요 — 열어서 macro-studio 폴더를 바탕화면에 끌어다 놓고 START.bat');
+    renderSteps(); renderSettings();   // 내보내며 다른 작업방 기준으로 바뀐 경고 표시를 지금 작업방으로 되돌림
+    return;
+  }
+  if (['ahk', 'ps', 'py'].includes(kind)) {
     if (!l.steps.length) { toast('먼저 동작을 추가하세요'); return; }
     if (hasIssues(l) && !confirm('입력이 빠진 동작이 있어요(빨간 ⚠). 그대로 내보낼까요?')) return;
     if (kind === 'ahk') {
@@ -3361,16 +3684,13 @@ function doExport(kind) {
       if (miss.length) {
         const msg = '.ahk 에서는 아래 기능이 안 돼요(건너뜀):\n- ' + miss.join('\n- ')
           + (ahkLostExit(l) ? '\n\n⚠ 건너뛰는 조건 안의 "멈춤/반복 빠져나가기"도 실행되지 않아, 반복이 스스로 끝나지 않을 수 있어요(F9 또는 Esc로 종료).' : '')
-          + '\n\n이 기능을 쓰려면 "폴더로 받기"나 "무설치(윈도우)"를 쓰세요. 그래도 .ahk 로 받을까요?';
+          + '\n\n이 기능을 쓰려면 "PC로 받기"나 "무설치(윈도우)"를 쓰세요. 그래도 .ahk 로 받을까요?';
         if (!confirm(msg)) return;
       }
     }
   }
   const stem = stemOf(l);
-  if (kind === 'zip') {
-    download(`${stem}.zip`, zipBytes(folderFiles(l, stem)), 'application/zip');
-    toast(`${stem}.zip 을 받았어요 — 압축을 풀고 1-run-macro.bat`);
-  } else if (kind === 'ahk') {
+  if (kind === 'ahk') {
     const ahkName = `${stem}.ahk`;
     download(ahkName, genAHK(l));
     download(`${stem}-run.bat`, genBAT(l, ahkName), 'application/bat');
@@ -3411,7 +3731,12 @@ function importDesignText(text) {
   if (!o) { toast('설계도를 찾지 못했어요 (이 앱에서 받은 파일만 돼요)'); return false; }
   if (Array.isArray(o.loops)) {
     if (!confirm('전체 백업 파일이에요. 지금 작업방들을 모두 이 백업으로 바꿀까요?')) return false;
-    state = normalize(o); activeId = state.loops[0].id;
+    // 폴더 번호: 백업에 없으면 같은 작업방(아이디)이 쓰던 번호를 이어 쓰고, 이 기기에서 이미 쓴 번호는 다시 쓰지 않음
+    const prevSeq = state.folderSeq || 0, prevById = new Map(state.loops.map(x => [x.id, x.folder]));
+    state = normalize(o);
+    state.loops.forEach(x => { if (!x.folder && prevById.has(x.id)) x.folder = prevById.get(x.id); });
+    state.folderSeq = Math.max(Number.isInteger(state.folderSeq) ? state.folderSeq : 0, prevSeq);
+    ensureFolders(); activeId = state.loops[0].id;
     save(); renderAll(); toast('백업을 불러왔어요');
     return true;
   }
@@ -3424,11 +3749,18 @@ function importDesignText(text) {
       if (!have) state.myKeys.push({ id: String(k.id), name: String(k.name || '내 단축키'), combo: String(k.combo || '') });
       else if (have.combo !== k.combo) walkSteps(l.steps || [], s => { if (s.type === 'hotkey' && s.preset === 'my:' + k.id) s.preset = 'custom'; });
     });
-    l.id = uid();
+    // 아이디·PC 폴더 번호는 되도록 그대로 (기기 데이터를 잃고 복원해도 같은 PC 폴더로 이어지게)
+    const srcId = l.id;
+    if (!l.id || state.loops.some(x => x.id === l.id)) l.id = uid();
     walkSteps(l.steps || [], s => { s.id = uid(); });
+    const want = /^macro-\d{1,4}$/.test(l.folder || '') ? l.folder : '';
+    const occ = want && state.loops.find(x => x.folder === want);
+    if (occ && !state.packedAt && occ.id !== srcId) occ.folder = '';   // (같은 작업방을 또 불러온 거면 원래 것이 폴더를 그대로 가짐)   // 아직 PC로 받은 적 없는 기기면 그 번호를 복원하는 작업방에 양보
+    l.folder = want;
     if (state.loops.some(x => x.name === l.name)) l.name = `${l.name || '작업방'} (불러옴)`;
     const fixed = normalize({ screen: state.screen, loops: [l] }).loops[0];
-    state.loops.push(fixed); activeId = fixed.id;
+    state.loops.push(fixed);
+    ensureFolders(); activeId = fixed.id;   // 비워 둔(양보한) 작업방은 여기서 새 번호를 받음
     save(); renderAll(); toast(`"${fixed.name}" 작업방으로 복원했어요`);
     return true;
   }
@@ -3494,12 +3826,12 @@ const HELP = `
 <h4>🔰 처음이세요? — 5분 따라하기</h4>
 <p class="muted small">"한 칸을 복사해서 다른 창에 붙여넣기"를 예로 들게요.</p>
 <ol>
-<li><b>좌표(위치) 알아내기</b>: 아래 내보내기에서 <b>좌표 찾기 도우미</b>를 받아 PC에서 더블클릭해요. 마우스를 <b>복사할 자리</b>에 올리면 <code>X</code>, <code>Y</code> 숫자가 떠요. (붙여넣을 자리도 같은 방법으로)</li>
+<li><b>좌표(위치) 알아내기</b>: 아래 <b>📦 PC로 받기</b>로 받은 폴더의 <code>START.bat</code> → <b>[좌표 찾기]</b>를 눌러요. 마우스를 <b>복사할 자리</b>에 올리면 <code>X</code>, <code>Y</code> 숫자가 떠요. (붙여넣을 자리도 같은 방법으로)</li>
 <li><b>순서 만들기</b>: 아래 <b>+ 동작 추가</b>로 하나씩 쌓아요.
   ① 클릭(복사할 X·Y) → ② 단축키 '복사' → ③ 대기 1초 → ④ 단축키 '창 전환' → ⑤ 클릭(붙여넣을 X·Y) → ⑥ 단축키 '붙여넣기'</li>
 <li><b>확인</b>: <b>▶ 미리보기</b>로 순서가 맞는지 눈으로 봐요(모의 재생).</li>
-<li><b>파일 받기</b>: <b>📦 폴더로 받기</b>를 눌러 zip 을 받아요. 실행 파일·도우미·이미지 폴더가 한 폴더에 다 들어 있어요.</li>
-<li><b>실행</b>: zip 을 <b>압축 풀기</b> → 폴더 안 <code>1-run-macro.bat</code> 더블클릭! <b>시작 전 대기</b> 동안 작업할 창을 띄워 두면 돼요.</li>
+<li><b>파일 받기</b>: <b>📦 PC로 받기</b>를 눌러 <code>macro-studio.zip</code> 을 받아요. 모든 작업방이 <code>macro-studio</code> 폴더 하나에, 작업방마다 폴더(macro-1, macro-2 …)로 들어 있어요.</li>
+<li><b>실행</b>: zip 을 열어 <code>macro-studio</code> 폴더를 바탕화면에 끌어다 놓기 → <code>START.bat</code> 더블클릭 → 작업방 고르고 <b>[실행]</b>! <b>시작 전 대기</b> 동안 작업할 창을 띄워 두면 돼요.</li>
 </ol>
 <div class="warn">급할 땐 <b>${CTRL_KEYS.stopLabel}</b>를 누르면 즉시 멈춰요. 여러 번 돌리려면 동작들을 <b>🔁 반복문</b>에 담으세요.</div>
 
@@ -3523,7 +3855,7 @@ const HELP = `
 
 <h4>🧩 동작 종류</h4>
 <ul>
-<li><b>🌐 주소 열기</b> · <b>🖱️ 마우스 이동</b> · <b>👆 클릭</b> · <b>✋ 드래그</b> · <b>🖲️ 스크롤</b> · <b>⏱️ 대기</b> — 이름 그대로예요. 좌표는 "좌표 찾기 도우미"로.</li>
+<li><b>🌐 주소 열기</b> · <b>🖱️ 마우스 이동</b> · <b>👆 클릭</b> · <b>✋ 드래그</b> · <b>🖲️ 스크롤</b> · <b>⏱️ 대기</b> — 이름 그대로예요. 좌표는 START 메뉴의 <b>[좌표 찾기]</b>로.</li>
 <li><b>⌨️ 단축키</b> — 자주 쓰는 것(복사·붙여넣기·창 닫기·탭 닫기·새로고침·실행창 등)은 목록에서 고르고, 없는 건 <b>✏️ 직접 만들기</b>에서 <b>원하는 키 조합을 글로 적어</b> 만들어요: <code>Ctrl+Shift+N</code>, <code>Win+R</code>, <code>Alt, F, X</code>(쉼표 = 차례로). PC에선 "키보드로 눌러 입력"으로 실제로 눌러서 적을 수도 있어요. 페이지·프로그램마다 단축키가 다르면 그에 맞게 적으면 돼요.<br>
   <b>★ 내 단축키</b>: 만든 조합에 이름("결재창 열기" 등)을 붙여 저장하면 목록에 생겨 어느 작업방에서든 골라 써요. 고치면 그걸 쓰는 모든 동작이 같이 바뀌고, 지워도 쓰던 동작은 같은 키로 남아요.<br>예) 실행창 → 글자 입력 <code>notepad</code> → 단축키 Enter = 메모장 열기</li>
 <li><b>✏️ 글자 입력</b> — <code>{변수이름}</code>을 넣으면 그 값으로 바뀌어요. 무설치·파이썬은 붙여넣기로 넣어 한글도 그대로 들어가요.</li>
@@ -3543,14 +3875,14 @@ const HELP = `
 <li><b>쓰기</b>: 글자 입력·주소·창 제목·찾을 글자·조건 비교값에 <code>{이름}</code>. 예) <code>{고객명}님 안녕하세요</code></li>
 <li><b>읽은 값 담기</b>: "변수에 값 저장 → 화면 영역 읽기"로 화면 글자를, "클립보드"로 복사한 값을 담아요. 이미지·글자 찾기의 <b>"결과를 변수에 저장"</b>은 찾으면 1, 못 찾으면 0.</li>
 <li><b>인식 오류 알아내기</b>: 화면 글자를 못 읽으면 변수가 <b>빈 값</b>이 되고 실행 창에 [주의]가 떠요. 조건 "변수 값 → <b>비었음</b>"으로 오류일 때 다른 동작(멈춤 등)을 하게 할 수 있어요.</li>
-<li><b>폴더에서 바꾸기</b>: 받은 폴더의 <code>variables.txt</code> 에서 <code>이름=값</code>을 고치면 웹에서 다시 받지 않아도 그 값으로 실행돼요.</li>
+<li><b>PC에서 바꾸기</b>: START 메뉴 <b>[변수 고치기]</b>(작업방 폴더의 <code>variables.txt</code>, 처음 실행할 때 생겨요)에서 <code>이름=값</code>을 고치면 PC에서 <b>고친 값은 그대로</b> 쓰고, 안 고친 값은 웹에서 바꾸면 다음 실행 때 따라 바뀌어요. 다시 받아 덮어도 이 파일은 지워지지 않아요. 웹 값으로 되돌리려면 그 줄을 지우세요.</li>
 <li><b>이름이 겹치면?</b> 변수끼리 같은 이름 = 같은 변수예요(설정 목록에 경고 표시). 변수·이미지·반복문 별명은 <b>서로 다른 곳에 저장</b>돼서 이름이 같아도 섞이지 않아요.</li>
 </ul>
 
 <h4>🖼️ 이미지 찾기 — 자세히</h4>
 <ul>
 <li><b>이름·폴더</b>: 동작마다 <b>이미지 이름</b>을 정하면 <code>이미지폴더\\이름.png</code> 를 찾아요. 폴더는 작업방 설정의 <b>이미지 폴더</b>(기본 <code>images</code>, 매크로 폴더 기준. <code>C:\\...</code>처럼 전체 경로도 가능).</li>
-<li><b>찍기</b>: 받은 폴더의 <code>2-capture-images.bat</code> 를 실행하면 <b>이 매크로에 필요한 이름을 차례로</b> 물어보며 찍게 해요. 다른 이름도 직접 정해 더 찍을 수 있어요. 바꾸고 싶으면 같은 이름으로 다시 찍거나 png 파일을 바꿔 넣으세요.</li>
+<li><b>찍기</b>: 실행할 때 없는 이미지가 있으면 <b>"지금 찍을까요?"</b>가 떠요 → [예] → 찾을 버튼을 드래그. 다시 찍으려면 START 메뉴 <b>[이미지 찍기]</b>(작업방마다 그 작업방 이미지만). png 파일을 같은 이름으로 바꿔 넣어도 돼요.</li>
 <li><b>무엇을 보고 찾나</b>: <b>지금 화면에 보이는 모습</b>(모니터 전체)에서 찾아요. 다른 창에 가려졌거나 스크롤 밖에 있으면 못 찾아요. 필요하면 먼저 "창 활성화"로 앞으로 가져오세요.</li>
 <li><b>글자도 되나</b>: 글자를 그림으로 찍으면 <b>그 글꼴·크기·색 그대로일 때만</b> 찾아요. 글자 내용으로 찾으려면 <b>🔤 글자 찾아 클릭</b>(OCR)이 더 튼튼해요.</li>
 <li><b>여러 개 있으면</b>: <b>위→아래, 왼쪽→오른쪽</b> 순서로 셉니다. "몇 번째"로 고르고, <b>"지정한 네모 안만"</b>으로 범위를 좁히면 엉뚱한 걸 덜 골라요(더 빨라요).</li>
@@ -3584,7 +3916,7 @@ const HELP = `
 
 <h4>⌨️ 실행 중 단축키 (모든 파일 공통)</h4>
 <ul>
-<li><b>${CTRL_KEYS.pauseLabel}</b> — 일시정지 / 다시 재생 (오류로 멈췄을 땐 다시 찾기)</li>
+<li><b>${CTRL_KEYS.pauseLabel}</b> — 일시정지 / 다시 재생 (오류로 멈췄을 땐 다시 찾기. .ahk 는 오류 때 알림 창의 [다시 시도]/[무시]/[중단] 단추로 골라요)</li>
 <li><b>${CTRL_KEYS.stopLabel}</b> — 완전 종료 (.ahk 는 Esc 도 종료)</li>
 <li><b>${CTRL_KEYS.restartLabel}</b> — 처음부터 다시 실행 (변수도 처음 값으로)</li>
 <li><b>${CTRL_KEYS.startNowLabel}</b> — 예약 시간을 기다리지 않고 즉시 시작 / 오류로 멈췄을 땐 그 동작 건너뛰기</li>
@@ -3594,9 +3926,11 @@ const HELP = `
 
 <h4>💾 내보내기 · 불러오기</h4>
 <ul>
-<li><b>📦 폴더로 받기 (추천)</b> — zip 하나에 <code>1-run-macro.bat</code>(실행) · <code>2-capture-images.bat</code>(이미지 찍기) · <code>3-find-xy.bat</code> · <code>4-pick-region.bat</code> · <code>images</code> 폴더 · <code>variables.txt</code> · <code>macro-design.json</code>(설계도) · README 가 다 들어 있어요. 압축을 풀어 폴더째 쓰세요.</li>
-<li><b>무설치(윈도우)</b> / <b>.ahk + .bat</b> / <b>.py</b> — 파일만 따로 받기. 이미지는 그 파일 옆 <code>images</code> 폴더에서 찾아요.</li>
-<li><b>불러오기(복원)</b>: 받은 <code>macro-design.json</code> 이나 <b>macro.ps1 / .py / .ahk 파일</b>을 고르거나 내용을 붙여넣으면, 그 매크로가 <b>새 작업방으로 그대로 복원</b>돼요. 파일 끝에 설계도가 함께 들어 있기 때문이에요.</li>
+<li><b>📦 PC로 받기 (추천)</b> — 모든 작업방을 <code>macro-studio</code> 폴더 하나로 받아요.<br>
+<code>START.bat</code>(메뉴: 실행·이미지 찍기·변수 고치기·폴더 열기·좌표 찾기·영역 선택) · 작업방마다 <code>macro-N</code> 폴더(<code>RUN.bat</code>·<code>macro.ps1</code>, PC에서 생기는 <code>images</code>·<code>variables.txt</code>) · <code>tools</code>(공용 도구·백업).<br>
+<b>다시 받았을 땐</b> 새 zip 의 macro-studio 폴더를 같은 자리에 끌어다 놓고 "파일 바꾸기". zip 에는 이미지·variables.txt 가 없어서 <b>찍은 이미지와 고친 변수 값은 그대로</b>예요. 작업방 설정에 이 작업방의 PC 폴더(macro-N)가 보여요.</li>
+<li><b>파일 하나씩 받기 (고급)</b> — 지금 작업방의 무설치(.ps1+.bat) / .ahk / .py, 도우미 단독 파일. .ahk·.py 는 그 작업방 폴더에 넣으면 같은 이미지·변수 파일을 써요.</li>
+<li><b>불러오기(복원)</b>: 받은 <b>macro.ps1 / .py / .ahk</b> 파일을 고르거나 내용을 붙여넣으면 그 매크로가 <b>새 작업방으로 그대로 복원</b>돼요(파일 끝에 설계도가 있어요). 웹 데이터를 잃었거나 다른 기기에서 이어 하려면 PC의 <code>macro-studio\\tools</code> 안 <b>가장 최근 backup-날짜.json</b> 을 고르면 모든 작업방이 같은 폴더 번호로 돌아와요.</li>
 <li><b>주의</b>: 코드 파일을 <b>직접 고친 내용</b>은 복원되지 않아요(설계도만 읽어요). 동작 수정은 <b>여기(웹)</b>에서 하고 다시 받으세요. 이미지·variables.txt 는 폴더에서 바로 바꿔도 돼요.</li>
 <li><b>전체 백업 저장 / 불러오기</b> — 모든 작업방을 한 파일로(기기를 바꿀 때).</li>
 </ul>
@@ -3604,7 +3938,7 @@ const HELP = `
 <h4>⚠️ 조심할 점 · 자주 막히는 것</h4>
 <ul>
 <li>회사 보안 규정을 꼭 확인하세요. <b>내부 시스템 정보는 이 앱에 넣지 않아도 됩니다</b>(넣지 마세요).</li>
-<li><b>클릭이 빗나가요</b> → 좌표는 화면 배율(125·150%)과 상관없이 <b>실제 픽셀</b> 기준이에요. 꼭 "좌표 찾기 도우미"로 잰 숫자를 쓰고, 해상도를 바꿨다면 다시 재세요. 위치가 자주 바뀌면 이미지·글자 찾기를 쓰세요.</li>
+<li><b>클릭이 빗나가요</b> → 좌표는 화면 배율(125·150%)과 상관없이 <b>실제 픽셀</b> 기준이에요. 꼭 START 메뉴 <b>[좌표 찾기]</b>로 잰 숫자를 쓰고, 해상도를 바꿨다면 다시 재세요. 위치가 자주 바뀌면 이미지·글자 찾기를 쓰세요.</li>
 <li><b>왼쪽·위쪽 모니터</b>는 좌표가 <b>음수</b>(−)예요. 숫자 칸 옆 <b>±</b> 단추로 부호를 바꿔요(휴대폰 숫자 자판엔 − 키가 없어서).</li>
 <li><b>F7~F10</b>은 매크로가 도는 동안 <b>매크로 전용</b>이라 엑셀 등 다른 프로그램엔 전달되지 않아요(무설치·.ahk·파이썬). 이미지 파일이 없으면 "안 보임"으로 넘기지 않고 오류로 멈춰 알려줘요.</li>
 <li><b>실행이 막혀요</b> → 회사 보안 프로그램이 스크립트를 막은 경우예요(관리자 문의).</li>
