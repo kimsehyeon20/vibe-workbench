@@ -66,14 +66,15 @@
       <label class="field grow">
         <span>이미지 폴더</span>
         <input type="text" id="loop-imgdir" placeholder="images" autocomplete="off">
-        <em>매크로 폴더 안의 이 폴더에서 "이미지이름.png"를 찾아요. 다른 곳이면 C:\업무\그림 처럼 전체 경로</em>
+        <em>PC의 작업방 폴더 안의 이 폴더에서 "이미지이름.png"를 찾아요. 다른 곳이면 C:\업무\그림 처럼 전체 경로</em>
       </label>
     </div>
+    <p class="hint loop-folder" id="loop-folder"></p>
     <div class="vars-box">
       <div class="vars-head"><span>변수 (선택)</span><button class="mini" id="add-var">+ 변수</button></div>
       <p class="vars-empty" id="var-empty">아직 변수가 없어요. 이름 붙인 값을 만들어 글자 입력 등에 <b>{이름}</b>으로 넣을 수 있어요.</p>
       <div id="var-list" class="var-list"></div>
-      <em class="vars-hint">처음 값이에요. 실행 중 "변수에 값 저장"으로 바뀌고, 받은 폴더의 variables.txt 로도 고칠 수 있어요.</em>
+      <em class="vars-hint">처음 값이에요. 실행 중 "변수에 값 저장"으로 바뀌어요. PC에서는 START 메뉴 [변수 고치기](작업방 폴더의 variables.txt)로 고치면 그 값이 우선이에요.</em>
     </div>
   </section>
 
@@ -100,28 +101,32 @@
 
   <!-- 내보내기 -->
   <section class="card export">
-    <h3>이 작업방을 실행 파일로 내보내기</h3>
-    <p class="muted small">먼저 <b>▶ 미리보기</b>로 순서를 확인한 뒤, 내 PC에 맞는 파일을 받으세요.</p>
-    <button class="out zip-out" data-export="zip"><b>📦 폴더로 받기 (zip) · 추천</b><span>실행 파일 + 이미지 캡처·좌표 도우미 + images 폴더 + 변수 파일 + 설계도를 한 폴더에</span></button>
-    <p class="muted small" style="margin:10px 0 0">파일만 따로 받기</p>
-    <div class="export-grid">
-      <button class="out" data-export="ps"><b>무설치 (윈도우)</b><span>설치 없이 더블클릭</span></button>
-      <button class="out" data-export="ahk"><b>.ahk + .bat</b><span>윈도우 · 설치형 · 안정적</span></button>
-      <button class="out" data-export="py"><b>.py (파이썬)</b><span>맥·윈도우 공용</span></button>
-    </div>
-    <div class="export-grid">
-      <button class="out ghost" data-export="finder"><b>좌표 찾기 도우미</b><span>X·Y 숫자 알아내기</span></button>
-      <button class="out ghost" data-export="region"><b>영역 선택 도우미</b><span>조건 네모 좌표</span></button>
-      <button class="out ghost" data-export="imgcap"><b>이미지 캡처 도우미</b><span>찾을 그림 PNG 저장</span></button>
-    </div>
+    <h3>PC로 내보내기</h3>
+    <p class="muted small">먼저 <b>▶ 미리보기</b>로 순서를 확인한 뒤 받으세요.</p>
+    <button class="out zip-out" data-export="zip"><b>📦 PC로 받기 · 모든 작업방 (추천)</b><span>macro-studio 폴더 하나에 작업방마다 폴더 하나 · START.bat 하나로 실행 · 다시 받아 덮어도 찍은 이미지·변수 값은 그대로</span></button>
+    <p class="hint pack-how">zip 을 열고 안의 <b>macro-studio</b> 폴더를 바탕화면에 끌어다 놓으세요(다시 받았을 땐 "파일 바꾸기"). 그다음 <b>START.bat</b> → 작업방 고르고 [실행].</p>
+    <details class="adv-export">
+      <summary>파일 하나씩 받기 (고급 · 지금 작업방만)</summary>
+      <div class="export-grid">
+        <button class="out" data-export="ps"><b>무설치 (윈도우)</b><span>.ps1 + .bat 두 파일</span></button>
+        <button class="out" data-export="ahk"><b>.ahk + .bat</b><span>윈도우 · AutoHotkey 설치형</span></button>
+        <button class="out" data-export="py"><b>.py (파이썬)</b><span>설치형 · 글자 읽기는 윈도우만</span></button>
+      </div>
+      <div class="export-grid">
+        <button class="out ghost" data-export="finder"><b>좌표 찾기 도우미</b><span>X·Y 숫자 알아내기</span></button>
+        <button class="out ghost" data-export="region"><b>영역 선택 도우미</b><span>조건 네모 좌표</span></button>
+        <button class="out ghost" data-export="imgcap"><b>이미지 캡처 도우미</b><span>찾을 그림 PNG 저장</span></button>
+      </div>
+      <p class="hint">PC로 받기 폴더에는 이 도우미들이 START 메뉴에 이미 들어 있어요. .ahk/.py 는 그 작업방 폴더(macro-N)에 넣으면 같은 이미지·변수 파일을 써요.</p>
+    </details>
     <div class="export-grid two-col">
       <button class="out ghost" data-export="backup"><b>전체 백업 저장</b><span>모든 작업방을 파일로</span></button>
-      <button class="out ghost" id="import-btn"><b>불러오기 (복원)</b><span>백업·설계도·받은 .ps1/.py/.ahk</span></button>
+      <button class="out ghost" id="import-btn"><b>불러오기 (복원)</b><span>백업(backup.json)·받은 .ps1/.py/.ahk</span></button>
     </div>
     <input type="file" id="import-file" accept=".json,.ps1,.py,.ahk,.txt,application/json,text/plain" hidden>
     <details class="import-paste">
       <summary>코드·설계도 내용을 붙여넣어 복원</summary>
-      <p class="muted small">받은 <b>macro.ps1 / .py / .ahk</b> 파일이나 <b>macro-design.json</b> 내용을 통째로 붙여넣으면, 그 매크로가 새 작업방으로 그대로 만들어져요. (코드를 직접 고친 부분은 복원되지 않아요 — 동작 수정은 여기서 하세요)</p>
+      <p class="muted small">받은 <b>macro.ps1 / .py / .ahk</b> 파일 내용을 통째로 붙여넣으면, 그 매크로가 새 작업방으로 그대로 만들어져요. (코드를 직접 고친 부분은 복원되지 않아요 — 동작 수정은 여기서 하세요)</p>
       <textarea id="import-text" rows="4" placeholder="여기에 파일 내용을 붙여넣으세요"></textarea>
       <button class="mini wide" id="import-paste-btn">이 내용으로 복원</button>
     </details>
