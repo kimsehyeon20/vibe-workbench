@@ -22,6 +22,7 @@ const TYPES = {
   wait:     { ico: '⏱️', label: '대기 (초)' },
   imgclick: { ico: '🖼️', label: '이미지 찾아 클릭' },
   textclick:{ ico: '🔤', label: '글자 찾아 클릭' },
+  webclick: { ico: '🧭', label: '웹 요소 찾아 클릭 (이름)' },
   readput:  { ico: '📋', label: '영역 값 읽어 입력' },
   setvar:   { ico: '📦', label: '변수에 값 저장' },
   repeat:   { ico: '🔁', label: '반복문 (동작을 묶어 반복)' },
@@ -207,7 +208,7 @@ function varNames(l) {
   (l.vars || []).forEach(v => { const n = cleanVarName(v.name); if (n) s.add(n); });
   walkSteps(l.steps, x => {
     if (x.type === 'setvar' && cleanVarName(x.name)) s.add(cleanVarName(x.name));
-    if ((x.type === 'imgclick' || x.type === 'textclick') && cleanVarName(x.saveTo)) s.add(cleanVarName(x.saveTo));
+    if ((x.type === 'imgclick' || x.type === 'textclick' || x.type === 'webclick') && cleanVarName(x.saveTo)) s.add(cleanVarName(x.saveTo));
   });
   return [...s];
 }
@@ -470,6 +471,7 @@ function stepDesc(s) {
     case 'wait': return `${s.sec}초 기다리기`;
     case 'imgclick': return `이미지 '${cleanImgName(s.img) || '?'}' ${findDesc(s)}`;
     case 'textclick': return `글자 '${String(s.text || '').slice(0, 16)}' ${findDesc(s)}`;
+    case 'webclick': return `웹 요소 '${String(s.name || '').slice(0, 16)}'${CTYPE[s.ctype] && s.ctype !== 'any' ? `(${CTYPE[s.ctype]})` : ''} ${findDesc(s)}`;
     case 'readput': return `영역의 ${s.read === 'number' ? '숫자' : '글자'}를 읽어 붙여넣기${s.after && s.after !== 'none' ? ` → ${s.after === 'enter' ? '엔터' : '탭'}` : ''}`;
     case 'setvar': {
       const n = cleanVarName(s.name) || '?';
@@ -530,6 +532,11 @@ function stepIssue(s) {
       if (bad(s.nth) || Number(s.nth) < 1) return '몇 번째인지 1 이상으로 정하세요';
       if (bad(s.retries) || Number(s.retries) < 1) return '찾는 횟수를 1 이상으로 정하세요';
       return areaIssue(s);
+    case 'webclick':
+      if (!String(s.name || '').trim()) return '찾을 요소 이름을 입력하세요';
+      if (bad(s.nth) || Number(s.nth) < 1) return '몇 번째인지 1 이상으로 정하세요';
+      if (bad(s.retries) || Number(s.retries) < 1) return '찾는 횟수를 1 이상으로 정하세요';
+      return null;
     case 'textclick':
       if (!String(s.text || '').trim()) return '찾을 글자를 입력하세요';
       if (bad(s.nth) || Number(s.nth) < 1) return '몇 번째인지 1 이상으로 정하세요';
@@ -836,6 +843,7 @@ function setType(type) {
     wait:     { type, sec: 1 },
     imgclick: { type, img: freeImgName(activeLoop()), tol: 25, sim: 100, bright: false, ...findBase },
     textclick:{ type, text: '', ...findBase },
+    webclick: { type, name: '', match: 'exact', ctype: 'any', win: '', nth: 1, act: 'click', button: 'left', double: false, dx: 0, dy: 0, retries: 8, every: 0.7, notfound: 'pause', saveTo: '' },
     readput:  { type, read: 'text', mode: 'screen', region: reg(100, 100, 300, 150), after: 'tab' },
     setvar:   { type, name: varNames(activeLoop())[0] || '변수1', from: 'text', value: '', read: 'text', mode: 'screen', region: reg(100, 100, 300, 150) },
     repeat:   { type, alias: '', count: 3, children: [] },
@@ -1036,6 +1044,16 @@ function fieldsFor(type) {
         + areaBlock()
         + inpN('여러 개면 몇 번째', 'nth', 'min="1"')
         + `<p class="hint">위→아래, 왼쪽→오른쪽 순서로 셉니다.</p>`
+        + actBlock() + retryBlock();
+    case 'webclick':
+      return `<p class="hint" style="margin-top:0">브라우저(크롬·엣지 등)의 <b>단추·링크·입력칸을 이름으로</b> 찾아 눌러요. 화면 배치·위치·테마가 달라도 <b>이름만 같으면</b> 찾아요. <b>무설치(윈도우)·파이썬</b> 전용(베타).</p>`
+        + inpT('요소 이름', 'name', '예: 가이드, 검색, 로그인') + varHint()
+        + `<p class="hint">이름 = F12 소스의 <code>aria-label</code>·<code>title</code>·단추 글자. 아래 <b>"F12 페이지 소스에서 이름 찾기"</b>에 요소를 붙여넣으면 이 동작을 바로 만들어 줘요. 아이콘(svg)만 있는 조각에는 이름이 없으니, 그 아이콘을 감싼 <code>&lt;button&gt;</code>을 복사하세요.</p>`
+        + chips('이름 맞추기', 'match', { exact: '똑같이', has: '포함' })
+        + chips('요소 종류', 'ctype', CTYPE)
+        + inpT('찾을 창 제목 일부 (선택)', 'win', '비우면 지금 맨 앞 창 · 예: YouTube')
+        + inpN('여러 개면 몇 번째', 'nth', 'min="1"')
+        + `<p class="hint">위→아래, 왼쪽→오른쪽 순서로 셉니다. <b>화면에 보이는 것만</b> 찾아요(스크롤 밖은 앞에 🖲️ 스크롤). 처음 찾을 때는 브라우저가 정보를 준비하느라 몇 초 걸릴 수 있어요.</p>`
         + actBlock() + retryBlock();
     case 'readput':
       return `<p class="hint" style="margin-top:0">화면 영역의 글자/숫자를 읽어 <b>지금 커서가 있는 칸에 붙여넣어요</b>(자료수집용). <b>무설치(윈도우)·파이썬</b>에서 동작(베타). .ahk 는 건너뜁니다.</p>`
@@ -1434,10 +1452,10 @@ async function doStepPreview(s, fast) {
     case 'win': badge(`🪟 ${s.title}`); setCap(`창 앞으로: "${s.title}"`); return wait(c(900));
     case 'scroll': badge(`${s.dir === 'up' ? '↑' : '↓'} 스크롤`); setCap(`${s.dir === 'up' ? '위' : '아래'}로 ${s.amount}칸`); return wait(c(800));
     case 'wait': setCap(`${s.sec}초 대기${fast && s.sec * 1000 > 1400 ? ' (빠르게 보는 중)' : ''}`); return wait(c((Number(s.sec) || 0) * 1000));
-    case 'imgclick': case 'textclick': {
+    case 'imgclick': case 'textclick': case 'webclick': {
       hideRegions();
       if (s.area === 'region') drawRegion('prev-region', 'screen', s.region || {}, 'r1');
-      badge(s.type === 'imgclick' ? `🖼️ '${cleanImgName(s.img)}' 찾기` : `🔤 '${String(s.text || '').slice(0, 14)}' 찾기`); setCap(stepDesc(s) + ' (미리보기는 "찾음"으로 가정)');
+      badge(s.type === 'imgclick' ? `🖼️ '${cleanImgName(s.img)}' 찾기` : s.type === 'webclick' ? `🧭 '${String(s.name || '').slice(0, 14)}' 찾기` : `🔤 '${String(s.text || '').slice(0, 14)}' 찾기`); setCap(stepDesc(s) + ' (미리보기는 "찾음"으로 가정)');
       const r0 = s.region || {};
       const cx = s.area === 'region' ? (num(r0.x1) + num(r0.x2)) / 2 : state.screen.w * 0.5;
       const cy = s.area === 'region' ? (num(r0.y1) + num(r0.y2)) / 2 : state.screen.h * 0.45;
@@ -1814,8 +1832,8 @@ function emitAHK(steps, L, pad, ctx) {
       else L.push(pad + `MacroVars[${n}] := ${ahkFill(s.value)}`);
     } else if (s.type === 'imgclick') {
       ahkFindImg(s).forEach(x => L.push(pad + x));
-    } else if (s.type === 'textclick') {
-      L.push(pad + '; [글자 찾아 클릭] 은 .ahk 에서 안 돼 건너뜁니다 — "무설치(윈도우)"나 파이썬으로 받으세요.');
+    } else if (s.type === 'textclick' || s.type === 'webclick') {
+      L.push(pad + `; [${s.type === 'webclick' ? '웹 요소 찾아 클릭' : '글자 찾아 클릭'}] 은 .ahk 에서 안 돼 건너뜁니다 — "무설치(윈도우)"나 파이썬으로 받으세요.`);
       if (cleanVarName(s.saveTo)) L.push(pad + `MacroVars["${ahkStr(cleanVarName(s.saveTo))}"] := "0"`);
     } else {
       genAHKStep(s).forEach(x => L.push(pad + x));
@@ -1982,6 +2000,8 @@ function psErrMsgs(imgName) {
     L.push(`if($script:lastErr -eq 'noimg'){ $msg = '이 PC에서 이미지 찾기 기능을 쓸 수 없어요 (실행 창 맨 위의 [주의] 참고)' }`);
   }
   L.push(`if($script:lastErr -eq 'noocr'){ $msg = '이 PC에서 화면 글자 읽기(OCR)를 쓸 수 없어요' }`);
+  L.push(`if($script:lastErr -eq 'nouia'){ $msg = '이 PC에서 웹 요소 찾기(UI Automation)를 쓸 수 없어요' }`);
+  L.push(`if($script:lastErr -eq 'nowin'){ $msg = '찾을 창이 없어요 — 앞에 🪟 창 활성화로 브라우저를 앞으로 두거나 "찾을 창 제목"을 확인하세요' }`);
   return L;
 }
 /* 맨 위에 뜨는 알림 창 + 이미지 찍기(작업방마다 macro.ps1 안에) + 변수 파일 만들기 → 따로 된 캡처 도우미가 필요 없음 */
@@ -2127,6 +2147,112 @@ function psVarsFileFns(l, pack) {
     '    WriteSideText $of ($script:OwnerId + "`r`n" + $script:OwnerName + "`r`n")',
     "  } catch { Write-Host ('[주의] 폴더 주인 확인을 못 했어요: ' + $_.Exception.Message) -ForegroundColor Yellow }",
     '}',
+  ];
+}
+/* 웹 요소 찾기: 윈도우 "접근성 정보(UI Automation)"로 브라우저 단추·링크를 이름(aria-label·글자·title)으로 찾음
+   → 화면 배치·테마·크기가 달라도 이름만 같으면 찾음. 화면에 보이는 것만, 위→아래·왼→오른 순 n번째 */
+const CTYPE = { any: '아무거나', button: '단추', link: '링크', edit: '입력칸' };
+function needsWeb(steps) { return anyStep(steps, s => s.type === 'webclick'); }
+function psWebFuncs() {
+  return [
+    '# ===== 웹 요소 찾기 (UI Automation: 단추·링크의 이름으로, 위치와 상관없이) =====',
+    '$script:uiaReady = $false',
+    'try { Add-Type -AssemblyName UIAutomationClient; Add-Type -AssemblyName UIAutomationTypes; $script:uiaReady = $true } catch { Write-Host "[주의] 이 PC에서 웹 요소 찾기(UI Automation)를 쓸 수 없어요." -ForegroundColor Yellow }',
+    '# 찾을 창: 제목 일부가 있으면 그 창, 없으면 지금 맨 앞(키보드가 가 있는) 창',
+    'function WebTopWindow($win){',
+    '  $AE = [System.Windows.Automation.AutomationElement]',
+    '  $root = $AE::RootElement',
+    '  if(([string]$win).Trim() -ne ""){',
+    '    foreach($w in $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)){ if(([string]$w.Current.Name).Contains([string]$win)){ return $w } }',
+    '    return $null',
+    '  }',
+    '  $cur = $AE::FocusedElement; if($null -eq $cur){ return $null }',
+    '  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker',
+    '  while($true){ $p = $walker.GetParent($cur); if($null -eq $p -or [System.Windows.Automation.Automation]::Compare($p, $root)){ return $cur }; $cur = $p }',
+    '}',
+    '# 찾으면 @(x, y) (가운데), 못 찾으면 $null (+ $script:lastErr = nouia/nowin/notfound)',
+    'function FindWeb($name, $match, $ctype, $win, $nth, $retries, $everyMs){',
+    '  $script:lastErr = ""',
+    '  if(-not $script:uiaReady){ $script:lastErr = "nouia"; return $null }',
+    '  $t = ([string]$name).Trim(); if($t -eq ""){ $script:lastErr = "notfound"; return $null }',
+    '  if($nth -lt 1){ $nth = 1 }',
+    '  $AE = [System.Windows.Automation.AutomationElement]',
+    '  $CT = [System.Windows.Automation.ControlType]',
+    '  $types = @{ button = $CT::Button; link = $CT::Hyperlink; edit = $CT::Edit }',
+    '  $noWin = $false',
+    '  for($k = 0; $k -lt $retries; $k++){',
+    '    Pump',
+    '    try {',
+    '      $top = WebTopWindow $win',
+    '      $noWin = ($null -eq $top)',
+    '      if(-not $noWin){',
+    "        $conds = New-Object 'System.Collections.Generic.List[System.Windows.Automation.Condition]'",
+    "        if($match -ne 'has'){ $conds.Add([System.Windows.Automation.PropertyCondition]::new($AE::NameProperty, $t, [System.Windows.Automation.PropertyConditionFlags]::IgnoreCase)) }",
+    '        if($types.ContainsKey([string]$ctype)){ $conds.Add([System.Windows.Automation.PropertyCondition]::new($AE::ControlTypeProperty, $types[[string]$ctype])) }',
+    '        $cond = if($conds.Count -eq 0){ [System.Windows.Automation.Condition]::TrueCondition } elseif($conds.Count -eq 1){ $conds[0] } else { [System.Windows.Automation.AndCondition]::new($conds.ToArray()) }',
+    '        $hits = New-Object System.Collections.ArrayList',
+    '        foreach($e in $top.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)){',
+    '          try {',
+    "            if($match -eq 'has' -and -not ([string]$e.Current.Name).ToLower().Contains($t.ToLower())){ continue }",
+    '            if($e.Current.IsOffscreen){ continue }',
+    '            $r = $e.Current.BoundingRectangle',
+    '            if($r.IsEmpty -or $r.Width -lt 1 -or $r.Height -lt 1){ continue }',
+    '            $cx = [int]($r.X + $r.Width / 2); $cy = [int]($r.Y + $r.Height / 2)',
+    '            [void]$hits.Add([pscustomobject]@{ X = $cx; Y = $cy; R = [int][Math]::Floor($cy / 12) })',
+    '          } catch {}',
+    '        }',
+    '        $sorted = @($hits | Sort-Object R, X)',
+    '        if($sorted.Count -ge $nth){ $h = $sorted[$nth - 1]; return @($h.X, $h.Y) }',
+    '      }',
+    '    } catch {}',
+    '    if($k -lt $retries - 1){ WaitMs $everyMs }',
+    '  }',
+    '  $script:lastErr = $(if($noWin){ "nowin" } else { "notfound" }); return $null',
+    '}',
+  ];
+}
+function pyWebFuncs() {
+  return [
+    '', '# ===== 웹 요소 찾기 (UI Automation: 단추·링크의 이름으로, 위치와 상관없이) — pip install uiautomation =====',
+    'try:',
+    '    import uiautomation as _uia',
+    'except Exception:',
+    '    _uia = None',
+    '    print("(웹 요소 찾기엔  pip install uiautomation  필요. 없으면 웹 요소 동작에서 오류로 멈춰요)")',
+    'def _web_top(win):',
+    '    if win:',
+    '        for w in _uia.GetRootControl().GetChildren():',
+    '            if win in (w.Name or ""): return w',
+    '        return None',
+    '    c = _uia.GetFocusedControl()',
+    '    return c.GetTopLevelControl() if c else None',
+    'def find_web(name, match, ctype, win, nth, retries, every):   # 화면에 보이는 것만, 위→아래·왼→오른 순 n번째의 가운데 좌표',
+    '    _last_err[0] = ""',
+    '    if not _uia: _last_err[0] = "nouia"; return None',
+    '    t = str(name).strip()',
+    '    if not t: _last_err[0] = "notfound"; return None',
+    "    want = {'button': 'ButtonControl', 'link': 'HyperlinkControl', 'edit': 'EditControl'}.get(ctype)",
+    '    no_win = False',
+    '    for k in range(retries):',
+    '        control()',
+    '        try:',
+    '            top = _web_top(win); no_win = top is None',
+    '            if top:',
+    '                hits = []',
+    '                for c, _d in _uia.WalkControl(top, maxDepth=0xFFFF):',
+    '                    nm = c.Name or ""',
+    "                    if (match == 'has' and t.lower() not in nm.lower()) or (match != 'has' and nm.strip().lower() != t.lower()): continue",
+    '                    if want and c.ControlTypeName != want: continue',
+    '                    if c.IsOffscreen: continue',
+    '                    r = c.BoundingRectangle',
+    '                    if r.width() < 1 or r.height() < 1: continue',
+    '                    cx, cy = r.xcenter(), r.ycenter(); hits.append((cy // 12, cx, cy))',
+    '                hits.sort()',
+    '                if len(hits) >= nth: h = hits[nth - 1]; return (h[1], h[2])',
+    '        except Exception:',
+    '            pass',
+    '        if k < retries - 1: time.sleep(every)',
+    '    _last_err[0] = "nowin" if no_win else "notfound"; return None',
   ];
 }
 /* 화면 글자 읽기(OCR)·이미지 찾기가 필요한 동작이 있는지 */
@@ -2306,6 +2432,7 @@ function genPS1(l, opts = {}) {
   P.push("function ImgPath($name){ return (Join-Path $IMGDIR ([string]$name + '.png')) }");
   if (needsOcr(l.steps)) P.push(...psOcrFuncs());
   if (needsImg(l.steps)) P.push(...psImgFuncs());
+  if (needsWeb(l.steps)) P.push(...psWebFuncs());
   const need = imgNames(l);
   P.push(`$script:ImgsNeeded = @(${need.map(psStr).join(', ')})   # 이 매크로가 찾는 이미지 이름`);
   P.push('function MissingImages(){ return @($script:ImgsNeeded | Where-Object { -not (Test-Path -LiteralPath (ImgPath $_)) }) }');
@@ -2394,7 +2521,7 @@ function emitPS(steps, P, pad, ctx) {
       P.push(pad + 'Write-Host "[] 멈춤"; exit');
     } else if (s.type === 'setvar') {
       genPSSetVar(s).forEach(x => P.push(pad + x));
-    } else if (s.type === 'imgclick' || s.type === 'textclick') {
+    } else if (s.type === 'imgclick' || s.type === 'textclick' || s.type === 'webclick') {
       psFindStep(s).forEach(x => P.push(pad + x));
     } else {
       genPSStep(s).forEach(x => P.push(pad + x));
@@ -2417,18 +2544,19 @@ function genPSSetVar(s) {
 }
 /* 이미지·글자 찾기 → 못 찾으면 일시정지/멈춤/넘어감 → 클릭/이동/찾기만 → 결과 변수 */
 function psFindStep(s) {
-  const isImg = s.type === 'imgclick';
+  const isImg = s.type === 'imgclick', isWeb = s.type === 'webclick';
   const retries = Math.max(1, num(s.retries) || 8), everyMs = Math.round((Number(s.every) || 0.7) * 1000);
   const nth = Math.max(1, num(s.nth) || 1);
-  const name = isImg ? cleanImgName(s.img) : String(s.text || '');
+  const name = isImg ? cleanImgName(s.img) : isWeb ? String(s.name || '') : String(s.text || '');
   const call = isImg
     ? `FindImg (ImgPath ${psStr(name)}) ${num(s.tol) || 25} ${Math.min(100, Math.max(50, num(s.sim) || 100))} $${s.bright ? 'true' : 'false'} ${psArea(s)} ${nth} ${retries} ${everyMs}`
+    : isWeb ? `FindWeb ${psFill(name)} '${s.match === 'has' ? 'has' : 'exact'}' '${CTYPE[s.ctype] ? s.ctype : 'any'}' ${psFill(s.win || '')} ${nth} ${retries} ${everyMs}`
     : `FindText ${psFill(name)} ${psArea(s)} ${nth} ${retries} ${everyMs}`;
   const what = isImg ? `이미지 '${name}'` : `글자 '${name}'`;
-  const tail = `${nth > 1 ? ` (${nth}번째)` : ''} 을(를) 화면에서 찾을 수 없어요 (${retries}번 시도)`;
+  const tail = `${nth > 1 ? ` (${nth}번째)` : ''} 을(를) ${isWeb ? '창에서' : '화면에서'} 찾을 수 없어요 (${retries}번 시도)`;
   const L = ['$p = $null', 'while($true){', `  $p = ${call}`, '  if($null -ne $p){ break }'];
   // 글자는 {변수}를 실제 값으로 바꿔 보여줌
-  L.push(isImg ? `  $msg = ${psStr(what + tail)}` : `  $msg = "글자 '" + ${psFill(name)} + ${psStr("'" + tail)}`);
+  L.push(isImg ? `  $msg = ${psStr(what + tail)}` : `  $msg = "${isWeb ? '웹 요소' : '글자'} '" + ${psFill(name)} + ${psStr("'" + tail)}`);
   psErrMsgs(isImg ? name : null).forEach(x => L.push('  ' + x));
   if (s.notfound === 'continue') L.push('  Write-Host ("[주의] " + $msg + " -> 건너뛰어요") -ForegroundColor Yellow; break');
   else if (s.notfound === 'stop') L.push('  Write-Host ("[오류] " + $msg + " -> 매크로를 멈춰요") -ForegroundColor Red; FocusConsole; exit');
@@ -2749,7 +2877,7 @@ function genPY(l) {
   P.push('# -*- coding: utf-8 -*-');
   P.push(`# 매크로: ${(l.name || '').replace(/[\r\n]/g, ' ')} (설계소 ${APP_VERSION})`);
   P.push('# 실행: 1) 파이썬 설치  2) pip install pyautogui pygetwindow keyboard pyperclip  3) python "이파일.py"');
-  P.push('#  (화면 글자 읽기·글자 찾기:  pip install winocr pillow  / 이미지 찾기:  pip install opencv-python )');
+  P.push('#  (화면 글자 읽기·글자 찾기:  pip install winocr pillow  / 이미지 찾기:  pip install opencv-python pillow  / 웹 요소 찾기:  pip install uiautomation )');
   P.push(`#  단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.startNowLabel} 예약 즉시시작·오류 때 건너뛰기, ${CTRL_KEYS.restartLabel} 재실행 (keyboard 설치 시)`);
   P.push('#  급할 때: 마우스를 화면 왼쪽 맨 위 구석으로 휙 옮기면 멈춥니다.');
   P.push('import time, webbrowser, datetime, os, sys, re');
@@ -2963,6 +3091,7 @@ function genPY(l) {
   P.push('    except Exception: return 0, 0');
   if (needsOcr(l.steps)) P.push(...pyOcrFuncs());
   if (needsImg(l.steps)) P.push(...pyImgFuncs());
+  if (needsWeb(l.steps)) P.push(...pyWebFuncs());
   P.push('');
   P.push('# ==== RUN ====');
   P.push('def run():');
@@ -3035,7 +3164,7 @@ function emitPY(steps, out, ctx) {
       out.push('raise SystemExit("[멈춤] 매크로 종료")');
     } else if (s.type === 'setvar') {
       genPYSetVar(s).forEach(x => out.push(x));
-    } else if (s.type === 'imgclick' || s.type === 'textclick') {
+    } else if (s.type === 'imgclick' || s.type === 'textclick' || s.type === 'webclick') {
       pyFindStep(s).forEach(x => out.push(x));
     } else {
       genPYStep(s).forEach(x => out.push(x));
@@ -3066,22 +3195,25 @@ function pyErrMsgs(imgName) {
     L.push(`if _last_err[0] == 'nocv': _msg = "이미지 찾기엔 opencv 가 필요해요:  pip install opencv-python pillow"`);
   }
   L.push(`if _last_err[0] == 'noocr': _msg = "화면 글자 읽기엔 winocr 가 필요해요:  pip install winocr pillow"`);
+  L.push(`if _last_err[0] == 'nouia': _msg = "웹 요소 찾기엔 uiautomation 이 필요해요:  pip install uiautomation"`);
+  L.push(`if _last_err[0] == 'nowin': _msg = "찾을 창이 없어요 — 앞에 창 활성화로 브라우저를 앞으로 두거나 '찾을 창 제목'을 확인하세요"`);
   return L;
 }
 /* 이미지·글자 찾기 → 못 찾으면 일시정지/멈춤/넘어감 → 클릭/이동/찾기만 → 결과 변수 */
 function pyFindStep(s) {
-  const isImg = s.type === 'imgclick';
+  const isImg = s.type === 'imgclick', isWeb = s.type === 'webclick';
   const retries = Math.max(1, num(s.retries) || 8), every = Number(s.every) || 0.7;
   const nth = Math.max(1, num(s.nth) || 1);
-  const name = isImg ? cleanImgName(s.img) : String(s.text || '');
+  const name = isImg ? cleanImgName(s.img) : isWeb ? String(s.name || '') : String(s.text || '');
   const call = isImg
     ? `find_img(img_path(${pyJ(name)}), ${pyConf(s)}, ${s.bright ? 'True' : 'False'}, ${pyBox(s)}, ${nth}, ${retries}, ${every})`
+    : isWeb ? `find_web(${pyFill(name)}, ${pyJ(s.match === 'has' ? 'has' : 'exact')}, ${pyJ(CTYPE[s.ctype] ? s.ctype : 'any')}, ${pyFill(s.win || '')}, ${nth}, ${retries}, ${every})`
     : `find_text(${pyFill(name)}, ${pyBox(s)}, ${nth}, ${retries}, ${every})`;
   const what = isImg ? `이미지 '${name}'` : `글자 '${name}'`;
-  const tail = `${nth > 1 ? ` (${nth}번째)` : ''} 을(를) 화면에서 찾을 수 없어요 (${retries}번 시도)`;
+  const tail = `${nth > 1 ? ` (${nth}번째)` : ''} 을(를) ${isWeb ? '창에서' : '화면에서'} 찾을 수 없어요 (${retries}번 시도)`;
   const L = ['_p = None', 'while True:', `    _p = ${call}`, '    if _p: break'];
   // 글자는 {변수}를 실제 값으로 바꿔 보여줌
-  L.push(isImg ? `    _msg = ${pyJ(what + tail)}` : `    _msg = "글자 '" + ${pyFill(name)} + ${pyJ("'" + tail)}`);
+  L.push(isImg ? `    _msg = ${pyJ(what + tail)}` : `    _msg = "${isWeb ? '웹 요소' : '글자'} '" + ${pyFill(name)} + ${pyJ("'" + tail)}`);
   pyErrMsgs(isImg ? name : null).forEach(x => L.push('    ' + x));
   if (s.notfound === 'continue') L.push('    print("[주의] " + _msg + " -> 건너뛰어요"); break');
   else if (s.notfound === 'stop') L.push('    print("[오류] " + _msg + " -> 매크로를 멈춰요"); focus_console(); raise SystemExit("멈춤")');
@@ -3461,6 +3593,7 @@ function ahkUnsupported(l) {
   walkSteps(l.steps, s => {
     if (s.type === 'readput') m.add('영역 값 읽어 입력');
     if (s.type === 'textclick') m.add('글자 찾아 클릭');
+    if (s.type === 'webclick') m.add('웹 요소 찾아 클릭');
     if (s.type === 'setvar' && s.from === 'read') m.add('변수 ← 화면 글자 읽기');
     if (s.type === 'if' && (!s.what || s.what === 'region' || s.what === 'text')) m.add('조건(화면 글자 읽기) — 안에 담은 동작도 실행 안 됨');
     const img = s.type === 'imgclick' || (s.type === 'if' && s.what === 'img');
@@ -3803,32 +3936,63 @@ $('#import-paste-btn').onclick = () => {
 };
 
 /* ===== F12 소스 분석 ===== */
+/* F12 에서 복사한 요소(또는 페이지 소스) → 단추·링크·입력칸의 "이름"을 뽑아 바로 동작으로 만듦.
+   이름 = 화면 읽기 프로그램이 읽는 이름(aria-label > 글자 > title > alt > placeholder). aria-hidden 안의 것은 이름이 없음 */
+function accName(el) {
+  const pick = v => String(v || '').replace(/\s+/g, ' ').trim();
+  return pick(el.getAttribute('aria-label')) || pick(el.textContent) || pick(el.getAttribute('title')) || pick(el.getAttribute('alt'))
+    || pick(el.getAttribute('placeholder')) || pick(el.getAttribute('value'));
+}
+function analyzeHtml(raw) {
+  let doc;
+  try { doc = new DOMParser().parseFromString(raw, 'text/html'); } catch { return null; }
+  const items = [];
+  const hidden = el => !!el.closest('[aria-hidden="true"], [hidden]');
+  const add = (tag, text, kind, ctype) => {
+    text = String(text || '').replace(/\s+/g, ' ').trim();
+    if (text && text.length <= 80 && !items.some(it => it.text === text && it.kind === kind)) items.push({ tag, text, kind, ctype });
+  };
+  doc.querySelectorAll('button, [role=button], input[type=submit], input[type=button]').forEach(el => { if (!hidden(el)) add('단추', accName(el), 'web', 'button'); });
+  doc.querySelectorAll('a[href], [role=link]').forEach(el => { if (!hidden(el)) add('링크', accName(el), 'web', 'link'); });
+  doc.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]), textarea, [role=textbox], [role=searchbox], [role=combobox]').forEach(el => {
+    if (!hidden(el)) add('입력칸', el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('title'), 'web', 'edit');
+  });
+  doc.querySelectorAll('[aria-label]').forEach(el => { if (!hidden(el)) add('이름표', el.getAttribute('aria-label'), 'web', 'any'); });
+  doc.querySelectorAll('[title]').forEach(el => { if (!hidden(el) && el.tagName !== 'TITLE') add('설명', el.getAttribute('title'), 'web', 'any'); });
+  doc.querySelectorAll('img[alt]').forEach(el => { if (!hidden(el)) add('그림 설명', el.getAttribute('alt'), 'web', 'any'); });
+  if (doc.title) add('창 제목', doc.title, 'win');
+  doc.querySelectorAll('h1,h2,h3').forEach(el => { if (!hidden(el)) add('제목 글자', el.textContent, 'text'); });
+  const iconOnly = !items.length && !!doc.querySelector('svg, path, img, i, [class*="icon"]');
+  return { items, iconOnly };
+}
 $('#analyze-btn').onclick = () => {
   const raw = $('#html-input').value.trim();
   const box = $('#analyze-result');
   if (!raw) { box.innerHTML = '<p class="hint">먼저 소스를 붙여넣어 주세요.</p>'; return; }
-  let doc;
-  try { doc = new DOMParser().parseFromString(raw, 'text/html'); } catch { box.innerHTML = '<p class="hint">분석할 수 없어요.</p>'; return; }
-  const items = [];
-  const push = (tag, text) => {
-    text = (text || '').replace(/\s+/g, ' ').trim();
-    if (text && text.length <= 80 && !items.some(it => it.text === text)) items.push({ tag, text });
-  };
-  if (doc.title) push('제목', doc.title);
-  doc.querySelectorAll('h1,h2,h3').forEach(el => push('헤딩', el.textContent));
-  doc.querySelectorAll('button, [role=button], input[type=submit], input[type=button]').forEach(el => push('버튼', el.textContent || el.value));
-  doc.querySelectorAll('a').forEach(el => push('링크', el.textContent));
-  doc.querySelectorAll('[title]').forEach(el => push('설명', el.getAttribute('title')));
-
-  if (items.length === 0) { box.innerHTML = '<p class="hint">뽑을 글자를 찾지 못했어요.</p>'; return; }
+  const res = analyzeHtml(raw);
+  if (!res) { box.innerHTML = '<p class="hint">분석할 수 없어요.</p>'; return; }
+  if (!res.items.length) {
+    box.innerHTML = res.iconOnly
+      ? `<p class="hint"><b>이 조각에는 이름이 없어요</b> — 그림(아이콘)만 있고 <code>aria-hidden="true"</code>라서 이름으로는 찾을 수 없어요.<br>
+         ① F12 에서 이 아이콘을 <b>감싼 단추</b>(<code>&lt;button …&gt;</code> 줄)를 우클릭 → <b>Copy → Copy element</b>(요소 복사) 해서 붙여넣으세요. 보통 <code>aria-label="가이드"</code> 같은 이름이 들어 있어요.<br>
+         ② 또는 <b>🖼️ 이미지 찾아 클릭</b>으로 이 단추를 찍어 두세요. 화면 <b>어디에 있든</b> 찾아요(같은 테마·크기일 때).</p>`
+      : '<p class="hint">뽑을 이름을 찾지 못했어요. F12 에서 누를 단추·링크 요소를 우클릭 → Copy → Copy element 로 복사해 붙여넣어 보세요.</p>';
+    return;
+  }
   box.innerHTML = '';
-  items.slice(0, 40).forEach(it => {
+  const BTN = { web: '🧭 클릭 동작+', win: '🪟 창 찾기+', text: '🔤 글자 클릭+' };
+  res.items.slice(0, 40).forEach(it => {
     const d = document.createElement('div');
     d.className = 'an-item';
-    d.innerHTML = `<span class="an-tag">${it.tag}</span><span class="an-text">${escapeHtml(it.text)}</span><button class="an-add">창 찾기+</button>`;
+    d.innerHTML = `<span class="an-tag">${it.tag}</span><span class="an-text">${escapeHtml(it.text)}</span><button class="an-add">${BTN[it.kind]}</button>`;
     d.querySelector('.an-add').onclick = () => {
-      activeLoop().steps.push({ id: uid(), type: 'win', title: it.text });
-      save(); renderSteps(); toast('"창 활성화" 동작을 추가했어요');
+      const step = it.kind === 'web'
+        ? { type: 'webclick', name: it.text, match: 'exact', ctype: it.ctype || 'any', win: '', nth: 1, act: 'click', button: 'left', double: false, dx: 0, dy: 0, retries: 8, every: 0.7, notfound: 'pause', saveTo: '' }
+        : it.kind === 'win' ? { type: 'win', title: it.text }
+        : { type: 'textclick', text: it.text, area: 'screen', region: { x1: 0, y1: 0, x2: 800, y2: 600 }, nth: 1, act: 'click', button: 'left', double: false, dx: 0, dy: 0, retries: 8, every: 0.7, notfound: 'pause', saveTo: '' };
+      activeLoop().steps.push({ id: uid(), ...step });
+      save(); renderSteps();
+      toast(it.kind === 'web' ? `"🧭 웹 요소 찾아 클릭: ${it.text}" 동작을 추가했어요` : it.kind === 'win' ? '"창 활성화" 동작을 추가했어요' : '"글자 찾아 클릭" 동작을 추가했어요');
     };
     box.appendChild(d);
   });
@@ -3883,6 +4047,7 @@ const HELP = `
 <li><b>🪟 창 활성화</b> — 제목으로 창을 찾아 앞으로 가져와요. 제목은 아래 "F12 소스 분석"으로 뽑을 수 있어요.</li>
 <li><b>🖼️ 이미지 찾아 클릭</b> — 찍어 둔 그림을 화면에서 찾아 눌러요(아래 "이미지 찾기").</li>
 <li><b>🔤 글자 찾아 클릭</b> — 화면 글자를 읽어(OCR) "확인" 같은 글자를 찾아 눌러요. 글꼴이 달라도 글자만 같으면 돼요. 무설치·파이썬.</li>
+<li><b>🧭 웹 요소 찾아 클릭 (이름)</b> — 브라우저의 단추·링크·입력칸을 <b>이름(aria-label·title·단추 글자)</b>으로 찾아 눌러요. 화면 배치·위치·테마가 달라도 돼요. 아이콘만 있는 단추도 이름표(aria-label)가 있으면 찾아요. 아래 "F12 페이지 소스에서 이름 찾기"에 요소를 붙여넣으면 바로 만들어 줘요. 무설치·파이썬(베타).</li>
 <li><b>📋 영역 값 읽어 입력</b> — 영역의 글자/숫자를 읽어 지금 커서 칸에 붙여넣어요(자료수집).</li>
 <li><b>📦 변수에 값 저장</b> — 직접 쓴 값 / <b>화면 영역에서 읽은 값</b> / <b>클립보드(복사한 값)</b>를 이름 붙인 변수에 담아요.</li>
 <li><b>🔁 반복문</b> — 담은 동작을 N번(0 = 멈출 때까지) 반복.</li>

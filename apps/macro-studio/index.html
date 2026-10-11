@@ -136,7 +136,7 @@
   <!-- F12 소스 분석 -->
   <section class="card analyze">
     <h3>F12 페이지 소스에서 이름 찾기</h3>
-    <p class="muted small">페이지에서 <b>F12</b>로 나온 코드(HTML)를 붙여넣으면 제목·버튼·링크 글자를 뽑아줘요. "창 제목으로 찾기" 동작에 쓰면 위치가 바뀌어도 잘 찾아가요.</p>
+    <p class="muted small">PC 브라우저에서 <b>F12</b> → 누를 단추를 우클릭 → <b>Copy → Copy element</b>(요소 복사)로 복사해 붙여넣으면, 단추·링크·입력칸의 <b>이름</b>(aria-label·글자)을 뽑아 <b>🧭 웹 요소 찾아 클릭</b> 동작으로 바로 만들어 줘요. 이름으로 찾아서 화면 배치·위치가 달라도 찾아가요.<br>아이콘(svg)만 있는 조각엔 이름이 없어요 → 그 아이콘을 <b>감싼 &lt;button&gt;</b>을 복사하세요.</p>
     <textarea id="html-input" rows="4" placeholder="여기에 페이지 소스(HTML)를 붙여넣으세요"></textarea>
     <button class="mini wide" id="analyze-btn">분석하기</button>
     <div id="analyze-result" class="analyze-result"></div>
