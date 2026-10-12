@@ -64,7 +64,13 @@ const OPS_SEE = { yes: '보이면', no: '안 보이면' };
 const ACT = { click: '클릭', move: '마우스만 이동', none: '찾기만 (기다리기)' };
 const NF = { pause: '일시정지 + 오류 표시 (F8 다시 찾기)', stop: '매크로 멈춤', continue: '그냥 넘어가기' };
 /* 변수에 넣을 값 */
-const SETFROM = { text: '직접 입력', read: '화면 영역 읽기', clip: '클립보드 (복사한 값)' };
+const SETFROM = { text: '직접 입력', date: '오늘 날짜/시간', ask: '실행할 때 물어보기', read: '화면 영역 읽기', clip: '클립보드 (복사한 값)' };
+/* 오늘 날짜/시간에서 뽑을 조각 (화면을 안 읽고 PC 시계로 넣음 → 빠르고 정확, .ahk 도 됨) */
+const DATE_PARTS = { yyyy: '연 (2026)', M: '월 (3)', MM: '월 (03)', d: '일 (7)', dd: '일 (07)', date: '날짜 전체 (2026-10-07)', datek: '날짜 (2026년 10월 7일)', HH: '시 (14)', mm: '분 (05)', time: '시각 (14:05)' };
+/* 각 언어로 "그 조각" 값을 만드는 식 (PS: $dte, PY: _dte, AHK: dte 라는 날짜값을 미리 둠) */
+function psDatePart(part) { return ({ yyyy: '$dte.Year.ToString()', M: '$dte.Month.ToString()', MM: "$dte.ToString('MM')", d: '$dte.Day.ToString()', dd: "$dte.ToString('dd')", date: "$dte.ToString('yyyy-MM-dd')", datek: '("{0}년 {1}월 {2}일" -f $dte.Year, $dte.Month, $dte.Day)', HH: "$dte.ToString('HH')", mm: "$dte.ToString('mm')", time: "$dte.ToString('HH:mm')" })[part] || '$dte.Year.ToString()'; }
+function pyDatePart(part) { return ({ yyyy: 'str(_dte.year)', M: 'str(_dte.month)', MM: 'f"{_dte.month:02d}"', d: 'str(_dte.day)', dd: 'f"{_dte.day:02d}"', date: '_dte.strftime("%Y-%m-%d")', datek: 'f"{_dte.year}년 {_dte.month}월 {_dte.day}일"', HH: 'f"{_dte.hour:02d}"', mm: 'f"{_dte.minute:02d}"', time: '_dte.strftime("%H:%M")' })[part] || 'str(_dte.year)'; }
+function ahkDatePart(part) { return ({ yyyy: 'FormatTime(dte, "yyyy")', M: '(FormatTime(dte, "MM") + 0)', MM: 'FormatTime(dte, "MM")', d: '(FormatTime(dte, "dd") + 0)', dd: 'FormatTime(dte, "dd")', date: 'FormatTime(dte, "yyyy-MM-dd")', datek: '(FormatTime(dte, "yyyy") "년 " (FormatTime(dte, "MM") + 0) "월 " (FormatTime(dte, "dd") + 0) "일")', HH: 'FormatTime(dte, "HH")', mm: 'FormatTime(dte, "mm")', time: 'FormatTime(dte, "HH:mm")' })[part] || 'FormatTime(dte, "yyyy")'; }
 
 const HOTKEYS = {
   copy:     { label: '복사 (Ctrl+C)',         ahk: '^c',      py: ['ctrl', 'c'],  sk: '^c' },
@@ -477,6 +483,8 @@ function stepDesc(s) {
       const n = cleanVarName(s.name) || '?';
       if (s.from === 'read') return `{${n}} ← 화면 영역의 ${s.read === 'number' ? '숫자' : '글자'}`;
       if (s.from === 'clip') return `{${n}} ← 클립보드(복사한 값)`;
+      if (s.from === 'date') { const off = num(s.dateOffset); return `{${n}} ← 오늘 ${(DATE_PARTS[s.datePart] || '날짜').replace(/ .*/, '')}${off ? ` (${off > 0 ? '+' : ''}${off}일)` : ''}`; }
+      if (s.from === 'ask') return `{${n}} ← 실행할 때 물어보기`;
       return `{${n}} ← "${String(s.value ?? '').slice(0, 20)}"`;
     }
     case 'repeat': { const n = countOf(s.children); return al + `${num(s.count) > 0 ? `${num(s.count)}번 반복` : '멈출 때까지 반복'} (동작 ${n}개)`; }
@@ -845,7 +853,7 @@ function setType(type) {
     textclick:{ type, text: '', ...findBase },
     webclick: { type, name: '', match: 'exact', ctype: 'any', win: '', nth: 1, act: 'click', button: 'left', double: false, dx: 0, dy: 0, retries: 8, every: 0.7, notfound: 'pause', saveTo: '' },
     readput:  { type, read: 'text', mode: 'screen', region: reg(100, 100, 300, 150), after: 'tab' },
-    setvar:   { type, name: varNames(activeLoop())[0] || '변수1', from: 'text', value: '', read: 'text', mode: 'screen', region: reg(100, 100, 300, 150) },
+    setvar:   { type, name: varNames(activeLoop())[0] || '변수1', from: 'text', value: '', read: 'text', mode: 'screen', region: reg(100, 100, 300, 150), datePart: 'yyyy', dateOffset: 0, askText: '', askDefault: '' },
     repeat:   { type, alias: '', count: 3, children: [] },
     if:       { type, alias: '', what: 'region', read: 'number', mode: 'screen', region: reg(100, 100, 300, 150), src: 'const', op: 'ge', value: '', mode2: 'screen', region2: reg(100, 300, 300, 350),
                 varName: '', img: '', text: '', area: 'screen', tol: 25, sim: 100, bright: false, children: [], elseChildren: [] },
@@ -1070,6 +1078,13 @@ function fieldsFor(type) {
           + `<p class="hint">못 읽으면 <b>빈 값</b>이 들어가고 실행 창에 경고가 떠요. 조건 "변수 값 → 비었음"으로 <b>읽기 오류를 알아낼 수 있어요</b>. 무설치·파이썬 전용.</p>`;
       } else if (draft.from === 'clip') {
         h += `<p class="hint">바로 앞에 <b>단축키 "복사"</b>를 넣으세요. 복사된 글자가 변수에 담겨요(엑셀 칸 값 등).</p>`;
+      } else if (draft.from === 'date') {
+        if (!DATE_PARTS[draft.datePart]) draft.datePart = 'yyyy';
+        h += selF('무엇을', 'datePart', DATE_PARTS) + inpNeg('며칠 뒤/전 (0=오늘, 1=내일, -1=어제)', 'dateOffset')
+          + `<p class="hint">PC 시계의 <b>오늘 날짜·시각</b>을 넣어요. 화면을 안 읽어서 <b>빠르고 정확</b>하고, <b>.ahk 에서도</b> 돼요.<br>예) "안녕하십니까, {연}년 {월}월 {일}일" = 연·월·일을 각각 변수로 저장해서 쓰면 돼요.</p>`;
+      } else if (draft.from === 'ask') {
+        h += inpT('물어볼 말', 'askText', '예: 금액을 입력하세요') + inpT('기본값 (선택)', 'askDefault', '예: 0')
+          + `<p class="hint">매크로를 <b>실행할 때</b> 작은 창(또는 검은 창)으로 값을 물어봐요. 값이 <b>매번 바뀔 때</b>나 화면으로 읽기 어려울 때 좋아요.</p>`;
       } else {
         h += inpT('넣을 값', 'value', '예: 홍길동 또는 {다른변수}') + varHint();
       }
@@ -1694,6 +1709,15 @@ function genAHK(l) {
   L.push('MacroVars := Map()   ; 변수 저장소 (AHK·PS 는 이름 대소문자를 안 가려 짧은 이름 피함)');
   L.push('ImgErr := ""         ; 이미지 찾기 실패 이유 (nofile = 파일 없음, bad = 그림을 못 읽음)');
   L.push('InitVars()');
+  const miss = ahkUnsupported(l);
+  if (miss.length) {   // 이 매크로에 .ahk 로 못 하는 동작이 있으면 시작할 때 팝업으로 알림
+    let warn = '이 매크로에는 .ahk(AutoHotkey)로는 할 수 없는 동작이 들어 있어요.\n실행하면 아래 동작은 그냥 건너뜁니다:\n\n';
+    warn += miss.map(x => '· ' + x).join('\n');
+    if (ahkLostExit(l)) warn += '\n\n⚠ 건너뛰는 조건 안의 "멈춤 / 반복 빠져나가기"도 실행되지 않아, 반복이 스스로 끝나지 않을 수 있어요(F9 또는 Esc 로 종료).';
+    warn += '\n\n이 동작까지 제대로 쓰려면 "무설치(윈도우)"나 파이썬으로 받으세요.\n\n그래도 .ahk 로 계속할까요?';
+    L.push(`if (MsgBox("${ahkStr(warn)}", "매크로 설계소 - 안내", "YesNo Icon! 0x40000") = "No")`);
+    L.push('    ExitApp');
+  }
   const p = hhmmParts(l.startAt);
   if (p) {
     L.push(`; 예약 시작: 다음 ${l.startAt} 까지 대기 (${CTRL_KEYS.startNowLabel} 누르면 즉시 시작)`);
@@ -1735,7 +1759,7 @@ function ahkFuncs(l) {
     '                continue',
     '            p := InStr(line, "=")',
     '            if (p > 1)',
-    '                MacroVars[Trim(SubStr(line, 1, p - 1))] := SubStr(line, p + 1)',
+    '                MacroVars[Trim(SubStr(line, 1, p - 1))] := Trim(SubStr(line, p + 1))',
     '        }',
     '    }',
     '}',
@@ -1829,6 +1853,8 @@ function emitAHK(steps, L, pad, ctx) {
       const n = `"${ahkStr(cleanVarName(s.name))}"`;
       if (s.from === 'clip') L.push(pad + `MacroVars[${n}] := A_Clipboard`);
       else if (s.from === 'read') L.push(pad + `MacroVars[${n}] := ""   ; [변수 ← 화면 글자 읽기] 는 .ahk 에서 안 돼 빈 값이 들어가요 — 무설치(윈도우)를 쓰세요.`);
+      else if (s.from === 'date') { L.push(pad + `dte := DateAdd(A_Now, ${num(s.dateOffset) || 0}, "Days")`); L.push(pad + `MacroVars[${n}] := ${ahkDatePart(s.datePart)}`); }
+      else if (s.from === 'ask') L.push(pad + `MacroVars[${n}] := InputBox("${ahkStr(String(s.askText || '값을 입력하세요'))}", "매크로 설계소", , "${ahkStr(String(s.askDefault || ''))}").Value`);
       else L.push(pad + `MacroVars[${n}] := ${ahkFill(s.value)}`);
     } else if (s.type === 'imgclick') {
       ahkFindImg(s).forEach(x => L.push(pad + x));
@@ -1936,6 +1962,7 @@ function genBAT(l, ahkName) {
   // .bat 는 순수 ASCII + chcp 없음: 한글/코드페이지 전환이 cmd 파서를 깨뜨려 'rshell' 류 오류를 냄
   return [
     '@echo off',
+    'cd /d "%TEMP%" 2>nul',
     ...batPick(ahkName, '-run'),
     'start "" "%F%"',
     'if errorlevel 1 (',
@@ -1976,6 +2003,7 @@ function genPSBat(l, ps1Name) {
   // .bat 는 순수 ASCII + chcp 없음: cmd 코드페이지 전환이 'powershell' 명령을 깨먹는 버그 회피
   return [
     '@echo off',
+    'cd /d "%TEMP%" 2>nul',
     ...batPick(ps1Name, '-noinstall'),
     'powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%F%"',
     'echo.', 'pause', '',
@@ -2240,13 +2268,15 @@ function pyWebFuncs() {
     '            if top:',
     '                hits = []',
     '                for c, _d in _uia.WalkControl(top, maxDepth=0xFFFF):',
-    '                    nm = c.Name or ""',
-    "                    if (match == 'has' and t.lower() not in nm.lower()) or (match != 'has' and nm.strip().lower() != t.lower()): continue",
-    '                    if want and c.ControlTypeName != want: continue',
-    '                    if c.IsOffscreen: continue',
-    '                    r = c.BoundingRectangle',
-    '                    if r.width() < 1 or r.height() < 1: continue',
-    '                    cx, cy = r.xcenter(), r.ycenter(); hits.append((cy // 12, cx, cy))',
+    '                    try:   # 페이지가 바뀌며 요소 하나가 사라져도(COM 오류) 그 요소만 건너뜀',
+    '                        nm = c.Name or ""',
+    "                        if (match == 'has' and t.lower() not in nm.lower()) or (match != 'has' and nm.strip().lower() != t.lower()): continue",
+    '                        if want and c.ControlTypeName != want: continue',
+    '                        if c.IsOffscreen: continue',
+    '                        r = c.BoundingRectangle',
+    '                        if r.width() < 1 or r.height() < 1: continue',
+    '                        cx, cy = r.xcenter(), r.ycenter(); hits.append((cy // 12, cx, cy))',
+    '                    except Exception: continue',
     '                hits.sort()',
     '                if len(hits) >= nth: h = hits[nth - 1]; return (h[1], h[2])',
     '        except Exception:',
@@ -2423,7 +2453,7 @@ function genPS1(l, opts = {}) {
   P.push('      $t = [string]$ln');
   P.push("      if($t.Trim() -eq '' -or $t.TrimStart().StartsWith('#')){ continue }");
   P.push("      $i = $t.IndexOf('=')");
-  P.push('      if($i -gt 0){ SetVar ($t.Substring(0, $i).Trim()) ($t.Substring($i + 1)) }');
+  P.push('      if($i -gt 0){ SetVar ($t.Substring(0, $i).Trim()) ($t.Substring($i + 1).Trim()) }');
   P.push('    }');
   P.push('  }');
   P.push('}');
@@ -2530,8 +2560,13 @@ function emitPS(steps, P, pad, ctx) {
   });
 }
 function genPSSetVar(s) {
-  const k = psStr(cleanVarName(s.name));
+  const nm = cleanVarName(s.name), k = psStr(nm);
   if (s.from === 'clip') return [`SetVar ${k} (GetClip)`];
+  if (s.from === 'date') { const off = num(s.dateOffset) || 0; return [`$dte = (Get-Date).AddDays(${off})`, `SetVar ${k} (${psDatePart(s.datePart)})`, `Write-Host (${psStr('   {' + nm + '} = ')} + (GetVar ${k}))`]; }
+  if (s.from === 'ask') {
+    const def = String(s.askDefault || ''); const label = String(s.askText || '값을 입력하세요') + (def ? ` (기본값 ${def} — 그냥 엔터)` : '');
+    return ['FocusConsole', `$ans = Read-Host ${psStr(label)}`, ...(def ? [`if("$ans" -eq ''){ $ans = ${psStr(def)} }`] : []), `SetVar ${k} $ans`];
+  }
   if (s.from === 'read') {
     const L = psReadRegion('$txt', s.mode, s.region || {});
     if (s.read === 'number') L.push("$m = [regex]::Match([string]$txt, '-?\\d[\\d,]*(\\.\\d+)?'); $val = if($m.Success){ $m.Value -replace ',','' } else { '' }");
@@ -2864,7 +2899,7 @@ function genPSCond(s, c) {
 /* --- 파이썬 (pyautogui) --- */
 function pyJ(v) { return JSON.stringify(v == null ? '' : String(v)); }
 function pyFill(s) { const t = String(s == null ? '' : s); return t.includes('{') ? `fill(${pyJ(t)})` : pyJ(t); }
-function pyBox(s) { if (s.area === 'region') { const r = s.region || {}; return `(${num(r.x1)}, ${num(r.y1)}, ${num(r.x2)}, ${num(r.y2)})`; } return 'None'; }
+function pyBox(s) { if (s.area === 'region') { const r = s.region || {}; const a = num(r.x1), b = num(r.y1), c = num(r.x2), d = num(r.y2); return `(${Math.min(a, c)}, ${Math.min(b, d)}, ${Math.max(a, c)}, ${Math.max(b, d)})`; } return 'None'; }
 /* 닮은 정도(%)·색 허용 → opencv 신뢰도 */
 function pyConf(s) {
   const base = { 100: 0.92, 95: 0.88, 85: 0.8, 75: 0.7 }[num(s.sim) || 100] ?? 0.88;
@@ -3061,13 +3096,20 @@ function genPY(l) {
   P.push('    V.clear(); V.update(INIT_VARS)');
   P.push("    f = os.path.join(BASE_DIR, 'variables.txt')   # 폴더의 variables.txt 가 있으면 그 값으로 덮어씀");
   P.push('    if os.path.exists(f):');
-  P.push("        with open(f, encoding='utf-8-sig') as fh:");
-  P.push('            for ln in fh:');
-  P.push("                ln = ln.rstrip('\\r\\n')");
-  P.push("                if not ln.strip() or ln.lstrip().startswith('#'): continue");
-  P.push("                if '=' in ln:");
-  P.push("                    k, v = ln.split('=', 1)");
-  P.push('                    if k.strip(): V[k.strip()] = v');
+  P.push('        _txt = None');
+  P.push("        for _enc in ('utf-8-sig', 'cp949', 'utf-8'):   # 메모장 ANSI·엑셀 등 한글 인코딩도 견디게");
+  P.push('            try:');
+  P.push('                with open(f, encoding=_enc) as fh: _txt = fh.read(); break');
+  P.push('            except Exception: continue');
+  P.push("        if _txt is None:");
+  P.push("            try:");
+  P.push("                with open(f, encoding='utf-8', errors='replace') as fh: _txt = fh.read()");
+  P.push("            except Exception as _e: print('[주의] variables.txt 를 읽지 못했어요: ' + str(_e)); _txt = ''");
+  P.push("        for ln in _txt.splitlines():");
+  P.push("            if not ln.strip() or ln.lstrip().startswith('#'): continue");
+  P.push("            if '=' in ln:");
+  P.push("                k, v = ln.split('=', 1)");
+  P.push('                if k.strip(): V[k.strip()] = v.strip()');
   P.push('def get_var(k): return str(V.get(k, ""))');
   P.push('def fill(s):   # 글자 속 {변수이름} 을 값으로');
   P.push('    s = str(s)');
@@ -3173,8 +3215,10 @@ function emitPY(steps, out, ctx) {
   });
 }
 function genPYSetVar(s) {
-  const k = pyJ(cleanVarName(s.name));
+  const nm = cleanVarName(s.name), k = pyJ(nm);
   if (s.from === 'clip') return [`V[${k}] = get_clip()`];
+  if (s.from === 'date') { const off = num(s.dateOffset) || 0; return [`_dte = datetime.datetime.now() + datetime.timedelta(days=${off})`, `V[${k}] = ${pyDatePart(s.datePart)}`, `print(${pyJ('   {' + nm + '} = ')} + V[${k}])`]; }
+  if (s.from === 'ask') { const label = String(s.askText || '값을 입력하세요'); return [`V[${k}] = (input(${pyJ(label + ': ')}).strip() or ${pyJ(String(s.askDefault || ''))})`]; }
   if (s.from === 'read') {
     const a = pyRegionArgs(s.mode, s.region || {});
     const L = [...a.pre, `_t = read_region(${a.args})`];
@@ -3581,6 +3625,7 @@ function genHelperBat(ps1Name) {
   // .bat 는 순수 ASCII + chcp 없음
   return [
     '@echo off',
+    'cd /d "%TEMP%" 2>nul',
     ...batPick(ps1Name, '-run'),
     'powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%F%"',
     'echo.', 'pause', '',
@@ -3601,6 +3646,7 @@ function genPyBat(l, pyName) {
   const { mods, pkgs, ocr } = pyPackages(l);
   return [
     '@echo off',
+    'cd /d "%TEMP%" 2>nul',
     'setlocal',
     ...batPick(pyName, '-python'),
     'set "PY="',
@@ -3654,12 +3700,14 @@ function ahkLostExit(l) {
 const NOEXT_BAT = [':noext', 'echo.', 'echo  [!] Drag the macro-studio folder OUT of the zip first (to the Desktop), then run START.bat', 'echo.', 'pause'];
 function genStartBat() {
   // ASCII 만, chcp 없음. 메뉴 창이 검은 창을 숨김. 메뉴 파일에 문법 오류가 있으면 창이 남아 이유를 보여줌
-  return ['@echo off', 'if not exist "%~dp0tools\\menu.ps1" goto noext',
+  return ['@echo off', 'cd /d "%TEMP%" 2>nul',
+    'if not exist "%~dp0tools\\menu.ps1" goto noext',
     'powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0tools\\menu.ps1"',
     'if errorlevel 1 pause', 'exit /b', ...NOEXT_BAT, ''].join('\r\n');
 }
 function genRunBat() {
-  return ['@echo off', 'if not exist "%~dp0macro.ps1" goto noext',
+  return ['@echo off', 'cd /d "%TEMP%" 2>nul',
+    'if not exist "%~dp0macro.ps1" goto noext',
     'powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0macro.ps1"',
     'if errorlevel 1 echo  [!] Error above? If it says the script was blocked by antivirus, see README.txt (macro-studio folder).',
     'echo.', 'pause', 'exit /b', ...NOEXT_BAT, ''].join('\r\n');
