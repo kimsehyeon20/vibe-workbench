@@ -1709,6 +1709,15 @@ function genAHK(l) {
   L.push('MacroVars := Map()   ; 변수 저장소 (AHK·PS 는 이름 대소문자를 안 가려 짧은 이름 피함)');
   L.push('ImgErr := ""         ; 이미지 찾기 실패 이유 (nofile = 파일 없음, bad = 그림을 못 읽음)');
   L.push('InitVars()');
+  const miss = ahkUnsupported(l);
+  if (miss.length) {   // 이 매크로에 .ahk 로 못 하는 동작이 있으면 시작할 때 팝업으로 알림
+    let warn = '이 매크로에는 .ahk(AutoHotkey)로는 할 수 없는 동작이 들어 있어요.\n실행하면 아래 동작은 그냥 건너뜁니다:\n\n';
+    warn += miss.map(x => '· ' + x).join('\n');
+    if (ahkLostExit(l)) warn += '\n\n⚠ 건너뛰는 조건 안의 "멈춤 / 반복 빠져나가기"도 실행되지 않아, 반복이 스스로 끝나지 않을 수 있어요(F9 또는 Esc 로 종료).';
+    warn += '\n\n이 동작까지 제대로 쓰려면 "무설치(윈도우)"나 파이썬으로 받으세요.\n\n그래도 .ahk 로 계속할까요?';
+    L.push(`if (MsgBox("${ahkStr(warn)}", "매크로 설계소 - 안내", "YesNo Icon! 0x40000") = "No")`);
+    L.push('    ExitApp');
+  }
   const p = hhmmParts(l.startAt);
   if (p) {
     L.push(`; 예약 시작: 다음 ${l.startAt} 까지 대기 (${CTRL_KEYS.startNowLabel} 누르면 즉시 시작)`);
