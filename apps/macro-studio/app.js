@@ -1057,6 +1057,8 @@ function fieldsFor(type) {
         + areaBlock()
         + inpN('여러 개면 몇 번째', 'nth', 'min="1"')
         + `<p class="hint">위→아래, 왼쪽→오른쪽 순서로 셉니다.</p>`
+        + toggle('sharp', '연한·작은 글씨 또렷하게 (OCR 보정)')
+        + `<p class="hint">연한 회색·작은 글씨를 못 읽을 때 켜세요. 영역을 크게 키우고 대비를 올려 읽어요(흰 배경에 가장 효과적). 또렷한 글씨엔 켤 필요 없어요.</p>`
         + actBlock() + retryBlock();
     case 'webclick':
       return `<p class="hint" style="margin-top:0">브라우저(크롬·엣지 등)의 <b>단추·링크·입력칸을 이름으로</b> 찾아 눌러요. 화면 배치·위치·테마가 달라도 <b>이름만 같으면</b> 찾아요. <b>무설치(윈도우)·파이썬</b> 전용(베타).</p>`
@@ -1073,6 +1075,7 @@ function fieldsFor(type) {
         + chips('무엇을 읽나요', 'read', { text: '글자', number: '숫자만' })
         + regionInputs('region', 'mode', '영역')
         + chips('붙여넣은 뒤', 'after', { none: '없음', enter: '엔터(다음 줄)', tab: '탭(다음 칸)' })
+        + toggle('sharp', '연한·작은 글씨 또렷하게 (OCR 보정)')
         + `<p class="hint">반복문과 함께 쓰면 한 줄씩 자동으로 옮겨 적을 수 있어요.</p>`;
     case 'setvar': {
       let h = `<p class="hint" style="margin-top:0">값을 <b>이름 붙은 상자(변수)</b>에 담아 두고, 나중에 글자 입력·조건 등에서 <b>{이름}</b>으로 꺼내 써요.</p>`
@@ -1080,6 +1083,7 @@ function fieldsFor(type) {
         + chips('값 가져오기', 'from', SETFROM);
       if (draft.from === 'read') {
         h += chips('무엇을 읽나요', 'read', { text: '글자', number: '숫자만' }) + regionInputs('region', 'mode', '읽을 영역')
+          + toggle('sharp', '연한·작은 글씨 또렷하게 (OCR 보정)')
           + `<p class="hint">못 읽으면 <b>빈 값</b>이 들어가고 실행 창에 경고가 떠요. 조건 "변수 값 → 비었음"으로 <b>읽기 오류를 알아낼 수 있어요</b>. 무설치·파이썬 전용.</p>`;
       } else if (draft.from === 'clip') {
         h += `<p class="hint">바로 앞에 <b>단축키 "복사"</b>를 넣으세요. 복사된 글자가 변수에 담겨요(엑셀 칸 값 등).</p>`;
@@ -1107,6 +1111,7 @@ function fieldsFor(type) {
       } else if (w === 'text') {
         if (!OPS_SEE[draft.op]) draft.op = 'yes';
         h += inpT('글자', 'text', '예: 완료') + chips('조건', 'op', OPS_SEE) + areaBlock()
+          + toggle('sharp', '연한·작은 글씨 또렷하게 (OCR 보정)')
           + `<p class="hint">화면 글자를 읽어(OCR) 확인해요. 무설치·파이썬 전용.</p>`;
       } else {
         const ops = draft.read === 'text' ? OPS_TEXT : OPS_NUM;
@@ -1116,7 +1121,8 @@ function fieldsFor(type) {
         if (w === 'region') {
           if (!draft.src) draft.src = 'const';
           h += `<div class="seg-title">영역 ①</div>` + regionInputs('region', 'mode', '영역①')
-            + chips('무엇과 비교하나요', 'src', { const: '고정값', region2: '다른 영역 ②' });
+            + chips('무엇과 비교하나요', 'src', { const: '고정값', region2: '다른 영역 ②' })
+            + toggle('sharp', '연한·작은 글씨 또렷하게 (OCR 보정)');
         }
         const two = w === 'region' && draft.src === 'region2';
         h += selF('비교', 'op', ops);
@@ -1217,7 +1223,7 @@ function bindFields() {
   body.querySelectorAll('.chk').forEach(btn => {
     btn.onclick = () => {
       const g = btn.dataset.group, val = btn.dataset.value;
-      if (g === 'double' || g === 'bright') { draft[g] = !draft[g]; }
+      if (g === 'double' || g === 'bright' || g === 'sharp') { draft[g] = !draft[g]; }
       else {
         draft[g] = (g === 'tol' || g === 'sim') ? Number(val) : val;
         if (g === 'read') draft.op = (val === 'text' ? 'has' : 'ge');
@@ -2580,7 +2586,7 @@ function genPSSetVar(s) {
     return ['FocusConsole', `$ans = Read-Host ${psStr(label)}`, ...(def ? [`if("$ans" -eq ''){ $ans = ${psStr(def)} }`] : []), `SetVar ${k} $ans`];
   }
   if (s.from === 'read') {
-    const L = psReadRegion('$txt', s.mode, s.region || {});
+    const L = psReadRegion('$txt', s.mode, s.region || {}, s.sharp);
     if (s.read === 'number') L.push("$m = [regex]::Match([string]$txt, '-?\\d[\\d,]*(\\.\\d+)?'); $val = if($m.Success){ $m.Value -replace ',','' } else { '' }");
     else L.push('$val = ([string]$txt).Trim()');
     L.push(`SetVar ${k} $val`);
@@ -2598,7 +2604,7 @@ function psFindStep(s) {
   const call = isImg
     ? `FindImg (ImgPath ${psStr(name)}) ${num(s.tol) || 25} ${Math.min(100, Math.max(50, num(s.sim) || 100))} $${s.bright ? 'true' : 'false'} ${psArea(s)} ${nth} ${retries} ${everyMs}`
     : isWeb ? `FindWeb ${psFill(name)} '${s.match === 'has' ? 'has' : 'exact'}' '${CTYPE[s.ctype] ? s.ctype : 'any'}' ${psFill(s.win || '')} ${nth} ${retries} ${everyMs}`
-    : `FindText ${psFill(name)} ${psArea(s)} ${nth} ${retries} ${everyMs}`;
+    : `FindText ${psFill(name)} ${psArea(s)} ${nth} ${retries} ${everyMs} $${s.sharp ? 'true' : 'false'}`;
   const what = isImg ? `이미지 '${name}'` : `글자 '${name}'`;
   const tail = `${nth > 1 ? ` (${nth}번째)` : ''} 을(를) ${isWeb ? '창에서' : '화면에서'} 찾을 수 없어요 (${retries}번 시도)`;
   const L = ['$p = $null', 'while($true){', `  $p = ${call}`, '  if($null -ne $p){ break }'];
@@ -2632,17 +2638,20 @@ function psOcrFuncs() {
     'if(-not $script:ocrReady){ Write-Host "[주의] 이 PC에서 화면 글자 읽기(OCR)를 쓸 수 없어 글자 관련 동작은 실패로 처리돼요." -ForegroundColor Yellow }',
     'function Await($op,$t){ $m=$script:asTaskGeneric.MakeGenericMethod($t); $net=$m.Invoke($null,@($op)); $net.Wait(-1)|Out-Null; $net.Result }',
     '# 화면 네모를 찍어 OCR (작은 영역은 2배 키워 정확도↑, 너무 크면 줄임). 영역이 없으면 화면 전체',
-    'function OcrShot($x1,$y1,$x2,$y2){',
+    'function OcrShot($x1,$y1,$x2,$y2,$sharp){',
     '  if(-not $script:ocrReady){ return $null }',
     '  if($x2 -le $x1 -or $y2 -le $y1){ $vs=[System.Windows.Forms.SystemInformation]::VirtualScreen; $x1=$vs.Left; $y1=$vs.Top; $x2=$vs.Right; $y2=$vs.Bottom }',
     '  $w=[int]($x2-$x1); $h=[int]($y2-$y1); if($w -lt 1 -or $h -lt 1){ return $null }',
     '  $mx=[Math]::Max($w,$h); $sc=1.0',
-    '  if($mx -lt 1200 -and ($mx*2) -le $script:ocrMax){ $sc=2.0 } elseif($mx -gt $script:ocrMax){ $sc=$script:ocrMax/$mx }',
+    '  if($sharp -and $mx -lt 1500 -and ($mx*3) -le $script:ocrMax){ $sc=[Math]::Min(4.0, 2400.0/$mx) } elseif($mx -lt 1200 -and ($mx*2) -le $script:ocrMax){ $sc=2.0 } elseif($mx -gt $script:ocrMax){ $sc=$script:ocrMax/$mx }',
     '  $ms=New-Object System.IO.MemoryStream',
     '  try {   # 화면 잠금·보안 창 등으로 화면을 못 찍으면 "못 읽음"으로 처리(매크로가 죽지 않게)',
     '    $bmp=New-Object System.Drawing.Bitmap $w,$h',
     '    try { $g=[System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen([int]$x1,[int]$y1,0,0,(New-Object System.Drawing.Size $w,$h)); $g.Dispose() } catch { $bmp.Dispose(); throw }',
     '    if($sc -ne 1.0){ $nw=[Math]::Max(1,[int]($w*$sc)); $nh=[Math]::Max(1,[int]($h*$sc)); $b2=New-Object System.Drawing.Bitmap $nw,$nh; $g2=[System.Drawing.Graphics]::FromImage($b2); $g2.InterpolationMode=[System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic; $g2.DrawImage($bmp,0,0,$nw,$nh); $g2.Dispose(); $bmp.Dispose(); $bmp=$b2 }',
+    '    if($sharp){   # 또렷하게: 흰 배경 기준 대비를 올려 연한 회색 글씨를 진하게 (흰색은 그대로)',
+    '      try { $cc=3.0; $cm=New-Object System.Drawing.Imaging.ColorMatrix; $cm.Matrix00=$cc; $cm.Matrix11=$cc; $cm.Matrix22=$cc; $cm.Matrix33=1; $cm.Matrix44=1; $cm.Matrix40=(1-$cc); $cm.Matrix41=(1-$cc); $cm.Matrix42=(1-$cc); $ia=New-Object System.Drawing.Imaging.ImageAttributes; $ia.SetColorMatrix($cm); $b3=New-Object System.Drawing.Bitmap $bmp.Width,$bmp.Height; $g3=[System.Drawing.Graphics]::FromImage($b3); $g3.DrawImage($bmp,(New-Object System.Drawing.Rectangle 0,0,$bmp.Width,$bmp.Height),0,0,$bmp.Width,$bmp.Height,[System.Drawing.GraphicsUnit]::Pixel,$ia); $g3.Dispose(); $ia.Dispose(); $bmp.Dispose(); $bmp=$b3 } catch {}',
+    '    }',
     '    $bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose(); $ms.Position=0',
     '    $ras=[System.IO.WindowsRuntimeStreamExtensions]::AsRandomAccessStream($ms)',
     '    $dec=Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($ras)) ([Windows.Graphics.Imaging.BitmapDecoder])',
@@ -2651,14 +2660,14 @@ function psOcrFuncs() {
     '    return @{ R = $res; X = [int]$x1; Y = [int]$y1; S = $sc }',
     '  } catch { return $null } finally { $ms.Dispose() }',
     '}',
-    'function ReadRegion($x1,$y1,$x2,$y2){',
+    'function ReadRegion($x1,$y1,$x2,$y2,$sharp){',
     '  if([Math]::Abs($x2-$x1) -lt 1 -or [Math]::Abs($y2-$y1) -lt 1){ return "" }',
-    '  $o = OcrShot ([Math]::Min($x1,$x2)) ([Math]::Min($y1,$y2)) ([Math]::Max($x1,$x2)) ([Math]::Max($y1,$y2))',
+    '  $o = OcrShot ([Math]::Min($x1,$x2)) ([Math]::Min($y1,$y2)) ([Math]::Max($x1,$x2)) ([Math]::Max($y1,$y2)) $sharp',
     '  if($null -eq $o){ return "" }',
     '  return [string]$o.R.Text',
     '}',
     '# 화면에서 글자를 찾아 가운데 좌표 반환 (띄어쓰기·대소문자 무시, 위→아래·왼→오른 순 n번째)',
-    'function FindText($target, $x1, $y1, $x2, $y2, $nth, $retries, $everyMs){',
+    'function FindText($target, $x1, $y1, $x2, $y2, $nth, $retries, $everyMs, $sharp){',
     '  $script:lastErr = ""',
     '  if(-not $script:ocrReady){ $script:lastErr = "noocr"; return $null }',
     '  $t = (([string]$target) -replace "\\s", "").ToLower()',
@@ -2666,7 +2675,7 @@ function psOcrFuncs() {
     '  if($nth -lt 1){ $nth = 1 }',
     '  for($k = 0; $k -lt $retries; $k++){',
     '    Pump',
-    '    $o = OcrShot $x1 $y1 $x2 $y2',
+    '    $o = OcrShot $x1 $y1 $x2 $y2 $sharp',
     '    if($null -ne $o){',
     '      $hits = New-Object System.Collections.ArrayList',
     '      foreach($line in $o.R.Lines){',
@@ -2853,7 +2862,7 @@ function genPSStep(s) {
   }
 }
 function genPSReadPut(s) {
-  const L = psReadRegion('$txt', s.mode, s.region || {});
+  const L = psReadRegion('$txt', s.mode, s.region || {}, s.sharp);
   if (s.read === 'number') L.push("$m = [regex]::Match([string]$txt, '-?\\d[\\d,]*(\\.\\d+)?'); $val = if($m.Success){ $m.Value -replace ',','' } else { '' }");
   else L.push('$val = ([string]$txt).Trim()');
   const lines = [`if($val -ne "" -and (SetClip $val)){ Start-Sleep -Milliseconds 90; Keys "^v"`];
@@ -2862,9 +2871,10 @@ function genPSReadPut(s) {
   lines[0] += ' } else { Write-Host "[주의] 화면에서 글자를 못 읽었거나 클립보드를 못 써서 붙여넣지 않았어요" -ForegroundColor Yellow }';
   return L.concat(lines);
 }
-function psReadRegion(dest, mode, r) {
-  if (mode === 'cursor') return [`$cxy = CursorXY`, `${dest} = ReadRegion ($cxy[0] + (${num(r.x1)})) ($cxy[1] + (${num(r.y1)})) ($cxy[0] + (${num(r.x2)})) ($cxy[1] + (${num(r.y2)}))`];
-  return [`${dest} = ReadRegion ${num(r.x1)} ${num(r.y1)} ${num(r.x2)} ${num(r.y2)}`];
+function psReadRegion(dest, mode, r, sharp) {
+  const sh = sharp ? ' $true' : ' $false';
+  if (mode === 'cursor') return [`$cxy = CursorXY`, `${dest} = ReadRegion ($cxy[0] + (${num(r.x1)})) ($cxy[1] + (${num(r.y1)})) ($cxy[0] + (${num(r.x2)})) ($cxy[1] + (${num(r.y2)}))${sh}`];
+  return [`${dest} = ReadRegion ${num(r.x1)} ${num(r.y1)} ${num(r.x2)} ${num(r.y2)}${sh}`];
 }
 /* 조건 → c 변수에 $true/$false. 못 읽으면(빈 값) "비었음" 말고는 모두 거짓 */
 function genPSCond(s, c) {
@@ -2874,7 +2884,7 @@ function genPSCond(s, c) {
     const nm = cleanImgName(s.img);
     const call = w === 'img'
       ? `FindImg (ImgPath ${psStr(nm)}) ${num(s.tol) || 25} ${Math.min(100, Math.max(50, num(s.sim) || 100))} $${s.bright ? 'true' : 'false'} ${psArea(s)} 1 1 0`
-      : `FindText ${psFill(s.text)} ${psArea(s)} 1 1 0`;
+      : `FindText ${psFill(s.text)} ${psArea(s)} 1 1 0 $${s.sharp ? 'true' : 'false'}`;
     const L = ['while($true){', `  $p = ${call}`, "  if($null -ne $p -or $script:lastErr -eq 'notfound' -or $script:lastErr -eq ''){ break }", "  $msg = '조건을 확인할 수 없어요'"];
     psErrMsgs(w === 'img' ? nm : null).forEach(x => L.push('  ' + x));
     L.push("  if((ErrorPause ($msg + ' (F7 = 안 보이는 것으로 보고 진행)')) -eq 'skip'){ $p = $null; break }", '}');
@@ -2889,9 +2899,9 @@ function genPSCond(s, c) {
     L.push(`$txt = GetVar ${psStr(cleanVarName(s.varName))}`);
     L.push(`Write-Host ("   변수 값: " + $txt)`);
   } else {
-    L.push(...psReadRegion('$txt', s.mode, s.region || {}));
+    L.push(...psReadRegion('$txt', s.mode, s.region || {}, s.sharp));
     L.push('Write-Host "   조건 영역 값: $txt"');
-    if (two) { L.push(...psReadRegion('$txt2', s.mode2, s.region2 || {})); L.push('Write-Host "   조건 영역2 값: $txt2"'); }
+    if (two) { L.push(...psReadRegion('$txt2', s.mode2, s.region2 || {}, s.sharp)); L.push('Write-Host "   조건 영역2 값: $txt2"'); }
   }
   if (s.read === 'text') {
     if (s.op === 'empty') { L.push(`${c} = (([string]$txt).Trim() -eq "")`); return L; }
@@ -3353,7 +3363,7 @@ function genPYSetVar(s) {
   if (s.from === 'ask') { const label = String(s.askText || '값을 입력하세요'); return ['focus_console()   # 물어보기: 실행 창을 앞으로 (안 그러면 다른 창에 입력돼 멈춘 듯 보임)', `V[${k}] = (input(${pyJ(label + ': ')}).strip() or ${pyJ(String(s.askDefault || ''))})`]; }
   if (s.from === 'read') {
     const a = pyRegionArgs(s.mode, s.region || {});
-    const L = [...a.pre, `_t = read_region(${a.args})`];
+    const L = [...a.pre, `_t = read_region(${a.args}, ${s.sharp ? 'True' : 'False'})`];
     if (s.read === 'number') L.push('_val = num_str(_t)');
     else L.push('_val = (_t or "").strip()');
     L.push(`V[${k}] = _val`);
@@ -3384,7 +3394,7 @@ function pyFindStep(s) {
   const call = isImg
     ? `find_img(img_path(${pyJ(name)}), ${pyConf(s)}, False, ${pyBox(s)}, ${nth}, ${retries}, ${every})`
     : isWeb ? `find_web(${pyFill(name)}, ${pyJ(s.match === 'has' ? 'has' : 'exact')}, ${pyJ(CTYPE[s.ctype] ? s.ctype : 'any')}, ${pyFill(s.win || '')}, ${nth}, ${retries}, ${every})`
-    : `find_text(${pyFill(name)}, ${pyBox(s)}, ${nth}, ${retries}, ${every})`;
+    : `find_text(${pyFill(name)}, ${pyBox(s)}, ${nth}, ${retries}, ${every}, ${s.sharp ? 'True' : 'False'})`;
   const what = isImg ? `이미지 '${name}'` : `글자 '${name}'`;
   const tail = `${nth > 1 ? ` (${nth}번째)` : ''} 을(를) ${isWeb ? '창에서' : '화면에서'} 찾을 수 없어요 (${retries}번 시도)`;
   const L = ['_p = None', 'while True:', `    _p = ${call}`, '    if _p: break'];
@@ -3418,30 +3428,36 @@ function pyOcrFuncs() {
     '        try: return winocr.recognize_pil_sync(img, lang)',
     '        except Exception: continue',
     '    return None',
-    'def ocr_shot(bbox):',
+    'def ocr_shot(bbox, sharp=False):',
     '    if not _ocr: return None',
     '    try:',
     '        if bbox: img = ImageGrab.grab(bbox=bbox, all_screens=True); ox, oy = bbox[0], bbox[1]',
     '        else: img = ImageGrab.grab(all_screens=True); ox, oy = _vorigin()',
     '    except Exception: return None',
     '    w, h = img.size; mx = max(w, h); sc = 1.0',
-    '    if mx < 1200: sc = 2.0',
+    '    if sharp and mx < 1500: sc = min(4.0, 2400.0 / mx)   # 또렷하게: 작은 글씨를 더 크게',
+    '    elif mx < 1200: sc = 2.0',
     '    elif mx > 2600: sc = 2600.0 / mx',
     '    if sc != 1.0: img = img.resize((max(1, int(w * sc)), max(1, int(h * sc))))',
+    '    if sharp:   # 연한 회색 글씨를 진하게: 흰색 기준 대비 커브 (흰색은 그대로, 연한 회색은 어둡게)',
+    '        try:',
+    '            _cc = 3.0',
+    '            img = img.convert("L").point(lambda _p: max(0, min(255, int(255 + _cc * (_p - 255)))))',
+    '        except Exception: pass',
     '    r = _ocr_img(img)',
     '    return (r, ox, oy, sc) if r is not None else None',
-    'def read_region(x1, y1, x2, y2):',
+    'def read_region(x1, y1, x2, y2, sharp=False):',
     '    if abs(x2 - x1) < 1 or abs(y2 - y1) < 1: return ""',
-    '    o = ocr_shot((min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)))',
+    '    o = ocr_shot((min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)), sharp)',
     '    return str(_g(o[0], "text", "") or "") if o else ""',
-    'def find_text(target, bbox, nth, retries, every):   # 띄어쓰기·대소문자 무시, 위→아래·왼→오른 순 n번째',
+    'def find_text(target, bbox, nth, retries, every, sharp=False):   # 띄어쓰기·대소문자 무시, 위→아래·왼→오른 순 n번째',
     "    t = re.sub(r'\\s', '', str(target)).lower()",
     '    _last_err[0] = ""',
     '    if not _ocr: _last_err[0] = "noocr"; return None',
     '    if not t: _last_err[0] = "notfound"; return None',
     '    for k in range(retries):',
     '        control()',
-    '        o = ocr_shot(bbox)',
+    '        o = ocr_shot(bbox, sharp)',
     '        if o:',
     '            r, ox, oy, sc = o; hits = []',
     '            for line in (_g(r, "lines", []) or []):',
@@ -3542,7 +3558,7 @@ function genPYStep(s) {
 }
 function genPYReadPut(s) {
   const a = pyRegionArgs(s.mode, s.region || {}); const L = [...a.pre];
-  L.push(`_t = read_region(${a.args})`);
+  L.push(`_t = read_region(${a.args}, ${s.sharp ? 'True' : 'False'})`);
   if (s.read === 'number') L.push('_val = num_str(_t)');
   else L.push('_val = (_t or "").strip()');
   L.push('if _val:');
@@ -3566,7 +3582,7 @@ function genPYCond(s, c) {
   if (w === 'img' || w === 'text') {
     // 한 번만 확인. 단, 파일이 없거나 기능을 못 쓰면 "안 보임"으로 넘기지 않고 오류로 멈춤 (F7 = 안 보이는 것으로 보고 진행)
     const nm = cleanImgName(s.img);
-    const call = w === 'img' ? `find_img(img_path(${pyJ(nm)}), ${pyConf(s)}, False, ${pyBox(s)}, 1, 1, 0)` : `find_text(${pyFill(s.text)}, ${pyBox(s)}, 1, 1, 0)`;
+    const call = w === 'img' ? `find_img(img_path(${pyJ(nm)}), ${pyConf(s)}, False, ${pyBox(s)}, 1, 1, 0)` : `find_text(${pyFill(s.text)}, ${pyBox(s)}, 1, 1, 0, ${s.sharp ? 'True' : 'False'})`;
     const L = ['while True:', `    _p = ${call}`, "    if _p is not None or _last_err[0] in ('notfound', ''): break",
       "    if _last_err[0] in ('nocv', 'noocr', 'nouia'): print(\"[주의] 이 PC에선 이 조건을 확인할 수 없어 '안 보임'으로 넘어가요\"); _p = None; break",
       '    _msg = "조건을 확인할 수 없어요"'];
@@ -3582,9 +3598,9 @@ function genPYCond(s, c) {
     L.push('print("   변수 값:", _t)');
   } else {
     const a = pyRegionArgs(s.mode, s.region || {}); L.push(...a.pre);
-    L.push(`_t = read_region(${a.args})`);
+    L.push(`_t = read_region(${a.args}, ${s.sharp ? 'True' : 'False'})`);
     L.push('print("   조건 영역 값:", _t)');
-    if (two) { const b = pyRegionArgs(s.mode2, s.region2 || {}); L.push(...b.pre); L.push(`_t2 = read_region(${b.args})`); L.push('print("   조건 영역2 값:", _t2)'); }
+    if (two) { const b = pyRegionArgs(s.mode2, s.region2 || {}); L.push(...b.pre); L.push(`_t2 = read_region(${b.args}, ${s.sharp ? 'True' : 'False'})`); L.push('print("   조건 영역2 값:", _t2)'); }
   }
   if (s.read === 'text') {
     if (s.op === 'empty') { L.push(`${c} = (str(_t or "").strip() == "")`); return L; }
