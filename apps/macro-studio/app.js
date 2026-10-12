@@ -320,6 +320,11 @@ function migrateStep(s) {
     if (s.retries == null) s.retries = 8;
     if (s.every == null) s.every = 0.7;
   }
+  if (s.type === 'textclick' || s.type === 'webclick') {   // 글자/웹 찾기도 옛 'skip' 값을 정리 (imgclick 과 같게)
+    delete s.skipN;
+    if (s.notfound === 'skip') s.notfound = 'continue';
+    if (!NF[s.notfound]) s.notfound = 'pause';
+  }
   const cl = childListsOf(s);
   if (cl) cl.forEach(c => (s[c.key] || (s[c.key] = [])).forEach(migrateStep));
 }
@@ -2970,11 +2975,16 @@ function genPY(l) {
   P.push('');
   P.push('def activate_window(title):');
   P.push('    if not gw: return');
+  P.push('    try: wins = list(gw.getWindowsWithTitle(title))');
+  P.push('    except Exception: wins = []');
+  P.push('    if not wins:   # 창이 정말 없을 때만 안내 (앞으로 못 가져온 건 "없음"이 아님)');
+  P.push('        print("[주의] 제목에 \'" + str(title) + "\' 이(가) 든 창이 없어요"); return');
+  P.push('    w = wins[0]');
   P.push('    try:');
-  P.push('        for w in gw.getWindowsWithTitle(title):');
-  P.push('            w.activate(); time.sleep(0.4); return');
-  P.push('    except Exception: pass');
-  P.push('    print("[주의] 제목에 \'" + str(title) + "\' 이(가) 든 창이 없어요")');
+  P.push('        w.activate(); time.sleep(0.4)');
+  P.push('    except Exception:   # 윈도우가 포그라운드 전환을 거부하면 최소화→복원으로 앞으로');
+  P.push('        try: w.minimize(); time.sleep(0.1); w.restore(); time.sleep(0.4)');
+  P.push('        except Exception: pass');
   P.push('');
   P.push('# ===== 클립보드 (한글 입력은 붙여넣기로) =====');
   P.push('def set_clip(s):');
@@ -3027,6 +3037,8 @@ function genPY(l) {
   P.push('    if not s: return');
   P.push('    if set_clip(s):');
   P.push('        time.sleep(0.09); pyautogui.hotkey(PASTE_MOD, "v")');
+  P.push('    elif any(ord(ch) > 0x7e for ch in s):   # 클립보드 실패 + 한글: write 로는 못 넣어 조용히 빠지는 대신 알림');
+  P.push('        print("[주의] 클립보드를 쓸 수 없어 글자를 못 넣었어요(한글)")');
   P.push('    else:');
   P.push('        pyautogui.write(s, interval=0.02)');
   P.push('');
@@ -3115,9 +3127,18 @@ function genPY(l) {
   P.push('    s = str(s)');
   P.push('    for k, v in list(V.items()): s = s.replace("{" + k + "}", str(v))');
   P.push('    return s');
+  P.push('def num_str(txt):   # 화면 글자에서 숫자만 뽑아 부호까지 맞춘 문자열 (없으면 "")');
+  P.push('    t = str(txt or "")');
+  P.push("    for ch in ('\\u2212', '\\u2013', '\\u2014', '\\u2012'): t = t.replace(ch, '-')   # 유니코드 마이너스/대시 → -");
+  P.push("    t = re.sub(r'-\\s+(?=\\d)', '-', t)   # OCR 이 '- 5' 처럼 띄워도 음수로");
+  P.push("    m = re.search(r'-?\\d[\\d,]*(\\.\\d+)?', t)");
+  P.push("    if not m: return ''");
+  P.push("    s = m.group().replace(',', '')");
+  P.push("    if not s.startswith('-') and '(' in t[:m.start()] and ')' in t[m.end():]: s = '-' + s   # 회계식 (1,200) = 음수");
+  P.push('    return s');
   P.push('def read_number(txt):');
-  P.push("    m = re.search(r'-?\\d[\\d,]*(\\.\\d+)?', str(txt or ''))");
-  P.push("    return float(m.group().replace(',', '')) if m else None");
+  P.push('    s = num_str(txt)');
+  P.push('    return float(s) if s else None');
   P.push('def text_cond(a, b, op):');
   P.push('    a = str(a or "").strip().lower(); b = str(b or "").strip().lower()');
   P.push("    if op == 'has': return b in a");
@@ -3169,6 +3190,8 @@ function genPY(l) {
   P.push('        if e.code not in (None, 0): print(e.code)');
   P.push('    except KeyboardInterrupt:');
   P.push('        print("중단했어요.")');
+  P.push('    except pyautogui.FailSafeException:   # 마우스를 왼쪽 위 구석으로 = 비상 정지');
+  P.push('        print("마우스를 화면 왼쪽 위 구석으로 옮겨 안전 정지했어요.")');
   P.push('    except Exception:');
   P.push('        import traceback; traceback.print_exc(); print("[오류] 위 내용을 확인하세요.")');
   P.push('    finally:   # 더블클릭으로 실행했을 때 창이 바로 닫혀 메시지를 못 보는 일 방지');
@@ -3218,11 +3241,11 @@ function genPYSetVar(s) {
   const nm = cleanVarName(s.name), k = pyJ(nm);
   if (s.from === 'clip') return [`V[${k}] = get_clip()`];
   if (s.from === 'date') { const off = num(s.dateOffset) || 0; return [`_dte = datetime.datetime.now() + datetime.timedelta(days=${off})`, `V[${k}] = ${pyDatePart(s.datePart)}`, `print(${pyJ('   {' + nm + '} = ')} + V[${k}])`]; }
-  if (s.from === 'ask') { const label = String(s.askText || '값을 입력하세요'); return [`V[${k}] = (input(${pyJ(label + ': ')}).strip() or ${pyJ(String(s.askDefault || ''))})`]; }
+  if (s.from === 'ask') { const label = String(s.askText || '값을 입력하세요'); return ['focus_console()   # 물어보기: 실행 창을 앞으로 (안 그러면 다른 창에 입력돼 멈춘 듯 보임)', `V[${k}] = (input(${pyJ(label + ': ')}).strip() or ${pyJ(String(s.askDefault || ''))})`]; }
   if (s.from === 'read') {
     const a = pyRegionArgs(s.mode, s.region || {});
     const L = [...a.pre, `_t = read_region(${a.args})`];
-    if (s.read === 'number') L.push("_m = re.search(r'-?\\d[\\d,]*(\\.\\d+)?', _t or ''); _val = _m.group().replace(',', '') if _m else ''");
+    if (s.read === 'number') L.push('_val = num_str(_t)');
     else L.push('_val = (_t or "").strip()');
     L.push(`V[${k}] = _val`);
     L.push(`print(${pyJ('[주의] 변수 {' + cleanVarName(s.name) + '}: 화면에서 글자를 못 읽었어요 (빈 값)')} if not _val else ${pyJ('   {' + cleanVarName(s.name) + '} = ')} + _val)`);
@@ -3250,7 +3273,7 @@ function pyFindStep(s) {
   const nth = Math.max(1, num(s.nth) || 1);
   const name = isImg ? cleanImgName(s.img) : isWeb ? String(s.name || '') : String(s.text || '');
   const call = isImg
-    ? `find_img(img_path(${pyJ(name)}), ${pyConf(s)}, ${s.bright ? 'True' : 'False'}, ${pyBox(s)}, ${nth}, ${retries}, ${every})`
+    ? `find_img(img_path(${pyJ(name)}), ${pyConf(s)}, False, ${pyBox(s)}, ${nth}, ${retries}, ${every})`
     : isWeb ? `find_web(${pyFill(name)}, ${pyJ(s.match === 'has' ? 'has' : 'exact')}, ${pyJ(CTYPE[s.ctype] ? s.ctype : 'any')}, ${pyFill(s.win || '')}, ${nth}, ${retries}, ${every})`
     : `find_text(${pyFill(name)}, ${pyBox(s)}, ${nth}, ${retries}, ${every})`;
   const what = isImg ? `이미지 '${name}'` : `글자 '${name}'`;
@@ -3405,13 +3428,13 @@ function genPYStep(s) {
     case 'scroll': return [`pyautogui.scroll(${(s.dir === 'up' ? 1 : -1) * (num(s.amount) || 1) * 120})   # 120 = 휠 한 칸`];
     case 'wait': return [`time.sleep(${Number(s.sec) || 0})`];
     case 'readput': return genPYReadPut(s);
-    default: return [];
+    default: return [`print("[주의] 이 버전이 모르는 동작이라 건너뜁니다: " + ${pyJ(String(s.type || ''))})`];
   }
 }
 function genPYReadPut(s) {
   const a = pyRegionArgs(s.mode, s.region || {}); const L = [...a.pre];
   L.push(`_t = read_region(${a.args})`);
-  if (s.read === 'number') L.push("_m = re.search(r'-?\\d[\\d,]*(\\.\\d+)?', _t or ''); _val = _m.group().replace(',', '') if _m else ''");
+  if (s.read === 'number') L.push('_val = num_str(_t)');
   else L.push('_val = (_t or "").strip()');
   L.push('if _val:');
   L.push('    if set_clip(_val):');
@@ -3434,8 +3457,10 @@ function genPYCond(s, c) {
   if (w === 'img' || w === 'text') {
     // 한 번만 확인. 단, 파일이 없거나 기능을 못 쓰면 "안 보임"으로 넘기지 않고 오류로 멈춤 (F7 = 안 보이는 것으로 보고 진행)
     const nm = cleanImgName(s.img);
-    const call = w === 'img' ? `find_img(img_path(${pyJ(nm)}), ${pyConf(s)}, ${s.bright ? 'True' : 'False'}, ${pyBox(s)}, 1, 1, 0)` : `find_text(${pyFill(s.text)}, ${pyBox(s)}, 1, 1, 0)`;
-    const L = ['while True:', `    _p = ${call}`, "    if _p is not None or _last_err[0] in ('notfound', ''): break", '    _msg = "조건을 확인할 수 없어요"'];
+    const call = w === 'img' ? `find_img(img_path(${pyJ(nm)}), ${pyConf(s)}, False, ${pyBox(s)}, 1, 1, 0)` : `find_text(${pyFill(s.text)}, ${pyBox(s)}, 1, 1, 0)`;
+    const L = ['while True:', `    _p = ${call}`, "    if _p is not None or _last_err[0] in ('notfound', ''): break",
+      "    if _last_err[0] in ('nocv', 'noocr', 'nouia'): print(\"[주의] 이 PC에선 이 조건을 확인할 수 없어 '안 보임'으로 넘어가요\"); _p = None; break",
+      '    _msg = "조건을 확인할 수 없어요"'];
     pyErrMsgs(w === 'img' ? nm : null).forEach(x => L.push('    ' + x));
     L.push("    if error_pause(_msg + ' (F7 = 안 보이는 것으로 보고 진행)') == 'skip': _p = None; break");
     L.push(`${c} = _p is not None` + (s.op === 'no' ? `; ${c} = not ${c}` : ''));
@@ -3632,35 +3657,47 @@ function genHelperBat(ps1Name) {
   ].join('\r\n');
 }
 
-/* 파이썬 실행용 .bat (ASCII 만): 파이썬 찾기 → 이 매크로에 필요한 부품만 처음 한 번 설치 → 실행.
-   화면 글자 읽기(winocr)는 아직 파이썬 3.15 이상용 부품이 없어 3.14 이하를 권함 */
-function pyPackages(l) {
-  const mods = ['pyautogui', 'keyboard', 'pyperclip', 'pygetwindow'], pkgs = ['pyautogui', 'keyboard', 'pyperclip', 'pygetwindow'];
-  const ocr = needsOcr(l.steps), img = needsImg(l.steps), web = needsWeb(l.steps);
-  if (ocr) { mods.push('winocr', 'PIL'); pkgs.push('winocr', 'pillow'); }
-  if (img) { mods.push('cv2', 'PIL'); pkgs.push('opencv-python', 'pillow'); }
-  if (web) { mods.push('uiautomation'); pkgs.push('uiautomation'); }
-  return { mods: [...new Set(mods)], pkgs: [...new Set(pkgs)], ocr };
-}
+/* 파이썬 실행용 .bat (ASCII 만): 파이썬 찾기 → 기본 부품 먼저, 선택 부품은 따로따로 → 실행.
+   화면 글자 읽기(winocr)는 아직 파이썬 3.15 이상용 부품이 없어 3.14 이하에서만 설치 시도 */
 function genPyBat(l, pyName) {
-  const { mods, pkgs, ocr } = pyPackages(l);
-  return [
+  const ocr = needsOcr(l.steps), img = needsImg(l.steps), web = needsWeb(l.steps);
+  const base = ['pyautogui', 'keyboard', 'pyperclip', 'pygetwindow'];   // 모듈명 = 패키지명
+  const gating = [...base];   // 이게 다 깔려 있으면 설치를 건너뜀 (winocr 는 3.15+ 에서 못 깔려 제외)
+  if (img) gating.push('cv2', 'PIL');
+  if (web) gating.push('uiautomation');
+  if (ocr) gating.push('PIL');
+  const L = [
     '@echo off',
     'cd /d "%TEMP%" 2>nul',
     'setlocal',
     ...batPick(pyName, '-python'),
+    'if not exist "%F%" goto noext',
     'set "PY="',
     'py -3 -c "import sys" >nul 2>nul && set "PY=py -3"',
     'if not defined PY python -c "import sys" >nul 2>nul && set "PY=python"',
     'if not defined PY goto nopy',
-    ...(ocr ? ['%PY% -c "import sys; sys.exit(0 if sys.version_info[:2] <= (3, 14) else 1)" >nul 2>nul || echo  [!] This Python is newer than 3.14 - the screen-text reader (winocr) may not install yet. Python 3.14 is recommended.'] : []),
-    `%PY% -c "import ${mods.join(', ')}" >nul 2>nul && goto run`,
+    `%PY% -c "import ${[...new Set(gating)].join(', ')}" >nul 2>nul && goto run`,
     'echo  First run: installing required packages. This takes a minute or two...',
-    `%PY% -m pip install --user --disable-pip-version-check ${pkgs.join(' ')}`,
-    'if errorlevel 1 echo  [!] Package install failed. Check the internet connection or ask IT if pip is blocked.',
+    // 1) 기본 부품 먼저 (이게 되면 클릭/입력 매크로는 무조건 돌아감)
+    `%PY% -m pip install --user --disable-pip-version-check ${base.join(' ')}`,
+    'if errorlevel 1 goto baderr',
+  ];
+  // 2) 선택 부품은 따로따로, 하나 실패해도 나머지는 그대로 (전체가 함께 죽지 않게)
+  if (img) L.push('%PY% -m pip install --user --disable-pip-version-check opencv-python pillow');
+  if (web) L.push('%PY% -m pip install --user --disable-pip-version-check uiautomation');
+  if (ocr) L.push('%PY% -c "import sys; sys.exit(0 if sys.version_info[:2] <= (3, 14) else 1)" >nul 2>nul && (%PY% -m pip install --user --disable-pip-version-check winocr pillow) || echo  [!] Screen-text reader (winocr) needs Python 3.14 or lower - skipped. Other actions still work.');
+  L.push(
+    // 3) 기본 부품이 끝내 안 깔렸으면 .py 로 넘어가지 않고 여기서 멈춤 (엉뚱한 오류 2연발 방지)
+    `%PY% -c "import ${base.join(', ')}" >nul 2>nul || goto baderr`,
     ':run',
     '%PY% "%F%"',
     'if errorlevel 1 pause',
+    'exit /b',
+    ':baderr',
+    'echo.',
+    'echo  [!] Could not install the basic packages. Check the internet, or ask IT if pip/python.org is blocked.',
+    'echo.',
+    'pause',
     'exit /b',
     ':nopy',
     'echo.',
@@ -3668,8 +3705,15 @@ function genPyBat(l, pyName) {
     'echo      or from the Microsoft Store, then double-click this file again.',
     'echo.',
     'pause',
+    'exit /b',
+    ':noext',
+    'echo.',
+    'echo  [!] Unzip first: drag the folder OUT of the zip (to the Desktop), then run this file.',
+    'echo.',
+    'pause',
     '',
-  ].join('\r\n');
+  );
+  return L.join('\r\n');
 }
 /* .ahk 에서 안 되는 기능 목록 (내보낼 때 알려줌) */
 function ahkUnsupported(l) {
