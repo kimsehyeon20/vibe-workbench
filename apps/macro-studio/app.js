@@ -2911,7 +2911,8 @@ function pyConf(s) {
   const adj = { 15: 0.04, 25: 0, 40: -0.08 }[num(s.tol) || 25] ?? 0;
   return Math.round(Math.min(0.99, Math.max(0.5, base + adj)) * 100) / 100;
 }
-function genPY(l) {
+function genPY(l, opts = {}) {
+  const pack = !!opts.pack;   // PC로 받기(파이썬 묶음)용이면 variables.txt 만들기 + --capture/--editvars 지원
   refreshOrphans(l);
   const P = [];
   P.push('# -*- coding: utf-8 -*-');
@@ -3152,6 +3153,70 @@ function genPY(l) {
   P.push('    try:');
   P.push('        import ctypes; u = ctypes.windll.user32; return u.GetSystemMetrics(76), u.GetSystemMetrics(77)');
   P.push('    except Exception: return 0, 0');
+  if (pack) {
+    P.push(`IMG_NAMES = [${imgNames(l).map(pyJ).join(', ')}]   # 이 작업방이 쓰는 이미지 이름`);
+    P.push('def ensure_vars_file():   # 묶음 전용: variables.txt 가 없으면 처음 값으로 만들고, 있으면 그대로 두되 새 변수만 더함');
+    P.push("    f = os.path.join(BASE_DIR, 'variables.txt')");
+    P.push('    try:');
+    P.push('        lines = []; have = set()');
+    P.push('        if os.path.exists(f):');
+    P.push("            for _enc in ('utf-8-sig', 'cp949', 'utf-8'):");
+    P.push('                try:');
+    P.push('                    with open(f, encoding=_enc) as fh: lines = fh.read().splitlines(); break');
+    P.push('                except Exception: continue');
+    P.push('            for ln in lines:');
+    P.push("                if '=' in ln and not ln.lstrip().startswith('#'):");
+    P.push("                    k = ln.split('=', 1)[0].strip()");
+    P.push('                    if k: have.add(k)');
+    P.push('        add = [str(k) + "=" + str(v) for k, v in INIT_VARS.items() if k not in have]');
+    P.push("        if not lines: lines = ['# 변수 값 (= 뒤를 고치세요. 맨 앞이 # 이면 메모)']");
+    P.push('        if add or not os.path.exists(f):');
+    P.push("            with open(f, 'w', encoding='utf-8') as fh: fh.write('\\n'.join(lines + add) + '\\n')");
+    P.push("    except Exception as _e: print('[주의] variables.txt 를 만들지 못했어요:', _e)");
+    P.push('    return f');
+    P.push('def edit_vars():   # 변수 고치기: 파일을 만들고 메모장으로 열기');
+    P.push('    f = ensure_vars_file()');
+    P.push('    print("변수 파일:", f)');
+    P.push('    try: os.startfile(f)');
+    P.push('    except Exception as _e: print("열지 못했어요(직접 열어 고치세요):", _e)');
+    P.push('def _drag_box(prompt):   # 화면을 드래그해 네모 영역을 고름 (ESC = 건너뛰기). 실제 픽셀 기준');
+    P.push('    import tkinter as tk');
+    P.push('    root = tk.Tk(); root.attributes("-fullscreen", True); root.attributes("-topmost", True)');
+    P.push('    try: root.attributes("-alpha", 0.3)');
+    P.push('    except Exception: pass');
+    P.push('    root.configure(bg="gray10")');
+    P.push('    cv = tk.Canvas(root, cursor="cross", bg="gray10", highlightthickness=0); cv.pack(fill="both", expand=True)');
+    P.push('    cv.create_text(root.winfo_screenwidth() // 2, 30, text=prompt, fill="white", font=("Malgun Gothic", 14))');
+    P.push('    st = {"box": None, "rect": None, "sx": 0, "sy": 0}');
+    P.push('    ox, oy = root.winfo_rootx(), root.winfo_rooty()');
+    P.push('    def _down(e): st["sx"], st["sy"] = e.x, e.y; st["rect"] = cv.create_rectangle(e.x, e.y, e.x, e.y, outline="red", width=2)');
+    P.push('    def _move(e):');
+    P.push('        if st["rect"] is not None: cv.coords(st["rect"], st["sx"], st["sy"], e.x, e.y)');
+    P.push('    def _up(e):');
+    P.push('        st["box"] = (min(st["sx"], e.x) + ox, min(st["sy"], e.y) + oy, max(st["sx"], e.x) + ox, max(st["sy"], e.y) + oy); root.destroy()');
+    P.push('    cv.bind("<Button-1>", _down); cv.bind("<B1-Motion>", _move); cv.bind("<ButtonRelease-1>", _up)');
+    P.push('    root.bind("<Escape>", lambda e: root.destroy())');
+    P.push('    root.mainloop()');
+    P.push('    return st["box"]');
+    P.push('def capture_images():   # 이미지 찍기: 이 매크로가 쓰는 이미지를 하나씩 드래그해서 저장');
+    P.push('    if not IMG_NAMES: print("이 작업방은 이미지 찾기를 쓰지 않아요."); return');
+    P.push('    try:');
+    P.push('        import tkinter as tk');
+    P.push('        from PIL import ImageGrab');
+    P.push('    except Exception as _e: print("이미지 찍기에 필요한 부품이 없어요(Pillow/tkinter):", _e); return');
+    P.push('    os.makedirs(IMGDIR, exist_ok=True)');
+    P.push('    for _nm in IMG_NAMES:');
+    P.push('        box = _drag_box("찾을 \'" + str(_nm) + "\' 을(를) 마우스로 드래그  (ESC = 이 이미지 건너뛰기)")');
+    P.push('        if not box: print("건너뜀:", _nm); continue');
+    P.push('        x1, y1, x2, y2 = box');
+    P.push('        if x2 - x1 < 3 or y2 - y1 < 3: print("너무 작아서 건너뜀:", _nm); continue');
+    P.push('        try:');
+    P.push('            ImageGrab.grab(bbox=(x1, y1, x2, y2), all_screens=True).save(img_path(_nm))');
+    P.push('            print("저장:", img_path(_nm))');
+    P.push('        except Exception as _e: print("저장 실패:", _nm, _e)');
+    P.push('        time.sleep(0.3)');
+    P.push('    print("이미지 찍기 끝.")');
+  }
   if (needsOcr(l.steps)) P.push(...pyOcrFuncs());
   if (needsImg(l.steps)) P.push(...pyImgFuncs());
   if (needsWeb(l.steps)) P.push(...pyWebFuncs());
@@ -3182,21 +3247,38 @@ function genPY(l) {
   P.push('            print("↻ 처음부터 다시 실행"); continue');
   P.push('        break');
   P.push('');
+  const runBody = [
+    '    try:',
+    '        run()',
+    '        print("매크로가 끝났어요.")',
+    '    except SystemExit as e:',
+    '        if e.code not in (None, 0): print(e.code)',
+    '    except KeyboardInterrupt:',
+    '        print("중단했어요.")',
+    '    except pyautogui.FailSafeException:   # 마우스를 왼쪽 위 구석으로 = 비상 정지',
+    '        print("마우스를 화면 왼쪽 위 구석으로 옮겨 안전 정지했어요.")',
+    '    except Exception:',
+    '        import traceback; traceback.print_exc(); print("[오류] 위 내용을 확인하세요.")',
+  ];
   P.push("if __name__ == '__main__':");
-  P.push('    try:');
-  P.push('        run()');
-  P.push('        print("매크로가 끝났어요.")');
-  P.push('    except SystemExit as e:');
-  P.push('        if e.code not in (None, 0): print(e.code)');
-  P.push('    except KeyboardInterrupt:');
-  P.push('        print("중단했어요.")');
-  P.push('    except pyautogui.FailSafeException:   # 마우스를 왼쪽 위 구석으로 = 비상 정지');
-  P.push('        print("마우스를 화면 왼쪽 위 구석으로 옮겨 안전 정지했어요.")');
-  P.push('    except Exception:');
-  P.push('        import traceback; traceback.print_exc(); print("[오류] 위 내용을 확인하세요.")');
-  P.push('    finally:   # 더블클릭으로 실행했을 때 창이 바로 닫혀 메시지를 못 보는 일 방지');
-  P.push('        try: input("엔터를 누르면 창을 닫아요...")');
-  P.push('        except Exception: pass');
+  if (pack) {
+    // 묶음: START.bat 메뉴가 --capture(이미지 찍기)·--editvars(변수 고치기)로도 부름
+    P.push("    _mode = sys.argv[1] if len(sys.argv) > 1 else ''");
+    P.push("    if _mode == '--editvars':");
+    P.push('        edit_vars()');
+    P.push("    elif _mode == '--capture':");
+    P.push('        capture_images()');
+    P.push('    else:');
+    P.push('        ensure_vars_file()   # 처음 실행 때 variables.txt 만들기');
+    runBody.forEach(x => P.push('    ' + x));   // 한 단계 더 들여써서 else 안에
+    P.push('    try: input("엔터를 누르면 창을 닫아요...")');
+    P.push('    except Exception: pass');
+  } else {
+    runBody.forEach(x => P.push(x));
+    P.push('    finally:   # 더블클릭으로 실행했을 때 창이 바로 닫혀 메시지를 못 보는 일 방지');
+    P.push('        try: input("엔터를 누르면 창을 닫아요...")');
+    P.push('        except Exception: pass');
+  }
   P.push(...designBlock(l, 'py'));
   return P.join('\r\n') + '\r\n';
 }
@@ -3690,7 +3772,7 @@ function genPyBat(l, pyName) {
     // 3) 기본 부품이 끝내 안 깔렸으면 .py 로 넘어가지 않고 여기서 멈춤 (엉뚱한 오류 2연발 방지)
     `%PY% -c "import ${base.join(', ')}" >nul 2>nul || goto baderr`,
     ':run',
-    '%PY% "%F%"',
+    '%PY% "%F%" %*',   // %* = 메뉴가 넘기는 --capture / --editvars
     'if errorlevel 1 pause',
     'exit /b',
     ':baderr',
@@ -3789,6 +3871,8 @@ function genMenu() {
     "$psExe = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'",
     "if(-not (Test-Path -LiteralPath $psExe)){ $psExe = 'powershell.exe' }",
     'function DirOf($m){ return [System.IO.Path]::Combine($root, [string]$m.folder) }',
+    "function IsPy($m){ return [System.IO.File]::Exists([System.IO.Path]::Combine((DirOf $m), 'macro.py')) }   # 파이썬 작업방인지 (파일로 판별)",
+    "function RunBat($m, $arg){ $bat = Join-Path (DirOf $m) 'RUN.bat'; if(-not (Test-Path -LiteralPath $bat)){ Say ('실행 파일이 없어요: ' + $bat); return }; Start-Process -FilePath $env:ComSpec -ArgumentList ('/c \"\"' + $bat + '\"\"' + $arg) -WorkingDirectory (DirOf $m) -ErrorAction Stop }",
     '# 이미지 개수 (없는 드라이브·이상한 경로여도 메뉴는 열리게: 못 세면 ?)',
     'function HaveImgs($m){',
     '  try {',
@@ -3811,7 +3895,7 @@ function genMenu() {
     '$form.Font = New-Object System.Drawing.Font("Malgun Gothic", 10)',
     '$head = New-Object System.Windows.Forms.Label',
     '$head.Dock = "Top"; $head.Height = 52; $head.Padding = New-Object System.Windows.Forms.Padding 10, 8, 10, 0',
-    '$head.Text = "작업방을 고르고 [실행]을 누르세요 (두 번 클릭해도 실행).`n이미지가 없으면 실행할 때 지금 찍을지 물어봐요."',
+    '$head.Text = "작업방을 고르고 [실행]을 누르세요 (두 번 클릭해도 실행).`n이미지를 쓰는 매크로는 [이미지 찍기]로 먼저 찍어 두세요."',
     '$lb = New-Object System.Windows.Forms.ListBox',
     '$lb.Dock = "Fill"; $lb.IntegralHeight = $false; $lb.Font = New-Object System.Drawing.Font("Malgun Gothic", 11)',
     '$bar = New-Object System.Windows.Forms.FlowLayoutPanel',
@@ -3837,12 +3921,12 @@ function genMenu() {
     '$bCap = Btn "이미지 찍기" {',
     '  $m = Sel; if(-not $m){ return }',
     '  if(@($m.images).Count -eq 0){ Say "이 작업방은 이미지 찾기를 쓰지 않아요."; return }',
-    "  RunPs (Join-Path (DirOf $m) 'macro.ps1') ' -Capture' 'Minimized'",
+    "  if(IsPy $m){ RunBat $m ' --capture' } else { RunPs (Join-Path (DirOf $m) 'macro.ps1') ' -Capture' 'Minimized' }",
     '}',
     '$bVar = Btn "변수 고치기" {',
     '  $m = Sel; if(-not $m){ return }',
     '  if([int]$m.vars -eq 0){ Say "이 작업방은 변수를 쓰지 않아요."; return }',
-    "  RunPs (Join-Path (DirOf $m) 'macro.ps1') ' -EditVars' 'Minimized'",
+    "  if(IsPy $m){ RunBat $m ' --editvars' } else { RunPs (Join-Path (DirOf $m) 'macro.ps1') ' -EditVars' 'Minimized' }",
     '}',
     '$bDir = Btn "폴더 열기" { $m = Sel; if($m){ Start-Process explorer.exe -ArgumentList (\'"\' + (DirOf $m) + \'"\') -ErrorAction Stop } }',
     "$bXY = Btn \"좌표 찾기\" { RunPs (Join-Path $PSScriptRoot 'find-xy.ps1') '' 'Minimized' }",
@@ -3864,20 +3948,22 @@ function genMenu() {
   ].join('\r\n');
 }
 function countSteps(l) { let n = 0; walkSteps(l.steps, () => n++); return n; }
-function packList() {
+function packList(lang = 'ps') {
   return state.loops.map(l => ({ folder: l.folder, name: String(l.name || '').replace(/[\r\n]/g, ' '), steps: countSteps(l),
-    images: imgNames(l), imgDir: imgDirOf(l), vars: (l.vars || []).filter(v => cleanVarName(v.name)).length }));
+    images: imgNames(l), imgDir: imgDirOf(l), vars: (l.vars || []).filter(v => cleanVarName(v.name)).length, lang }));
 }
 function packReadme(list, built) {
+  const isPy = (list[0] && list[0].lang) === 'py';
   return [
-    '매크로 설계소 — PC 실행 폴더' + (built ? `   (${built} 받음)` : '') + `   판 ${APP_VERSION}`,
+    '매크로 설계소 — PC 실행 폴더' + (built ? `   (${built} 받음)` : '') + `   판 ${APP_VERSION}` + (isPy ? '   · 실행파일: 파이썬' : ''),
+    ...(isPy ? ['', '[파이썬 묶음]  이 묶음의 매크로는 파이썬으로 실행돼요(PC에 파이썬 필요). 처음 [실행]할 때 필요한 부품을 자동으로 깔아요(1~2분). 메뉴 쓰는 법은 PS1 묶음과 같아요.'] : []),
     '',
     '[늘 이것만]  START.bat 더블클릭 → 작업방 고르고 [실행]',
     '',
     '[처음 한 번]',
     '1) macro-studio.zip 을 더블클릭해 열고, 안의 macro-studio 폴더를 바탕화면으로 끌어다 놓으세요.',
     '2) 그 폴더의 START.bat 더블클릭 → 작업방을 고르고 [실행].',
-    '   이미지가 필요한 매크로는 처음 실행할 때 "지금 찍을까요?"가 떠요. [예] → 찾을 버튼을 마우스로 드래그.',
+    '   이미지가 필요한 매크로는 메뉴의 [이미지 찍기]로 먼저 찍어 두세요(찾을 부분을 마우스로 드래그). 무설치(PS1)는 실행할 때도 물어봐요.',
     '',
     '[웹에서 고쳤거나 작업방을 더했을 때]',
     '새로 받은 zip 을 열고 macro-studio 폴더를 같은 자리(바탕화면)에 다시 끌어다 놓은 뒤 "파일 바꾸기"를 고르세요.',
@@ -3917,11 +4003,11 @@ function packReadme(list, built) {
 }
 function nowStamp() { const d = new Date(), z = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}`; }
 /* zip 안 파일 목록. 맨 위는 macro-studio/ 폴더 하나 → 열어서 그 폴더를 끌어다 놓기만 하면 설치·업데이트 */
-function packFiles(built, chain = []) {
+function packFiles(built, chain = [], lang = 'ps') {
   ensureFolders();
   const R = 'macro-studio/';
   const T = (name, text, bom) => ({ name: R + name, data: utf8((bom ? '﻿' : '') + text) });
-  const list = packList();
+  const list = packList(lang);
   const files = [
     { name: R, data: null },
     T('START.bat', genStartBat()),
@@ -3935,7 +4021,12 @@ function packFiles(built, chain = []) {
     T(`tools/backup-${(built || '').replace(/[^0-9]/g, '').replace(/^(\d{8})(\d{4}).*$/, '$1-$2') || 'latest'}.json`, JSON.stringify({ ...state, packedAt: built || state.packedAt, packIds: chain.length ? chain : state.packIds }, null, 1)),
   ];
   state.loops.forEach(l => {
-    files.push({ name: `${R}${l.folder}/`, data: null }, T(`${l.folder}/RUN.bat`, genRunBat()), T(`${l.folder}/macro.ps1`, genPS1(l, { pack: true }), true));
+    files.push({ name: `${R}${l.folder}/`, data: null });
+    if (lang === 'py') {   // 파이썬 묶음: RUN.bat(파이썬 실행) + macro.py. macro.py 는 coding 헤더가 있어 BOM 없이
+      files.push(T(`${l.folder}/RUN.bat`, genPyBat(l, 'macro.py')), { name: `${R}${l.folder}/macro.py`, data: utf8(genPY(l, { pack: true })) });
+    } else {
+      files.push(T(`${l.folder}/RUN.bat`, genRunBat()), T(`${l.folder}/macro.ps1`, genPS1(l, { pack: true }), true));
+    }
   });
   // 안전장치: 영문 이름만, PC에서 생기는 파일(이미지·variables.txt)은 절대 넣지 않음
   const bad = files.filter(f => /[^\x20-\x7E]/.test(f.name) || /(^|\/)variables\.txt$|\.png$|\/images\//i.test(f.name));
@@ -3954,9 +4045,12 @@ function doExport(kind) {
     const built = nowStamp();
     // 받을 때마다 꼬리표(이 기기에서 이어 온 받기 기록). PC 메뉴가 "더 새 내용을 모르는 기기에서 받은 파일"인지 알아봄
     const chain = [...(Array.isArray(state.packIds) ? state.packIds : []), 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)].slice(-30);
-    download('macro-studio.zip', zipBytes(packFiles(built, chain)), 'application/zip');
+    const lang = state.packLang === 'py' ? 'py' : 'ps';
+    download('macro-studio.zip', zipBytes(packFiles(built, chain, lang)), 'application/zip');
     state.packedAt = built; state.packIds = chain; save();
-    toast('macro-studio.zip 을 받았어요 — 열어서 macro-studio 폴더를 바탕화면에 끌어다 놓고 START.bat');
+    toast(lang === 'py'
+      ? 'macro-studio.zip(파이썬) 을 받았어요 — 바탕화면에 풀고 START.bat. 처음 실행 때 파이썬 부품을 자동 설치해요(파이썬 필요).'
+      : 'macro-studio.zip 을 받았어요 — 열어서 macro-studio 폴더를 바탕화면에 끌어다 놓고 START.bat');
     renderSteps(); renderSettings();   // 내보내며 다른 작업방 기준으로 바뀐 경고 표시를 지금 작업방으로 되돌림
     return;
   }
@@ -4009,6 +4103,13 @@ function doExport(kind) {
   }
 }
 document.querySelectorAll('[data-export]').forEach(b => b.onclick = () => doExport(b.dataset.export));
+// PC로 받기 실행파일 종류(무설치/파이썬) 기억
+(function initPackLang() {
+  const radios = document.querySelectorAll('input[name="packlang"]');
+  if (!radios.length) return;
+  const cur = state.packLang === 'py' ? 'py' : 'ps';
+  radios.forEach(r => { r.checked = (r.value === cur); r.onchange = () => { if (r.checked) { state.packLang = r.value; save(); } }; });
+})();
 
 /* ===== 불러오기: 전체 백업 / 설계도(json) / 받은 코드 파일(.ps1·.py·.ahk) → 그대로 복원 ===== */
 function importDesignText(text) {
