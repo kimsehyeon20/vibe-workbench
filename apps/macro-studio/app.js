@@ -24,6 +24,7 @@ const TYPES = {
   textclick:{ ico: '🔤', label: '글자 찾아 클릭' },
   webclick: { ico: '🧭', label: '웹 요소 찾아 클릭 (이름)' },
   readput:  { ico: '📋', label: '영역 값 읽어 입력' },
+  excel:    { ico: '📗', label: '엑셀 칸에 입력 (파일·시트·칸)' },
   setvar:   { ico: '📦', label: '변수에 값 저장' },
   repeat:   { ico: '🔁', label: '반복문 (동작을 묶어 반복)' },
   if:       { ico: '❓', label: '조건 (맞으면 동작 실행)' },
@@ -484,6 +485,12 @@ function stepDesc(s) {
     case 'textclick': return `글자 '${String(s.text || '').slice(0, 16)}' ${findDesc(s)}`;
     case 'webclick': return `웹 요소 '${String(s.name || '').slice(0, 16)}'${CTYPE[s.ctype] && s.ctype !== 'any' ? `(${CTYPE[s.ctype]})` : ''} ${findDesc(s)}`;
     case 'readput': return `영역의 ${s.read === 'number' ? '숫자' : '글자'}를 읽어 붙여넣기${s.after && s.after !== 'none' ? ` → ${s.after === 'enter' ? '엔터' : '탭'}` : ''}`;
+    case 'excel': {
+      const f = String(s.file || '').trim(), fn = f ? f.split(/[\\/]/).pop() : '열린 파일';
+      const where = s.pos === 'next' ? `${String(s.col || '?').toUpperCase()}열 다음 빈 칸` : String(s.cell || '?').toUpperCase();
+      const v = s.src === 'clip' ? '클립보드' : `"${String(s.value ?? '').slice(0, 16)}"`;
+      return `엑셀 ${fn}${String(s.sheet || '').trim() ? ` › ${String(s.sheet).trim()}` : ''} › ${where} ← ${v}${s.save ? ' (저장)' : ''}`;
+    }
     case 'setvar': {
       const n = cleanVarName(s.name) || '?';
       if (s.from === 'read') return `{${n}} ← 화면 영역의 ${s.read === 'number' ? '숫자' : '글자'}`;
@@ -556,6 +563,19 @@ function stepIssue(s) {
       if (bad(s.retries) || Number(s.retries) < 1) return '찾는 횟수를 1 이상으로 정하세요';
       return areaIssue(s);
     case 'readput': return badR(s.region) ? '읽을 영역을 정하세요' : null;
+    case 'excel': {
+      if (s.pos === 'next') {
+        const c = String(s.col || '').trim();
+        if (!c) return '넣을 열을 정하세요 (예: B)';
+        if (!c.includes('{') && !/^[A-Za-z]{1,3}$/.test(c)) return '열은 B 처럼 알파벳으로 쓰세요';
+      } else {
+        const a = String(s.cell || '').trim().replace(/\$/g, '');
+        if (!a) return '칸 주소를 정하세요 (예: B3)';
+        if (!a.includes('{') && !/^[A-Za-z]{1,3}[1-9][0-9]{0,6}$/.test(a)) return '칸 주소는 B3 처럼 쓰세요';
+      }
+      if (s.src !== 'clip' && String(s.value ?? '') === '') return '넣을 값이 비었어요';
+      return null;
+    }
     case 'setvar':
       if (!cleanVarName(s.name)) return '변수 이름을 정하세요';
       if (s.from === 'read' && badR(s.region)) return '읽을 영역을 정하세요';
@@ -858,6 +878,7 @@ function setType(type) {
     textclick:{ type, text: '', ...findBase },
     webclick: { type, name: '', match: 'exact', ctype: 'any', win: '', nth: 1, act: 'click', button: 'left', double: false, dx: 0, dy: 0, retries: 8, every: 0.7, notfound: 'pause', saveTo: '' },
     readput:  { type, read: 'text', mode: 'screen', region: reg(100, 100, 300, 150), after: 'tab' },
+    excel:    { type, file: '', sheet: '', pos: 'cell', cell: 'A1', col: 'A', src: 'text', value: '', save: false },
     setvar:   { type, name: varNames(activeLoop())[0] || '변수1', from: 'text', value: '', read: 'text', mode: 'screen', region: reg(100, 100, 300, 150), datePart: 'yyyy', dateOffset: 0, askText: '', askDefault: '' },
     repeat:   { type, alias: '', count: 3, children: [] },
     if:       { type, alias: '', what: 'region', read: 'number', mode: 'screen', region: reg(100, 100, 300, 150), src: 'const', op: 'ge', value: '', mode2: 'screen', region2: reg(100, 300, 300, 350),
@@ -1077,6 +1098,23 @@ function fieldsFor(type) {
         + chips('붙여넣은 뒤', 'after', { none: '없음', enter: '엔터(다음 줄)', tab: '탭(다음 칸)' })
         + toggle('sharp', '연한·작은 글씨 또렷하게 (OCR 보정)')
         + `<p class="hint">반복문과 함께 쓰면 한 줄씩 자동으로 옮겨 적을 수 있어요.</p>`;
+    case 'excel': {
+      if (draft.pos !== 'next') draft.pos = 'cell';
+      if (draft.src !== 'clip') draft.src = 'text';
+      let h = `<p class="hint" style="margin-top:0">PC의 <b>엑셀 파일을 열어</b> 정한 <b>시트·칸</b>에 값을 넣어요. <b>값만</b> 넣어서 그 칸의 <b>원래 서식(숫자 형식·글꼴·테두리)을 그대로 따라요</b>(대상 서식에 맞추기). <b>무설치(윈도우)·파이썬</b> 전용이고 PC에 <b>엑셀이 설치</b>돼 있어야 해요.</p>`
+        + inpT('엑셀 파일', 'file', '예: C:\\업무\\보고서.xlsx  (비우면 지금 열린 파일)')
+        + `<p class="hint">이미 열려 있으면 그 파일에 넣고, 아니면 열어요. 이름만 쓰면(예: 보고서) 열린 파일 중에서 먼저 찾아요. {변수} 가능.</p>`
+        + inpT('시트 이름', 'sheet', '예: 1월  (비우면 지금 보이는 시트)')
+        + chips('어느 칸에', 'pos', { cell: '정한 칸', next: '열의 다음 빈 칸' });
+      if (draft.pos === 'next') h += inpT('열', 'col', '예: B')
+        + `<p class="hint">그 열에서 <b>마지막으로 채워진 칸 바로 아래</b>에 넣어요. 반복문과 함께 쓰면 한 줄씩 아래로 쌓여요(자료수집).</p>`;
+      else h += inpT('칸 주소', 'cell', '예: B3');
+      h += chips('넣을 값', 'src', { text: '직접 입력 / 변수', clip: '클립보드 붙여넣기' });
+      if (draft.src === 'clip') h += `<p class="hint">바로 앞에 <b>단축키 "복사"</b>로 복사해 둔 값을 넣어요. 복사한 곳의 서식은 버리고 <b>이 칸의 서식에 맞춰</b> 값만 붙여요.</p>`;
+      else h += inpT('값', 'value', '예: 완료  또는 {금액}') + varHint();
+      return h + toggle('save', '넣은 뒤 파일 저장')
+        + `<p class="hint">켜면 넣을 때마다 저장해요. 끄면 엑셀이 열린 채로 남아 직접 확인하고 저장할 수 있어요. 숫자처럼 보이는 값은 숫자로 넣고(1,234 → 1234), 앞에 0이 붙은 번호(00123)는 0이 안 사라지게 글자로 넣어요.</p>`;
+    }
     case 'setvar': {
       let h = `<p class="hint" style="margin-top:0">값을 <b>이름 붙은 상자(변수)</b>에 담아 두고, 나중에 글자 입력·조건 등에서 <b>{이름}</b>으로 꺼내 써요.</p>`
         + inpT('변수 이름', 'name', '예: 금액', 'list="dl-var"')
@@ -1223,7 +1261,7 @@ function bindFields() {
   body.querySelectorAll('.chk').forEach(btn => {
     btn.onclick = () => {
       const g = btn.dataset.group, val = btn.dataset.value;
-      if (g === 'double' || g === 'bright' || g === 'sharp') { draft[g] = !draft[g]; }
+      if (g === 'double' || g === 'bright' || g === 'sharp' || g === 'save') { draft[g] = !draft[g]; }
       else {
         draft[g] = (g === 'tol' || g === 'sim') ? Number(val) : val;
         if (g === 'read') draft.op = (val === 'text' ? 'has' : 'ge');
@@ -1491,6 +1529,7 @@ async function doStepPreview(s, fast) {
       r = await wait(c(500)); hideRegions(); return r;
     }
     case 'readput': { drawRegion('prev-region', s.mode, s.region || {}, 'r1'); hideOne('prev-region2'); badge('📋 읽어 입력'); setCap(stepDesc(s)); const r = await wait(c(1300)); hideRegions(); return r; }
+    case 'excel': { badge('📗 엑셀 입력'); setCap(stepDesc(s)); return wait(c(1000)); }
     case 'setvar': {
       if (s.from === 'read') drawRegion('prev-region', s.mode, s.region || {}, 'r1');
       badge(`📦 {${cleanVarName(s.name)}}`); setCap(stepDesc(s));
@@ -1964,6 +2003,7 @@ function genAHKStep(s) {
     case 'scroll': return [`Loop ${num(s.amount) || 1} {`, `    Send "{Wheel${s.dir === 'up' ? 'Up' : 'Down'}}"`, '    Sleep 40', '}'];
     case 'wait': return [`Sleep ${Math.round((Number(s.sec) || 0) * 1000)}`];
     case 'readput': return ['; [영역 값 읽어 입력] 은 .ahk 에서 지원되지 않아 건너뜁니다 — "무설치(윈도우)" 또는 파이썬으로 내보내세요.'];
+    case 'excel': return ['; [엑셀 칸에 입력] 은 .ahk 에서 지원되지 않아 건너뜁니다 — "무설치(윈도우)" 또는 파이썬으로 내보내세요.'];
     default: return [];
   }
 }
@@ -2193,6 +2233,85 @@ function psVarsFileFns(l, pack) {
    → 화면 배치·테마·크기가 달라도 이름만 같으면 찾음. 화면에 보이는 것만, 위→아래·왼→오른 순 n번째 */
 const CTYPE = { any: '아무거나', button: '단추', link: '링크', edit: '입력칸' };
 function needsWeb(steps) { return anyStep(steps, s => s.type === 'webclick'); }
+/* 엑셀 칸에 입력 (실제 Excel 을 COM 으로). 범위(Range) 객체는 함수 밖으로 돌려주지 않음 → PowerShell 이 칸 단위로 풀어 버리는 일 방지 */
+function psExcelFuncs() {
+  return [
+    '# ===== 엑셀 칸에 입력 (실제 Excel 을 열어 COM 으로 넣음) =====',
+    "$script:xlApp = $null; $script:xlMsg = ''",
+    'function XlApp(){   # 켜져 있는 엑셀에 붙고, 없으면 새로 켬 (화면에 보이게)',
+    '  if($null -ne $script:xlApp){ try { $null = $script:xlApp.Visible; return $script:xlApp } catch { $script:xlApp = $null } }',
+    '  $a = $null',
+    "  try { $a = [Runtime.InteropServices.Marshal]::GetActiveObject('Excel.Application') } catch { $a = $null }",
+    '  if($null -eq $a){ $a = New-Object -ComObject Excel.Application }',
+    '  try { $a.Visible = $true } catch {}',
+    '  $script:xlApp = $a; return $a',
+    '}',
+    'function XlBook($app, $f){   # 이미 열린 파일이면 그걸, 아니면 열기. 비우면 지금 열린 파일',
+    "  $f = ([string]$f).Trim().Trim('\"')",
+    "  if($f -eq ''){ $wb = $app.ActiveWorkbook; if($null -eq $wb){ throw '열린 엑셀 파일이 없어요 — 파일 경로를 넣거나 엑셀 파일을 먼저 열어 두세요' }; return $wb }",
+    '  $full = $f; if(-not [System.IO.Path]::IsPathRooted($full)){ $full = Join-Path $PSScriptRoot $full }',
+    '  $full = [System.IO.Path]::GetFullPath($full)',
+    '  $base = [System.IO.Path]::GetFileName($f).ToLower(); $stem = [System.IO.Path]::GetFileNameWithoutExtension($f).ToLower()',
+    '  foreach($wb in @($app.Workbooks)){',
+    '    $nm = ([string]$wb.Name).ToLower()',
+    '    if(([string]$wb.FullName).ToLower() -eq $full.ToLower() -or $nm -eq $base -or [System.IO.Path]::GetFileNameWithoutExtension($nm) -eq $stem){ return $wb }',
+    '  }',
+    "  if([System.IO.Path]::GetExtension($full) -eq ''){ foreach($e in @('.xlsx', '.xlsm', '.xls')){ if(Test-Path -LiteralPath ($full + $e)){ $full = $full + $e; break } } }",
+    "  if(-not (Test-Path -LiteralPath $full)){ throw ('엑셀 파일을 못 찾았어요: ' + $full + '  (전체 경로를 넣거나 파일을 먼저 열어 두세요)') }",
+    '  return $app.Workbooks.Open($full)',
+    '}',
+    'function XlSheet($wb, $sh){',
+    '  $sh = ([string]$sh).Trim()',
+    "  if($sh -eq ''){ return $wb.ActiveSheet }",
+    '  $names = @()',
+    '  foreach($ws in @($wb.Worksheets)){ $n = [string]$ws.Name; if($n.Trim().ToLower() -eq $sh.ToLower()){ return $ws }; $names += $n }',
+    "  throw (\"시트 '\" + $sh + \"' 이(가) 없어요. 있는 시트: \" + ($names -join ', '))",
+    '}',
+    'function XlAddr($ws, $pos, $cell, $col){   # 넣을 칸 주소(B3) — 정한 칸 또는 그 열의 다음 빈 칸',
+    "  if($pos -eq 'next'){",
+    '    $c = ([string]$col).Trim().ToUpper()',
+    "    if($c -cnotmatch '^[A-Z]{1,3}$'){ throw ('열 이름이 이상해요: ' + $col + ' (예: B)') }",
+    '    $last = [int]$ws.Range($c + [string]$ws.Rows.Count).End(-4162).Row   # 맨 아래에서 위로 올라가 마지막 채워진 줄',
+    '    $r = $last + 1',
+    "    if($last -eq 1 -and [string]$ws.Range($c + '1').Text -eq ''){ $r = 1 }",
+    '    return ($c + [string]$r)',
+    '  }',
+    "  $a = ([string]$cell).Trim().ToUpper().Replace('$', '')",
+    "  if($a -cnotmatch '^[A-Z]{1,3}[1-9][0-9]{0,6}$'){ throw ('칸 주소가 이상해요: ' + $cell + ' (예: B3)') }",
+    '  return $a',
+    '}',
+    'function XlConv($rng, $s){   # 칸 서식에 맞춘 값 (텍스트 서식 칸은 글자 그대로, 숫자는 숫자로, 앞 0 번호는 글자로)',
+    '  $s = [string]$s',
+    "  $fmt = ''; try { $fmt = [string]$rng.NumberFormat } catch {}",
+    "  if($fmt -eq '@'){ return $s }",
+    '  $t = $s.Trim()',
+    "  if($t -match '^-?\\d{1,3}(,\\d{3})+(\\.\\d+)?$'){ $t = $t.Replace(',', '') }",
+    "  if($t -match '^-?(0|[1-9]\\d{0,14})(\\.\\d+)?$'){ return [double]::Parse($t, [Globalization.CultureInfo]::InvariantCulture) }",
+    "  if($t -match '^-?\\d+$'){ return (\"'\" + $s) }",
+    '  return $s',
+    '}',
+    'function ExcelPut($f, $sh, $pos, $cell, $col, $val, $save){   # 성공하면 넣은 칸 주소, 실패하면 $null ($script:xlMsg 에 이유)',
+    "  $script:lastErr = ''; $script:xlMsg = ''",
+    '  try {',
+    '    $app = XlApp; $wb = XlBook $app $f; $ws = XlSheet $wb $sh',
+    '    $a = XlAddr $ws $pos $cell $col',
+    '    $rng = $ws.Range($a)',
+    '    $rng.Value2 = (XlConv $rng $val)',
+    '    if($save){ $wb.Save() }',
+    '    return $a',
+    "  } catch { $script:lastErr = 'excel'; $script:xlMsg = $_.Exception.Message; return $null }",
+    '}',
+  ];
+}
+function psExcelStep(s) {
+  const v = s.src === 'clip' ? '(GetClip)' : psFill(s.value ?? '');
+  return ['while($true){',
+    `  $xa = ExcelPut ${psFill(s.file || '')} ${psFill(s.sheet || '')} '${s.pos === 'next' ? 'next' : 'cell'}' ${psFill(s.cell || '')} ${psFill(s.col || '')} ${v} $${s.save ? 'true' : 'false'}`,
+    '  if($xa){ Write-Host ("   엑셀 " + $xa + " 칸에 넣었어요"); break }',
+    "  $msg = '엑셀 칸에 넣지 못했어요: ' + $script:xlMsg",
+    "  if((ErrorPause $msg) -eq 'skip'){ break }",
+    '}'];
+}
 function psWebFuncs() {
   return [
     '# ===== 웹 요소 찾기 (UI Automation: 단추·링크의 이름으로, 위치와 상관없이) =====',
@@ -2303,6 +2422,7 @@ function needsOcr(steps) {
     || (s.type === 'if' && (!s.what || s.what === 'region' || s.what === 'text')));
 }
 function needsImg(steps) { return anyStep(steps, s => s.type === 'imgclick' || (s.type === 'if' && s.what === 'img')); }
+function needsExcel(steps) { return anyStep(steps, s => s.type === 'excel'); }
 
 function genPS1(l, opts = {}) {
   refreshOrphans(l);
@@ -2481,6 +2601,7 @@ function genPS1(l, opts = {}) {
   if (needsOcr(l.steps)) P.push(...psOcrFuncs());
   if (needsImg(l.steps)) P.push(...psImgFuncs());
   if (needsWeb(l.steps)) P.push(...psWebFuncs());
+  if (needsExcel(l.steps)) P.push(...psExcelFuncs());
   const need = imgNames(l);
   P.push(`$script:ImgsNeeded = @(${need.map(psStr).join(', ')})   # 이 매크로가 찾는 이미지 이름`);
   P.push('function MissingImages(){ return @($script:ImgsNeeded | Where-Object { -not (Test-Path -LiteralPath (ImgPath $_)) }) }');
@@ -2858,6 +2979,7 @@ function genPSStep(s) {
     case 'scroll': return [`Scroll '${s.dir === 'up' ? 'up' : 'down'}' ${num(s.amount) || 1}`];
     case 'wait': return [`WaitMs ${Math.round((Number(s.sec) || 0) * 1000)}`];
     case 'readput': return genPSReadPut(s);
+    case 'excel': return psExcelStep(s);
     default: return [];
   }
 }
@@ -2935,7 +3057,7 @@ function genPY(l, opts = {}) {
   P.push('# -*- coding: utf-8 -*-');
   P.push(`# 매크로: ${(l.name || '').replace(/[\r\n]/g, ' ')} (설계소 ${APP_VERSION})`);
   P.push('# 실행: 같이 받은 "...-python.bat" 을 더블클릭 (처음 한 번 필요한 부품을 깔고 실행). 직접 하려면  pip install pyautogui pygetwindow keyboard pyperclip  후  python "이파일.py"');
-  P.push('#  (화면 글자 읽기·글자 찾기:  pip install winocr pillow  / 이미지 찾기:  pip install opencv-python pillow  / 웹 요소 찾기:  pip install uiautomation )');
+  P.push('#  (화면 글자 읽기·글자 찾기:  pip install winocr pillow  / 이미지 찾기:  pip install opencv-python pillow  / 웹 요소 찾기:  pip install uiautomation  / 엑셀 칸 입력:  pip install pywin32 )');
   P.push(`#  단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.startNowLabel} 예약 즉시시작·오류 때 건너뛰기, ${CTRL_KEYS.restartLabel} 재실행 (keyboard 설치 시)`);
   P.push('#  급할 때: 마우스를 화면 왼쪽 맨 위 구석으로 휙 옮기면 멈춥니다.');
   P.push('import time, webbrowser, datetime, os, sys, re');
@@ -3255,6 +3377,7 @@ function genPY(l, opts = {}) {
   if (needsOcr(l.steps)) P.push(...pyOcrFuncs());
   if (needsImg(l.steps)) P.push(...pyImgFuncs());
   if (needsWeb(l.steps)) P.push(...pyWebFuncs());
+  if (needsExcel(l.steps)) P.push(...pyExcelFuncs());
   P.push('');
   P.push('# ==== RUN ====');
   P.push('def run():');
@@ -3485,6 +3608,104 @@ function pyOcrFuncs() {
     '    _last_err[0] = "notfound"; return None',
   ];
 }
+/* 엑셀 칸에 입력 (실제 Excel 을 COM 으로 조작 — pywin32). 값만 넣어 칸의 원래 서식을 그대로 씀 */
+function pyExcelFuncs() {
+  return [
+    '', '# ===== 엑셀 칸에 입력 (실제 Excel 을 열어 COM 으로 넣음) — pip install pywin32 =====',
+    'try:',
+    '    import win32com.client as _w32',
+    'except Exception:',
+    '    _w32 = None',
+    '    print("(엑셀 칸 입력엔  pip install pywin32  필요. 없으면 엑셀 동작에서 오류로 멈춰요)")',
+    '_xl_app = [None]; _xl_msg = [""]',
+    'def _xl():   # 켜져 있는 엑셀에 붙고, 없으면 새로 켬 (화면에 보이게)',
+    '    if _xl_app[0] is not None:',
+    '        try: _xl_app[0].Visible; return _xl_app[0]',
+    '        except Exception: _xl_app[0] = None',
+    '    try: app = _w32.GetActiveObject("Excel.Application")',
+    '    except Exception: app = _w32.Dispatch("Excel.Application")',
+    '    try: app.Visible = True',
+    '    except Exception: pass',
+    '    _xl_app[0] = app',
+    '    return app',
+    'def _xl_book(app, f):   # 이미 열린 파일이면 그걸, 아니면 열기. 비우면 지금 열린 파일',
+    '    f = str(f or "").strip().strip(\'"\')',
+    '    if not f:',
+    '        wb = app.ActiveWorkbook',
+    '        if wb is None: raise RuntimeError("열린 엑셀 파일이 없어요 — 파일 경로를 넣거나 엑셀 파일을 먼저 열어 두세요")',
+    '        return wb',
+    '    full = f if os.path.isabs(f) else os.path.join(BASE_DIR, f)',
+    '    base = os.path.basename(f).lower(); stem = os.path.splitext(base)[0]',
+    '    for wb in app.Workbooks:',
+    '        try: fn = str(wb.FullName).lower(); nm = str(wb.Name).lower()',
+    '        except Exception: continue',
+    '        if fn == os.path.abspath(full).lower() or nm == base or os.path.splitext(nm)[0] == stem: return wb',
+    '    if not os.path.splitext(full)[1]:   # 확장자를 안 쓰면 .xlsx·.xlsm·.xls 순으로',
+    '        for _e in (".xlsx", ".xlsm", ".xls"):',
+    '            if os.path.exists(full + _e): full = full + _e; break',
+    '    if not os.path.exists(full): raise RuntimeError("엑셀 파일을 못 찾았어요: " + full + "  (전체 경로를 넣거나 파일을 먼저 열어 두세요)")',
+    '    return app.Workbooks.Open(os.path.abspath(full))',
+    'def _xl_sheet(wb, sh):',
+    '    sh = str(sh or "").strip()',
+    '    if not sh: return wb.ActiveSheet',
+    '    names = []',
+    '    for ws in wb.Worksheets:',
+    '        try: n = str(ws.Name)',
+    '        except Exception: continue',
+    '        if n.strip().lower() == sh.lower(): return ws',
+    '        names.append(n)',
+    '    raise RuntimeError("시트 \'" + sh + "\' 이(가) 없어요. 있는 시트: " + ", ".join(names))',
+    'def _xl_target(ws, pos, cell, col):   # (칸, "B3") — 정한 칸 또는 그 열의 다음 빈 칸',
+    '    if pos == "next":',
+    '        c = str(col or "").strip().upper()',
+    '        if not re.fullmatch(r"[A-Z]{1,3}", c): raise RuntimeError("열 이름이 이상해요: " + str(col) + " (예: B)")',
+    '        last = ws.Range(c + str(ws.Rows.Count)).End(-4162).Row   # 맨 아래에서 위로 올라가 마지막 채워진 줄',
+    '        r = last + 1',
+    '        if last == 1 and ws.Range(c + "1").Value2 in (None, ""): r = 1',
+    '        a = c + str(r)',
+    '    else:',
+    '        a = str(cell or "").strip().upper().replace("$", "")',
+    '        if not re.fullmatch(r"[A-Z]{1,3}[1-9][0-9]{0,6}", a): raise RuntimeError("칸 주소가 이상해요: " + str(cell) + " (예: B3)")',
+    '    return ws.Range(a), a',
+    'def _xl_conv(rng, s):   # 칸 서식에 맞춰 넣을 값 (텍스트 서식 칸은 글자 그대로, 숫자는 숫자로, 앞 0 번호는 글자로)',
+    '    s = "" if s is None else str(s)',
+    '    try: fmt = str(rng.NumberFormat)',
+    '    except Exception: fmt = ""',
+    '    if fmt == "@": return s',
+    '    t = s.strip()',
+    '    if re.fullmatch(r"-?\\d{1,3}(,\\d{3})+(\\.\\d+)?", t): t = t.replace(",", "")',
+    '    if re.fullmatch(r"-?(0|[1-9]\\d{0,14})", t): return float(t) if abs(int(t)) >= 2 ** 31 else int(t)',
+    '    if re.fullmatch(r"-?(0|[1-9]\\d{0,14})\\.\\d+", t): return float(t)',
+    '    if re.fullmatch(r"-?\\d+", t): return "\'" + s   # 00123·아주 긴 번호: 앞 0·자릿수가 안 사라지게 글자로',
+    '    return s',
+    'def _xl_err(e):',
+    '    try:',
+    '        ei = getattr(e, "excepinfo", None)',
+    '        if ei and len(ei) > 2 and ei[2]: return str(ei[2])',
+    '    except Exception: pass',
+    '    return str(e)',
+    'def excel_put(f, sh, pos, cell, col, val, save):   # 성공하면 넣은 칸 주소, 실패하면 None (_xl_msg 에 이유)',
+    '    _last_err[0] = ""; _xl_msg[0] = ""',
+    '    if not _w32: _last_err[0] = "nowin32"; return None',
+    '    try:',
+    '        app = _xl(); wb = _xl_book(app, f); ws = _xl_sheet(wb, sh)',
+    '        rng, a = _xl_target(ws, pos, cell, col)',
+    '        rng.Value2 = _xl_conv(rng, val)',
+    '        if save: wb.Save()',
+    '        return a',
+    '    except Exception as _e:',
+    '        _last_err[0] = "excel"; _xl_msg[0] = _xl_err(_e); return None',
+  ];
+}
+function pyExcelStep(s) {
+  const v = s.src === 'clip' ? 'get_clip()' : pyFill(s.value ?? '');
+  const call = `excel_put(${pyFill(s.file || '')}, ${pyFill(s.sheet || '')}, ${pyJ(s.pos === 'next' ? 'next' : 'cell')}, ${pyFill(s.cell || '')}, ${pyFill(s.col || '')}, ${v}, ${s.save ? 'True' : 'False'})`;
+  return ['while True:', `    _a = ${call}`,
+    '    if _a: print("   엑셀 " + _a + " 칸에 넣었어요"); break',
+    '    _msg = "엑셀 칸에 넣지 못했어요: " + _xl_msg[0]',
+    "    if _last_err[0] == 'nowin32': _msg = \"엑셀 칸 입력엔 pywin32 가 필요해요 (실행용 .bat 이 처음에 자동 설치)\"",
+    "    if error_pause(_msg) == 'skip': break"];
+}
 function pyImgFuncs() {
   return [
     '', '# ===== 이미지 찾기 (opencv 필요) =====',
@@ -3553,6 +3774,7 @@ function genPYStep(s) {
     case 'scroll': return [`pyautogui.scroll(${(s.dir === 'up' ? 1 : -1) * (num(s.amount) || 1) * 120})   # 120 = 휠 한 칸`];
     case 'wait': return [`time.sleep(${Number(s.sec) || 0})`];
     case 'readput': return genPYReadPut(s);
+    case 'excel': return pyExcelStep(s);
     default: return [`print("[주의] 이 버전이 모르는 동작이라 건너뜁니다: " + ${pyJ(String(s.type || ''))})`];
   }
 }
@@ -3864,12 +4086,13 @@ function genHelperBat(ps1Name) {
 /* 파이썬 실행용 .bat (ASCII 만): 파이썬 찾기 → 기본 부품 먼저, 선택 부품은 따로따로 → 실행.
    화면 글자 읽기(winocr)는 아직 파이썬 3.15 이상용 부품이 없어 3.14 이하에서만 설치 시도 */
 function genPyBat(l, pyName) {
-  const ocr = needsOcr(l.steps), img = needsImg(l.steps), web = needsWeb(l.steps);
+  const ocr = needsOcr(l.steps), img = needsImg(l.steps), web = needsWeb(l.steps), xl = needsExcel(l.steps);
   const base = ['pyautogui', 'keyboard', 'pyperclip', 'pygetwindow'];   // 모듈명 = 패키지명
   const gating = [...base];   // 이게 다 깔려 있으면 설치를 건너뜀 (winocr 는 3.15+ 에서 못 깔려 제외)
   if (img) gating.push('cv2', 'PIL');
   if (web) gating.push('uiautomation');
   if (ocr) gating.push('PIL');
+  if (xl) gating.push('win32com');
   const L = [
     '@echo off',
     'cd /d "%TEMP%" 2>nul',
@@ -3889,6 +4112,7 @@ function genPyBat(l, pyName) {
   // 2) 선택 부품은 따로따로, 하나 실패해도 나머지는 그대로 (전체가 함께 죽지 않게)
   if (img) L.push('%PY% -m pip install --user --disable-pip-version-check opencv-python pillow');
   if (web) L.push('%PY% -m pip install --user --disable-pip-version-check uiautomation');
+  if (xl) L.push('%PY% -m pip install --user --disable-pip-version-check pywin32');
   if (ocr) L.push('%PY% -c "import sys; sys.exit(0 if sys.version_info[:2] <= (3, 14) else 1)" >nul 2>nul && (%PY% -m pip install --user --disable-pip-version-check winocr pillow) || echo  [!] Screen-text reader (winocr) needs Python 3.14 or lower - skipped. Other actions still work.');
   L.push(
     // 3) 기본 부품이 끝내 안 깔렸으면 .py 로 넘어가지 않고 여기서 멈춤 (엉뚱한 오류 2연발 방지)
@@ -3924,6 +4148,7 @@ function ahkUnsupported(l) {
   const m = new Set();
   walkSteps(l.steps, s => {
     if (s.type === 'readput') m.add('영역 값 읽어 입력');
+    if (s.type === 'excel') m.add('엑셀 칸에 입력');
     if (s.type === 'textclick') m.add('글자 찾아 클릭');
     if (s.type === 'webclick') m.add('웹 요소 찾아 클릭');
     if (s.type === 'setvar' && s.from === 'read') m.add('변수 ← 화면 글자 읽기');
@@ -4412,6 +4637,7 @@ const HELP = `
 <li><b>🔤 글자 찾아 클릭</b> — 화면 글자를 읽어(OCR) "확인" 같은 글자를 찾아 눌러요. 글꼴이 달라도 글자만 같으면 돼요. 무설치·파이썬.</li>
 <li><b>🧭 웹 요소 찾아 클릭 (이름)</b> — 브라우저의 단추·링크·입력칸을 <b>이름(aria-label·title·단추 글자)</b>으로 찾아 눌러요. 화면 배치·위치·테마가 달라도 돼요. 아이콘만 있는 단추도 이름표(aria-label)가 있으면 찾아요. 아래 "F12 페이지 소스에서 이름 찾기"에 요소를 붙여넣으면 바로 만들어 줘요. 무설치·파이썬(베타).</li>
 <li><b>📋 영역 값 읽어 입력</b> — 영역의 글자/숫자를 읽어 지금 커서 칸에 붙여넣어요(자료수집).</li>
+<li><b>📗 엑셀 칸에 입력</b> — 엑셀 <b>파일·시트·칸</b>을 정해 값을 넣어요(이미 열려 있으면 그 파일, 아니면 열어서). <b>값만</b> 넣어 그 칸의 원래 서식을 그대로 따르고, <b>"열의 다음 빈 칸"</b>을 고르면 반복할 때마다 한 줄씩 아래로 쌓여요. 클립보드(복사한 값)도 붙일 수 있어요. 무설치(윈도우)·파이썬 전용, PC에 엑셀 필요.</li>
 <li><b>📦 변수에 값 저장</b> — 직접 쓴 값 / <b>화면 영역에서 읽은 값</b> / <b>클립보드(복사한 값)</b>를 이름 붙인 변수에 담아요.</li>
 <li><b>🔁 반복문</b> — 담은 동작을 N번(0 = 멈출 때까지) 반복.</li>
 <li><b>❓ 조건</b> — 화면 글자·숫자 / 변수 값 / 이미지가 보이는지 / 글자가 보이는지를 확인해 <b>맞으면 담은 동작</b>, 아니면 "아니면" 칸 동작을 실행.</li>
