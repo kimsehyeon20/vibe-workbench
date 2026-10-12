@@ -2066,6 +2066,7 @@ function psCaptureFns() {
     '  $g.CopyFromScreen($script:vsLeft + $script:rect.X, $script:vsTop + $script:rect.Y, 0, 0, (New-Object System.Drawing.Size $script:rect.Width, $script:rect.Height))',
     '  $g.Dispose()',
     '  $out = ImgPath $name',
+    '  $od = Split-Path -Parent $out; if($od -and -not (Test-Path -LiteralPath $od)){ New-Item -ItemType Directory -Path $od -Force | Out-Null }   # 공용 폴더가 없으면 만들기',
     '  $bmp.Save($out, [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()',
     '  Write-Host ("저장했어요: " + $out)',
     '  return $true',
@@ -2464,7 +2465,13 @@ function genPS1(l, opts = {}) {
   P.push('}');
   P.push(`$IMGDIR = ${psStr(imgDirOf(l))}   # 이미지 폴더 (상대 경로면 이 파일이 있는 폴더 기준)`);
   P.push('if(-not [System.IO.Path]::IsPathRooted($IMGDIR)){ $IMGDIR = Join-Path $PSScriptRoot $IMGDIR }');
-  P.push("function ImgPath($name){ return (Join-Path $IMGDIR ([string]$name + '.png')) }");
+  if (pack) {   // PC로 받기: 모든 작업방이 함께 쓰는 공용 폴더 macro-studio\images 도 같이 찾음
+    P.push("$IMGSHARED = Join-Path (Split-Path -Parent $PSScriptRoot) 'images'   # 공용 이미지 폴더 (모든 작업방 공통)");
+    P.push(imgDirOf(l) === 'images' ? '$IMGDIRS = @($IMGSHARED, $IMGDIR)   # 기본 폴더면 공용을 먼저' : '$IMGDIRS = @($IMGDIR, $IMGSHARED)   # 따로 정한 폴더면 그걸 먼저');
+  } else {
+    P.push('$IMGDIRS = @($IMGDIR)');
+  }
+  P.push("function ImgPath($name){ foreach($d in $IMGDIRS){ $p = Join-Path $d ([string]$name + '.png'); if(Test-Path -LiteralPath $p){ return $p } }; return (Join-Path $IMGDIRS[0] ([string]$name + '.png')) }   # 있는 곳을 먼저, 없으면 새로 저장할 곳(공용 먼저)");
   if (needsOcr(l.steps)) P.push(...psOcrFuncs());
   if (needsImg(l.steps)) P.push(...psImgFuncs());
   if (needsWeb(l.steps)) P.push(...psWebFuncs());
@@ -3148,7 +3155,17 @@ function genPY(l, opts = {}) {
   P.push('# ==== PURE-END ====');
   P.push(`IMGDIR = ${pyJ(imgDirOf(l))}   # 이미지 폴더 (상대 경로면 이 파일이 있는 폴더 기준)`);
   P.push('if not os.path.isabs(IMGDIR): IMGDIR = os.path.join(BASE_DIR, IMGDIR)');
-  P.push('def img_path(name): return os.path.join(IMGDIR, str(name) + ".png")');
+  if (pack) {   // PC로 받기: 모든 작업방이 함께 쓰는 공용 폴더 macro-studio/images 도 같이 찾음
+    P.push('IMGSHARED = os.path.join(os.path.dirname(BASE_DIR), "images")   # 공용 이미지 폴더 (모든 작업방 공통)');
+    P.push(imgDirOf(l) === 'images' ? 'IMGDIRS = [IMGSHARED, IMGDIR]   # 기본 폴더면 공용을 먼저' : 'IMGDIRS = [IMGDIR, IMGSHARED]   # 따로 정한 폴더면 그걸 먼저');
+  } else {
+    P.push('IMGDIRS = [IMGDIR]');
+  }
+  P.push('def img_path(name):   # 있는 곳을 먼저, 없으면 새로 저장할 곳(공용 먼저)');
+  P.push('    for _d in IMGDIRS:');
+  P.push('        _p = os.path.join(_d, str(name) + ".png")');
+  P.push('        if os.path.exists(_p): return _p');
+  P.push('    return os.path.join(IMGDIRS[0], str(name) + ".png")');
   P.push('def _vorigin():   # 모니터 여러 대일 때 전체 화면의 왼쪽 위 좌표(음수일 수 있음)');
   P.push('    try:');
   P.push('        import ctypes; u = ctypes.windll.user32; return u.GetSystemMetrics(76), u.GetSystemMetrics(77)');
@@ -3204,7 +3221,7 @@ function genPY(l, opts = {}) {
     P.push('        import tkinter as tk');
     P.push('        from PIL import ImageGrab');
     P.push('    except Exception as _e: print("이미지 찍기에 필요한 부품이 없어요(Pillow/tkinter):", _e); return');
-    P.push('    os.makedirs(IMGDIR, exist_ok=True)');
+    P.push('    os.makedirs(IMGDIRS[0], exist_ok=True)   # 새로 저장할 공용 폴더 보장');
     P.push('    for _nm in IMG_NAMES:');
     P.push('        box = _drag_box("찾을 \'" + str(_nm) + "\' 을(를) 마우스로 드래그  (ESC = 이 이미지 건너뛰기)")');
     P.push('        if not box: print("건너뜀:", _nm); continue');
@@ -3972,8 +3989,9 @@ function packReadme(list, built) {
     '',
     '[폴더 안]',
     '  START.bat         메뉴 (실행 · 이미지 찍기 · 변수 고치기 · 폴더 열기 · 좌표 찾기 · 영역 선택)',
+    '  images\\           공용 이미지 폴더 — 모든 작업방이 함께 써요. 한 번 찍어 두면 여러 매크로가 같이 찾아요.',
     '  macro-N\\          작업방 하나에 폴더 하나 (아래 표). RUN.bat = 메뉴 없이 바로 실행',
-    '     images\\           찍은 이미지 (처음 찍을 때 생겨요)',
+    '     images\\           이 작업방만의 이미지(있으면). 없으면 위 공용 폴더에서 찾아요.',
     '     variables.txt     변수 값 (처음 실행할 때 생겨요. PC에서 고친 값은 그대로, 안 고친 값은 웹에서 바꾸면 따라 바뀌어요)',
     '  tools\\            메뉴·좌표 찾기·영역 선택·설계 백업 (열 필요 없음)',
     '',
