@@ -3744,6 +3744,85 @@ function genImageCapturer(names, imgDir) {
     '',
   ].join('\r\n');
 }
+/* 이미지 관리 (tools\images.ps1): 공용 폴더의 이미지 목록·있음/없음, 이름 정해 미리 찍기·다시 찍기·삭제.
+   macros.json 에서 모든 작업방이 쓰는 이미지 이름을 모아 보여줌. PS·파이썬 묶음 공통(둘 다 공용 폴더를 읽음) */
+function genImageManager() {
+  return [
+    '# -*- 이미지 관리 -*-  (공용 이미지 폴더: 쓰는 이미지 목록·있음/없음, 미리 찍기·다시 찍기·삭제)',
+    'try {',
+    ...psDpiFix(),
+    'try { [DpiFix]::Apply() } catch {}',
+    'Add-Type -AssemblyName System.Windows.Forms',
+    'Add-Type -AssemblyName System.Drawing',
+    'Add-Type -AssemblyName Microsoft.VisualBasic',
+    '[System.Windows.Forms.Application]::EnableVisualStyles()',
+    '$mb = [System.Windows.Forms.MessageBox]',
+    '$root = Split-Path -Parent $PSScriptRoot',
+    "$dir = Join-Path $root 'images'   # 공용 이미지 폴더 (모든 작업방 공통)",
+    'if(-not (Test-Path -LiteralPath $dir)){ New-Item -ItemType Directory -Path $dir -Force | Out-Null }',
+    '# 쓰는 이미지 이름 모으기 (tools\\macros.json 의 작업방별 images)',
+    '$use = @{}',
+    "try { $pack = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $PSScriptRoot 'macros.json') | ConvertFrom-Json; foreach($m in @($pack.macros)){ foreach($im in @($m.images)){ $k = [string]$im; if($k){ if(-not $use.ContainsKey($k)){ $use[$k] = @() }; $use[$k] += [string]$m.name } } } } catch {}",
+    '$names = [System.Collections.ArrayList]@(@($use.Keys) | Sort-Object)',
+    ...psSnipFn(),
+    "function Clean($n){ return (([string]$n -replace '[\\\\/:*?\"<>|`]', '') -replace '\\.png$', '').Trim() }",
+    '# 드래그로 찍어 공용 폴더에 저장 (Esc 면 $false)',
+    'function Shoot($name){',
+    '  while($true){',
+    '    $r = Snip',
+    '    if($r -eq "esc"){ return $false }',
+    '    if($r -eq "ok"){ break }',
+    '    $mb::Show("너무 작아요. 조금 더 크게 드래그하세요.", "이미지 관리") | Out-Null',
+    '  }',
+    '  Start-Sleep -Milliseconds 200',
+    '  $bmp = New-Object System.Drawing.Bitmap $script:rect.Width, $script:rect.Height',
+    '  $g = [System.Drawing.Graphics]::FromImage($bmp)',
+    '  $g.CopyFromScreen($script:vsLeft + $script:rect.X, $script:vsTop + $script:rect.Y, 0, 0, (New-Object System.Drawing.Size $script:rect.Width, $script:rect.Height))',
+    '  $g.Dispose()',
+    '  if(-not (Test-Path -LiteralPath $dir)){ New-Item -ItemType Directory -Path $dir -Force | Out-Null }',
+    '  $out = Join-Path $dir ($name + ".png")',
+    '  $bmp.Save($out, [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()',
+    '  return $true',
+    '}',
+    '$form = New-Object System.Windows.Forms.Form',
+    '$form.Text = "이미지 관리"; $form.StartPosition = "CenterScreen"',
+    '$form.ClientSize = New-Object System.Drawing.Size 560, 420; $form.MinimumSize = New-Object System.Drawing.Size 440, 320',
+    '$form.Font = New-Object System.Drawing.Font("Malgun Gothic", 10)',
+    '$head = New-Object System.Windows.Forms.Label',
+    '$head.Dock = "Top"; $head.Height = 48; $head.Padding = New-Object System.Windows.Forms.Padding 10, 8, 10, 0',
+    '$head.Text = "매크로가 쓰는 이미지예요. [없음] 을 골라 [찍기] 로 미리 찍어 두세요.`n공용 폴더: " + $dir',
+    '$lb = New-Object System.Windows.Forms.ListBox; $lb.Dock = "Fill"; $lb.IntegralHeight = $false',
+    '$lb.Font = New-Object System.Drawing.Font("Malgun Gothic", 11)',
+    '$bar = New-Object System.Windows.Forms.FlowLayoutPanel; $bar.Dock = "Bottom"; $bar.Height = 96; $bar.Padding = New-Object System.Windows.Forms.Padding 6',
+    'function Status($n){ if(Test-Path -LiteralPath (Join-Path $dir ($n + ".png"))){ return "[있음]" } else { return "[없음]" } }',
+    'function SelName(){ $i = $lb.SelectedIndex; if($i -lt 0 -or $i -ge $names.Count){ return $null }; return [string]$names[$i] }',
+    'function Fill(){',
+    '  $keep = $lb.SelectedIndex; $lb.BeginUpdate(); $lb.Items.Clear()',
+    '  foreach($n in $names){ $t = (Status $n) + "  " + $n; $u = $use[$n]; if($u){ $t += "    · 쓰는 곳: " + (@($u) -join ", ") }; [void]$lb.Items.Add($t) }',
+    '  if($names.Count -eq 0){ [void]$lb.Items.Add("(이 묶음은 이미지를 쓰지 않아요. [새 이름으로 찍기] 로 직접 추가할 수 있어요)") }',
+    '  $lb.EndUpdate()',
+    '  if($names.Count -gt 0){ $lb.SelectedIndex = [Math]::Max(0, [Math]::Min($keep, $names.Count - 1)) }',
+    '}',
+    'function DoShoot($n){ $form.Hide(); $ok = $false; try { $ok = Shoot $n } finally { $form.Show() }; if($ok){ $mb::Show($form, "저장했어요.", "이미지 관리") | Out-Null }; Fill }',
+    'function Btn($text, $act){ $b = New-Object System.Windows.Forms.Button; $b.Text = $text; $b.AutoSize = $true; $b.MinimumSize = New-Object System.Drawing.Size 92, 34; $b.Add_Click({ param($s, $e) try { & $act } catch { $mb::Show($form, ("오류: " + $_.Exception.Message), "이미지 관리") | Out-Null } }); [void]$bar.Controls.Add($b); return $b }',
+    '$null = Btn "찍기 / 다시 찍기" { $n = SelName; if(-not $n){ return }; if($mb::Show($form, ("\'" + $n + "\' 을(를) 찍어요.`n[확인]을 누르면 화면이 어두워져요. 찾을 부분을 마우스로 드래그해 긁으세요. (Esc = 취소)"), "이미지 관리", "OKCancel") -eq "OK"){ DoShoot $n } }',
+    '$null = Btn "새 이름으로 찍기" { $nm = Clean ([Microsoft.VisualBasic.Interaction]::InputBox("저장할 이름 (웹 매크로의 \'이미지 이름\'과 똑같이):", "이미지 이름", "")); if($nm -eq ""){ return }; if(-not ($names -contains $nm)){ [void]$names.Add($nm) }; DoShoot $nm }',
+    '$null = Btn "삭제" { $n = SelName; if(-not $n){ return }; $p = Join-Path $dir ($n + ".png"); if(-not (Test-Path -LiteralPath $p)){ $mb::Show($form, "아직 안 찍은 이미지예요.", "이미지 관리") | Out-Null; return }; if($mb::Show($form, ("\'" + $n + "\' 이미지를 지울까요?"), "이미지 관리", "YesNo") -eq "Yes"){ Remove-Item -LiteralPath $p -Force; Fill } }',
+    '$null = Btn "폴더 열기" { Start-Process explorer.exe -ArgumentList (\'"\' + $dir + \'"\') }',
+    '$bEnd = Btn "닫기" { $form.Close() }',
+    '$form.CancelButton = $bEnd',
+    '$form.Add_Activated({ Fill })   # 찍고 돌아오면 있음/없음 다시 셈',
+    '$form.Controls.Add($lb); $form.Controls.Add($bar); $form.Controls.Add($head)',
+    'Fill',
+    '[void]$form.ShowDialog()',
+    '} catch {',
+    '  try { [System.Windows.Forms.MessageBox]::Show("오류가 났어요:`n" + $_.Exception.Message, "이미지 관리") | Out-Null } catch {}',
+    '  Write-Host ("오류: " + $_.Exception.Message)',
+    '  exit 1',
+    '}',
+    '',
+  ].join('\r\n');
+}
 /* ★ .bat 은 ASCII만 (도우미 .ps1 은 GUI/MessageBox 로 한글 표시) */
 function genHelperBat(ps1Name) {
   // .bat 는 순수 ASCII + chcp 없음
@@ -3946,6 +4025,7 @@ function genMenu() {
     "  if(IsPy $m){ RunBat $m ' --editvars' } else { RunPs (Join-Path (DirOf $m) 'macro.ps1') ' -EditVars' 'Minimized' }",
     '}',
     '$bDir = Btn "폴더 열기" { $m = Sel; if($m){ Start-Process explorer.exe -ArgumentList (\'"\' + (DirOf $m) + \'"\') -ErrorAction Stop } }',
+    "$bImgMgr = Btn \"이미지 관리\" { RunPs (Join-Path $PSScriptRoot 'images.ps1') '' 'Minimized' }",
     "$bXY = Btn \"좌표 찾기\" { RunPs (Join-Path $PSScriptRoot 'find-xy.ps1') '' 'Minimized' }",
     "$bReg = Btn \"영역 선택\" { RunPs (Join-Path $PSScriptRoot 'pick-region.ps1') '' 'Minimized' }",
     '$bEnd = Btn "닫기" { $form.Close() }',
@@ -3988,7 +4068,8 @@ function packReadme(list, built) {
     '폴더 이름을 바꿨다면, zip 속 macro-studio 폴더를 열어 안의 내용을 전부 그 폴더로 끌어다 놓으세요.',
     '',
     '[폴더 안]',
-    '  START.bat         메뉴 (실행 · 이미지 찍기 · 변수 고치기 · 폴더 열기 · 좌표 찾기 · 영역 선택)',
+    '  START.bat         메뉴 (실행 · 이미지 찍기 · 변수 고치기 · 이미지 관리 · 폴더 열기 · 좌표 찾기 · 영역 선택)',
+    '                    [이미지 관리] = 공용 폴더의 이미지 목록·있음/없음, 이름 정해 미리 찍기·다시 찍기·삭제',
     '  images\\           공용 이미지 폴더 — 모든 작업방이 함께 써요. 한 번 찍어 두면 여러 매크로가 같이 찾아요.',
     '  macro-N\\          작업방 하나에 폴더 하나 (아래 표). RUN.bat = 메뉴 없이 바로 실행',
     '     images\\           이 작업방만의 이미지(있으면). 없으면 위 공용 폴더에서 찾아요.',
@@ -4034,6 +4115,7 @@ function packFiles(built, chain = [], lang = 'ps') {
     T('tools/menu.ps1', genMenu(), true),
     T('tools/find-xy.ps1', genFinder(), true),
     T('tools/pick-region.ps1', genRegionPicker(), true),
+    T('tools/images.ps1', genImageManager(), true),
     T('tools/macros.json', JSON.stringify({ kind: 'macro-studio-pack', v: 1, app: APP_VERSION, built: built || '', pack: chain[chain.length - 1] || '', chain, macros: list }, null, 1)),
     // 받을 때마다 새 이름(덮어써지지 않게) → 웹 데이터를 잃어도 가장 최근 것으로 복원
     T(`tools/backup-${(built || '').replace(/[^0-9]/g, '').replace(/^(\d{8})(\d{4}).*$/, '$1-$2') || 'latest'}.json`, JSON.stringify({ ...state, packedAt: built || state.packedAt, packIds: chain.length ? chain : state.packIds }, null, 1)),
@@ -4363,7 +4445,7 @@ const HELP = `
 <h4>💾 내보내기 · 불러오기</h4>
 <ul>
 <li><b>📦 PC로 받기 (추천)</b> — 모든 작업방을 <code>macro-studio</code> 폴더 하나로 받아요.<br>
-<code>START.bat</code>(메뉴: 실행·이미지 찍기·변수 고치기·폴더 열기·좌표 찾기·영역 선택) · 작업방마다 <code>macro-N</code> 폴더(<code>RUN.bat</code>·<code>macro.ps1</code>, PC에서 생기는 <code>images</code>·<code>variables.txt</code>) · <code>tools</code>(공용 도구·백업).<br>
+<code>START.bat</code>(메뉴: 실행·이미지 찍기·변수 고치기·<b>이미지 관리</b>·폴더 열기·좌표 찾기·영역 선택) · 작업방마다 <code>macro-N</code> 폴더(<code>RUN.bat</code>·<code>macro.ps1</code>, PC에서 생기는 <code>images</code>·<code>variables.txt</code>) · <code>tools</code>(공용 도구·백업).<br>
 <b>다시 받았을 땐</b> 새 zip 의 macro-studio 폴더를 같은 자리에 끌어다 놓고 "파일 바꾸기". zip 에는 이미지·variables.txt 가 없어서 <b>찍은 이미지와 고친 변수 값은 그대로</b>예요. 작업방 설정에 이 작업방의 PC 폴더(macro-N)가 보여요.</li>
 <li><b>파일 하나씩 받기 (고급)</b> — 지금 작업방의 무설치(.ps1+.bat) / .ahk / .py, 도우미 단독 파일. .ahk·.py 는 그 작업방 폴더에 넣으면 같은 이미지·변수 파일을 써요.</li>
 <li><b>파이썬으로 쓰기</b> — .py 를 받으면 <code>…-python.bat</code> 도 같이 받아요. 둘을 같은 폴더에 두고 <b>.bat 을 더블클릭</b>하면 처음 한 번 필요한 부품을 깔고 실행해요. 파이썬은 <b>3.14 권장</b>(화면 글자 읽기 부품이 아직 3.15 를 지원하지 않아요). python.org 에서 설치할 땐 <b>"Add python.exe to PATH"</b>에 체크하세요.</li>
