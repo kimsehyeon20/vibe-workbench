@@ -1962,6 +1962,7 @@ function genBAT(l, ahkName) {
   // .bat 는 순수 ASCII + chcp 없음: 한글/코드페이지 전환이 cmd 파서를 깨뜨려 'rshell' 류 오류를 냄
   return [
     '@echo off',
+    'cd /d "%TEMP%" 2>nul',
     ...batPick(ahkName, '-run'),
     'start "" "%F%"',
     'if errorlevel 1 (',
@@ -2002,6 +2003,7 @@ function genPSBat(l, ps1Name) {
   // .bat 는 순수 ASCII + chcp 없음: cmd 코드페이지 전환이 'powershell' 명령을 깨먹는 버그 회피
   return [
     '@echo off',
+    'cd /d "%TEMP%" 2>nul',
     ...batPick(ps1Name, '-noinstall'),
     'powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%F%"',
     'echo.', 'pause', '',
@@ -3623,6 +3625,7 @@ function genHelperBat(ps1Name) {
   // .bat 는 순수 ASCII + chcp 없음
   return [
     '@echo off',
+    'cd /d "%TEMP%" 2>nul',
     ...batPick(ps1Name, '-run'),
     'powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%F%"',
     'echo.', 'pause', '',
@@ -3643,6 +3646,7 @@ function genPyBat(l, pyName) {
   const { mods, pkgs, ocr } = pyPackages(l);
   return [
     '@echo off',
+    'cd /d "%TEMP%" 2>nul',
     'setlocal',
     ...batPick(pyName, '-python'),
     'set "PY="',
@@ -3696,12 +3700,14 @@ function ahkLostExit(l) {
 const NOEXT_BAT = [':noext', 'echo.', 'echo  [!] Drag the macro-studio folder OUT of the zip first (to the Desktop), then run START.bat', 'echo.', 'pause'];
 function genStartBat() {
   // ASCII 만, chcp 없음. 메뉴 창이 검은 창을 숨김. 메뉴 파일에 문법 오류가 있으면 창이 남아 이유를 보여줌
-  return ['@echo off', 'if not exist "%~dp0tools\\menu.ps1" goto noext',
+  return ['@echo off', 'cd /d "%TEMP%" 2>nul',
+    'if not exist "%~dp0tools\\menu.ps1" goto noext',
     'powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0tools\\menu.ps1"',
     'if errorlevel 1 pause', 'exit /b', ...NOEXT_BAT, ''].join('\r\n');
 }
 function genRunBat() {
-  return ['@echo off', 'if not exist "%~dp0macro.ps1" goto noext',
+  return ['@echo off', 'cd /d "%TEMP%" 2>nul',
+    'if not exist "%~dp0macro.ps1" goto noext',
     'powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0macro.ps1"',
     'if errorlevel 1 echo  [!] Error above? If it says the script was blocked by antivirus, see README.txt (macro-studio folder).',
     'echo.', 'pause', 'exit /b', ...NOEXT_BAT, ''].join('\r\n');
