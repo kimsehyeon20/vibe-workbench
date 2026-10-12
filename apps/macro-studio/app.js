@@ -2952,6 +2952,7 @@ function genPY(l, opts = {}) {
   P.push('pyautogui.PAUSE = 0.1');
   P.push("PASTE_MOD = 'command' if sys.platform == 'darwin' else 'ctrl'");
   P.push('_paused = {"v": False}; _stop = {"v": False}; _restart = {"v": False}; _can_restart = {"v": False}; _last_err = [""]');
+  P.push('_step = {"v": False}   # 한 단계씩 실행(--step): 동작마다 멈춤');
   P.push('_ev = {"f7": False, "f8": False}; _in_err = {"v": False}; _ign = {"v": False}');
   P.push('class _Restart(Exception): pass');
   P.push('def _hk(fn):   # 매크로가 받은 F7~F10 은 앞 프로그램(엑셀 등)에 안 넘김. 매크로가 직접 보내는 F키(_ign)는 그대로 통과');
@@ -2980,6 +2981,13 @@ function genPY(l, opts = {}) {
   P.push('        time.sleep(0.12)');
   P.push('        if _stop["v"]: raise SystemExit("종료")');
   P.push('        if _restart["v"] and _can_restart["v"]: _restart["v"] = False; _paused["v"] = False; raise _Restart()');
+  P.push('def step_gate():   # 한 단계씩: 이 동작을 실행하기 전에 멈춰서 물어봄 (--step 일 때만)');
+  P.push('    if not _step["v"]: return');
+  P.push('    focus_console()   # 다른 창에 입력되지 않게 실행 창을 앞으로');
+  P.push('    try: _a = input("   [Enter] 이 동작 실행 / s = 여기부터 끝까지 그냥 / q = 종료 : ").strip().lower()');
+  P.push('    except Exception: _a = ""');
+  P.push('    if _a == "q": raise SystemExit("한 단계씩: 종료했어요")');
+  P.push('    if _a == "s": _step["v"] = False; print("   이제부터 멈추지 않고 진행해요.")');
   P.push('');
   P.push('def activate_window(title):');
   P.push('    if not gw: return');
@@ -3286,6 +3294,7 @@ function genPY(l, opts = {}) {
     P.push("    elif _mode == '--capture':");
     P.push('        capture_images()');
     P.push('    else:');
+    P.push("        if _mode == '--step': _step[\"v\"] = True; print(\"한 단계씩 실행이에요. 동작마다 멈춰요 — Enter 로 하나씩 진행하세요.\")");
     P.push('        ensure_vars_file()   # 처음 실행 때 variables.txt 만들기');
     runBody.forEach(x => P.push('    ' + x));   // 한 단계 더 들여써서 else 안에
     P.push('    try: input("엔터를 누르면 창을 닫아요...")');
@@ -3306,6 +3315,7 @@ function emitPY(steps, out, ctx) {
   (steps || []).forEach(s => {
     out.push('control()');
     out.push(`print(${pyJ('▶ ' + stepDesc(s))})`);
+    out.push('step_gate()   # 한 단계씩이면 여기서 멈춤');
     if (s.type === 'repeat') {
       out.push(num(s.count) > 0 ? `for _ in range(${num(s.count)}):` : 'while True:   # 무한 반복');
       const inner = ['control()']; emitPY(s.children, inner, ctx);
@@ -4025,6 +4035,10 @@ function genMenu() {
     "  if(IsPy $m){ RunBat $m ' --editvars' } else { RunPs (Join-Path (DirOf $m) 'macro.ps1') ' -EditVars' 'Minimized' }",
     '}',
     '$bDir = Btn "폴더 열기" { $m = Sel; if($m){ Start-Process explorer.exe -ArgumentList (\'"\' + (DirOf $m) + \'"\') -ErrorAction Stop } }',
+    '$bStep = Btn "한 단계씩" {',
+    '  $m = Sel; if(-not $m){ return }',
+    "  if(IsPy $m){ RunBat $m ' --step' } else { Say '한 단계씩 실행은 파이썬 묶음에서 돼요(내보낼 때 실행파일 종류를 파이썬으로).' }",
+    '}',
     "$bImgMgr = Btn \"이미지 관리\" { RunPs (Join-Path $PSScriptRoot 'images.ps1') '' 'Minimized' }",
     "$bXY = Btn \"좌표 찾기\" { RunPs (Join-Path $PSScriptRoot 'find-xy.ps1') '' 'Minimized' }",
     "$bReg = Btn \"영역 선택\" { RunPs (Join-Path $PSScriptRoot 'pick-region.ps1') '' 'Minimized' }",
@@ -4068,8 +4082,9 @@ function packReadme(list, built) {
     '폴더 이름을 바꿨다면, zip 속 macro-studio 폴더를 열어 안의 내용을 전부 그 폴더로 끌어다 놓으세요.',
     '',
     '[폴더 안]',
-    '  START.bat         메뉴 (실행 · 이미지 찍기 · 변수 고치기 · 이미지 관리 · 폴더 열기 · 좌표 찾기 · 영역 선택)',
+    '  START.bat         메뉴 (실행 · 한 단계씩 · 이미지 찍기 · 변수 고치기 · 이미지 관리 · 폴더 열기 · 좌표 찾기 · 영역 선택)',
     '                    [이미지 관리] = 공용 폴더의 이미지 목록·있음/없음, 이름 정해 미리 찍기·다시 찍기·삭제',
+    '                    [한 단계씩] = (파이썬 묶음) 동작을 하나씩 멈춰 가며 실행 — Enter 다음 / s 끝까지 / q 종료',
     '  images\\           공용 이미지 폴더 — 모든 작업방이 함께 써요. 한 번 찍어 두면 여러 매크로가 같이 찾아요.',
     '  macro-N\\          작업방 하나에 폴더 하나 (아래 표). RUN.bat = 메뉴 없이 바로 실행',
     '     images\\           이 작업방만의 이미지(있으면). 없으면 위 공용 폴더에서 찾아요.',
