@@ -1137,7 +1137,7 @@ function fieldsFor(type) {
     case 'clipsave':
       return `<p class="hint" style="margin-top:0">지금 <b>클립보드에 복사돼 있는 이미지</b>를 이름 붙여 <b>파일로 보관</b>해요. 보관한 이미지는 <b>📤 이미지 붙여넣기</b>로 몇 번이든, 나중에도 붙일 수 있어요(중간에 글자 입력 등으로 클립보드가 바뀌어도 그대로). <b>무설치(윈도우)·파이썬</b> 전용.</p>`
         + inpT('보관할 이름', 'img', '예: 복사이미지1', 'list="dl-img"')
-        + `<p class="hint">바로 앞에 이미지를 복사하는 동작을 넣으세요 — 예) 이미지 위에서 <b>우클릭 → "이미지 복사"</b>, 또는 그림을 선택하고 <b>단축키 "복사"</b>. 탐색기에서 <b>그림 파일</b>을 복사해도 돼요. 파일: <code>${escapeHtml(imgDirOf(activeLoop()))}\\${escapeHtml(cleanImgName(draft.img) || '이름')}.png</code> (PC로 받기 묶음은 공용 이미지 폴더 — 다른 작업방에서도 붙일 수 있어요). 같은 이름이면 매번 새 이미지로 바꿔 저장해요.</p>`;
+        + `<p class="hint">바로 앞에 이미지를 복사하는 동작을 넣으세요 — 예) 이미지 위에서 <b>우클릭 → "이미지 복사"</b>, 또는 그림을 선택하고 <b>단축키 "복사"</b>. 탐색기에서 <b>그림 파일</b>을 복사해도 돼요. 파일: <code>${escapeHtml(imgDirOf(activeLoop()))}\\${escapeHtml(cleanImgName(draft.img) || '이름')}.png</code> ${imgDirOf(activeLoop()) === 'images' ? '(PC로 받기 묶음은 공용 폴더 <code>macro-studio\\images</code> 에 저장 — 다른 작업방에서도 붙일 수 있어요)' : '(따로 정한 폴더에 저장돼요 — 같은 폴더를 쓰는 작업방에서만 붙일 수 있어요)'}. 같은 이름이면 매번 새 이미지로 바꿔 저장해요.</p>`;
     case 'imgpaste':
       return `<p class="hint" style="margin-top:0">이름으로 정한 이미지를 <b>클립보드에 올리고 붙여넣기(Ctrl+V)</b> 해요. 메일 본문·엑셀·메신저처럼 <b>그림 붙여넣기가 되는 곳</b>에 커서를 두고 쓰세요. <b>무설치(윈도우)·파이썬</b> 전용.</p>`
         + inpT('붙여넣을 이미지 이름', 'img', '예: 복사이미지1', 'list="dl-img"')
@@ -2406,14 +2406,31 @@ function psExcelStep(s) {
     "  if((ErrorPause $msg) -eq 'skip'){ $script:xlPend = $null; break }",
     '}'];
 }
+/* 클립보드 이미지 오류 안내 (PS·파이썬 공통) */
+const CLIP_NOIMG = '클립보드에 이미지가 없어요 — 바로 앞에 이미지를 복사하는 동작(이미지 위 우클릭 → 이미지 복사, 또는 단축키 복사)을 넣으세요';
+const CLIP_NOFMT_PS = '복사한 파일을 그림으로 열 수 없어요 — png·jpg·bmp·gif·tif 그림 파일을 복사하세요';
+const CLIP_NOFMT_PY = '복사한 파일을 그림으로 열 수 없어요 — png·jpg·bmp·gif·tif·webp 그림 파일을 복사하세요';
+function clipStaleMsg(nm) { return `앞의 [클립보드 이미지 보관] '${nm}' 을(를) 이번에 건너뛰어서, 붙이면 지난번 이미지가 들어가요 — F8 = 그래도 지난 이미지 붙이기 / F7 = 붙이지 않고 넘어가기`; }
 /* 클립보드 이미지: 보관(클립보드 → png 파일) / 붙여넣기(png 파일 → 클립보드 → Ctrl+V). 실행 창이 -STA 라 WinForms 클립보드를 바로 씀 */
 function psClipImgFuncs() {
   return [
     '# ===== 클립보드 이미지 (보관·붙여넣기) =====',
-    'function ImgFromBytes($b){ $ms = New-Object System.IO.MemoryStream(,$b); $im = [System.Drawing.Image]::FromStream($ms); $bm = New-Object System.Drawing.Bitmap $im; $im.Dispose(); $ms.Dispose(); return $bm }   # 파일을 잠그지 않게 복사본으로',
-    '# 클립보드의 이미지를 $path 로 저장. 성공 $true, 실패 $false (+ $script:lastErr = noimg/save)',
+    '# 파일을 잠그지 않게 복사본으로 + 96dpi 로 맞춤(화면 배율 125·150% 에서 오피스에 작게 붙는 것 방지) + $exif 면 폰 사진의 회전 정보 반영',
+    'function ImgFromBytes($b, $exif){',
+    '  $ms = New-Object System.IO.MemoryStream(,$b); $im = [System.Drawing.Image]::FromStream($ms)',
+    '  try {',
+    '    $bm = New-Object System.Drawing.Bitmap $im; $bm.SetResolution(96, 96)',
+    '    if($exif){ try { if($im.PropertyIdList -contains 274){   # 274 = 사진 방향(EXIF)',
+    '      $o = [int][BitConverter]::ToUInt16($im.GetPropertyItem(274).Value, 0)',
+    "      $rf = @{ 2 = 'RotateNoneFlipX'; 3 = 'Rotate180FlipNone'; 4 = 'Rotate180FlipX'; 5 = 'Rotate90FlipX'; 6 = 'Rotate90FlipNone'; 7 = 'Rotate270FlipX'; 8 = 'Rotate270FlipNone' }[$o]",
+    '      if($rf){ $bm.RotateFlip([System.Drawing.RotateFlipType]$rf) }',
+    '    } } catch {} }',
+    '    return $bm',
+    '  } finally { $im.Dispose(); $ms.Dispose() }',
+    '}',
+    '# 클립보드의 이미지를 $path 로 저장. 성공 $true, 실패 $false (+ $script:lastErr = noimg/nofmt/save)',
     'function ClipImgSave($path){',
-    '  $script:lastErr = ""; $script:clipMsg = ""',
+    '  $script:lastErr = ""; $script:clipMsg = ""; $hadFiles = $false',
     '  for($k = 0; $k -lt 10; $k++){   # 복사 직후엔 이미지가 늦게 올라올 수 있어 잠깐씩 다시 봄',
     '    Pump',
     '    $bm = $null',
@@ -2422,10 +2439,11 @@ function psClipImgFuncs() {
     '      if($d){',
     "        if($d.GetDataPresent('PNG')){ $st = $d.GetData('PNG'); if($st -is [System.IO.Stream]){ if($st.CanSeek){ $st.Position = 0 }; $ms = New-Object System.IO.MemoryStream; $st.CopyTo($ms); $bm = ImgFromBytes ($ms.ToArray()); $ms.Dispose() } }   # 투명 배경까지 (브라우저 \"이미지 복사\")",
     "        if(-not $bm -and $d.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)){   # 탐색기에서 그림 파일을 복사한 경우",
-    "          $f = @($d.GetData([System.Windows.Forms.DataFormats]::FileDrop)) | Where-Object { [string]$_ -match '\\.(png|jpe?g|bmp|gif)$' } | Select-Object -First 1",
-    '          if($f){ $bm = ImgFromBytes ([System.IO.File]::ReadAllBytes([string]$f)) }',
+    '          $fs = @($d.GetData([System.Windows.Forms.DataFormats]::FileDrop)); if($fs.Count){ $hadFiles = $true }',
+    "          $f = $fs | Where-Object { [string]$_ -match '\\.(png|jpe?g|jpe|jfif|bmp|dib|gif|tiff?)$' } | Select-Object -First 1",
+    '          if($f){ try { $bm = ImgFromBytes ([System.IO.File]::ReadAllBytes([string]$f)) $true } catch { $bm = $null } }',
     '        }',
-    '        if(-not $bm -and [System.Windows.Forms.Clipboard]::ContainsImage()){ $im = [System.Windows.Forms.Clipboard]::GetImage(); if($im){ $bm = New-Object System.Drawing.Bitmap $im; $im.Dispose() } }',
+    '        if(-not $bm -and [System.Windows.Forms.Clipboard]::ContainsImage()){ $im = [System.Windows.Forms.Clipboard]::GetImage(); if($im){ $bm = New-Object System.Drawing.Bitmap $im; $bm.SetResolution(96, 96); $im.Dispose() } }',
     '      }',
     '    } catch { $bm = $null }',
     '    if($bm){',
@@ -2438,7 +2456,7 @@ function psClipImgFuncs() {
     '    }',
     '    if($k -lt 9){ WaitMs 200 }',
     '  }',
-    '  $script:lastErr = "noimg"; return $false',
+    '  $script:lastErr = $(if($hadFiles){ "nofmt" } else { "noimg" }); return $false   # nofmt = 파일은 복사됐는데 그림으로 못 엶',
     '}',
     '# $path 이미지를 클립보드에 올림: 일반 그림(투명 부분은 흰 배경) + PNG(투명 그대로). 성공 $true (+ $script:lastErr = nofile/badfile/clipbusy)',
     'function ClipImgPut($path){',
@@ -2447,7 +2465,7 @@ function psClipImgFuncs() {
     '  try { $src = ImgFromBytes ([System.IO.File]::ReadAllBytes($path)) } catch { $script:lastErr = "badfile"; return $false }',
     '  $flat = $null; $png = $null',
     '  try {',
-    '    $flat = New-Object System.Drawing.Bitmap $src.Width, $src.Height',
+    '    $flat = New-Object System.Drawing.Bitmap $src.Width, $src.Height; $flat.SetResolution(96, 96)',
     '    $g = [System.Drawing.Graphics]::FromImage($flat); $g.Clear([System.Drawing.Color]::White); $g.DrawImage($src, 0, 0, $src.Width, $src.Height); $g.Dispose()',
     '    $png = New-Object System.IO.MemoryStream; $src.Save($png, [System.Drawing.Imaging.ImageFormat]::Png); $png.Position = 0',
     '    $do = New-Object System.Windows.Forms.DataObject',
@@ -2463,16 +2481,19 @@ function psClipImgStep(s, made) {
   const nm = cleanImgName(s.img);
   if (s.type === 'clipsave') return ['while($true){',
     `  $cp = ImgPath ${psStr(nm)}`,
-    `  if(ClipImgSave $cp){ Write-Host ("   클립보드 이미지를 보관했어요: " + $cp); break }`,
-    `  $msg = $(if($script:lastErr -eq 'noimg'){ ${psStr('클립보드에 이미지가 없어요 — 바로 앞에 이미지를 복사하는 동작(이미지 위 우클릭 → 이미지 복사, 또는 단축키 복사)을 넣으세요')} } else { ${psStr('이미지를 저장하지 못했어요: ')} + $cp + ' (' + $script:clipMsg + ')' })`,
-    "  if((ErrorPause $msg) -eq 'skip'){ break }",
+    `  if(ClipImgSave $cp){ $script:ClipStale.Remove(${psStr(nm)}); Write-Host ("   클립보드 이미지를 보관했어요: " + $cp); break }`,
+    `  $msg = $(if($script:lastErr -eq 'noimg'){ ${psStr(CLIP_NOIMG)} } elseif($script:lastErr -eq 'nofmt'){ ${psStr(CLIP_NOFMT_PS)} } else { ${psStr('이미지를 저장하지 못했어요: ')} + $cp + ' (' + $script:clipMsg + ')' })`,
+    `  if((ErrorPause $msg) -eq 'skip'){ $script:ClipStale[${psStr(nm)}] = $true; break }   # 건너뛰면 뒤의 붙여넣기가 지난 이미지를 몰래 붙이지 않게`,
     '}'];
   const why = made ? ' — 앞의 [클립보드 이미지 보관] 동작이 먼저 실행돼야 해요' : psPackMode ? ' — START 메뉴 [이미지 찍기] 로 찍어 두세요 (다시 실행해도 찍을지 물어봐요)' : ' — 매크로를 다시 실행하면 지금 찍을지 물어봐요';
-  return ['while($true){',
+  const stale = made ? [`  if(-not $cpForce -and $script:ClipStale.ContainsKey(${psStr(nm)})){ $script:lastErr = 'stale' }`, '  elseif(ClipImgPut $cp){ Start-Sleep -Milliseconds 120; Keys "^v"; Start-Sleep -Milliseconds 300; break }   # 붙여넣은 프로그램이 클립보드를 읽을 틈']
+    : ['  if(ClipImgPut $cp){ Start-Sleep -Milliseconds 120; Keys "^v"; Start-Sleep -Milliseconds 300; break }   # 붙여넣은 프로그램이 클립보드를 읽을 틈'];
+  return [...(made ? ['$cpForce = $false'] : []), 'while($true){',
     `  $cp = ImgPath ${psStr(nm)}`,
-    '  if(ClipImgPut $cp){ Start-Sleep -Milliseconds 120; Keys "^v"; Start-Sleep -Milliseconds 300; break }   # 붙여넣은 프로그램이 클립보드를 읽을 틈',
-    `  $msg = $(if($script:lastErr -eq 'nofile'){ ${psStr(`이미지 '${nm}' 파일이 없어요: `)} + $cp + ${psStr(why)} } elseif($script:lastErr -eq 'badfile'){ ${psStr(`이미지 '${nm}' 파일을 읽을 수 없어요: `)} + $cp } else { ${psStr('클립보드를 다른 프로그램이 쓰고 있어 이미지를 올리지 못했어요')} })`,
+    ...stale,
+    `  $msg = $(if($script:lastErr -eq 'stale'){ ${psStr(clipStaleMsg(nm))} } elseif($script:lastErr -eq 'nofile'){ ${psStr(`이미지 '${nm}' 파일이 없어요: `)} + $cp + ${psStr(why)} } elseif($script:lastErr -eq 'badfile'){ ${psStr(`이미지 '${nm}' 파일을 읽을 수 없어요: `)} + $cp } else { ${psStr('클립보드를 다른 프로그램이 쓰고 있어 이미지를 올리지 못했어요')} })`,
     "  if((ErrorPause $msg) -eq 'skip'){ break }",
+    ...(made ? ["  if($script:lastErr -eq 'stale'){ $cpForce = $true }   # F8 = 지난 이미지라도 붙이기"] : []),
     '}'];
 }
 function psWebFuncs() {
@@ -2743,6 +2764,7 @@ function genPS1(l, opts = {}) {
   P.push('# ==== PURE-END ====');
   P.push('function InitVars(){');
   P.push("  $script:MacroVars = New-Object 'System.Collections.Generic.Dictionary[string,string]'");
+  if (needsClipImg(l.steps)) P.push('  $script:ClipStale = @{}   # 이번 실행에서 보관을 건너뛴 이미지 이름');
   (l.vars || []).forEach(v => { const n = cleanVarName(v.name); if (n) P.push(`  SetVar ${psStr(n)} ${psStr(v.value ?? '')}`); });
   P.push("  $vf = Join-Path $PSScriptRoot 'variables.txt'   # 폴더의 variables.txt 가 있으면 그 값으로 덮어씀");
   P.push('  if(Test-Path -LiteralPath $vf){');
@@ -3420,8 +3442,10 @@ function genPY(l, opts = {}) {
   P.push('# ==== PURE-BEGIN (변수·비교: 화면과 상관없는 계산) ====');
   P.push('V = {}');
   P.push(`INIT_VARS = {${(l.vars || []).filter(v => cleanVarName(v.name)).map(v => `${pyJ(cleanVarName(v.name))}: ${pyJ(v.value ?? '')}`).join(', ')}}`);
+  if (needsClipImg(l.steps)) P.push('_clip_stale = set()   # 이번 실행에서 보관을 건너뛴 이미지 이름 (뒤의 붙여넣기가 지난 이미지를 몰래 붙이지 않게)');
   P.push('def init_vars():');
   P.push('    V.clear(); V.update(INIT_VARS)');
+  if (needsClipImg(l.steps)) P.push('    _clip_stale.clear()');
   P.push("    f = os.path.join(BASE_DIR, 'variables.txt')   # 폴더의 variables.txt 가 있으면 그 값으로 덮어씀");
   P.push('    if os.path.exists(f):');
   P.push('        _txt = None');
@@ -3951,25 +3975,29 @@ function pyClipImgFuncs() {
     'import io',
     '_clip_msg = [""]',
     'try:',
-    '    from PIL import Image as _PImg, ImageGrab as _PGrab',
+    '    from PIL import Image as _PImg, ImageGrab as _PGrab, ImageOps as _POps',
     '    _clipimg = True',
     'except Exception:',
     '    _clipimg = False',
     '    print("(클립보드 이미지엔  pip install pillow  필요. 없으면 이미지 보관·붙여넣기에서 오류로 멈춰요)")',
-    'def clip_img_save(path, tries=10):   # 클립보드의 이미지를 path 에 png 로 저장. 성공 True (+ _last_err: nopil/noimg/save)',
-    '    _last_err[0] = ""; _clip_msg[0] = ""',
+    'def clip_img_save(path, tries=10):   # 클립보드의 이미지를 path 에 png 로 저장. 성공 True (+ _last_err: nopil/noimg/nofmt/save)',
+    '    _last_err[0] = ""; _clip_msg[0] = ""; had_files = False',
     '    if not _clipimg: _last_err[0] = "nopil"; return False',
     '    for k in range(tries):   # 복사 직후엔 이미지가 늦게 올라올 수 있어 잠깐씩 다시 봄',
     '        control()',
     '        try: im = _PGrab.grabclipboard()',
     '        except Exception: im = None',
     '        if isinstance(im, list):   # 탐색기에서 그림 파일을 복사한 경우: 파일 경로 목록',
-    '            f = next((x for x in im if str(x).lower().endswith((".png", ".jpg", ".jpeg", ".bmp", ".gif"))), None)',
+    '            had_files = had_files or bool(im)',
+    '            f = next((x for x in im if str(x).lower().endswith((".png", ".jpg", ".jpeg", ".jpe", ".jfif", ".bmp", ".dib", ".gif", ".tif", ".tiff", ".webp"))), None)',
     '            im = None',
     '            if f:',
     '                try:',
     '                    with open(f, "rb") as fh: im = _PImg.open(io.BytesIO(fh.read())); im.load()   # 파일을 잠그지 않게 복사본으로',
     '                except Exception: im = None',
+    '                if im is not None:',
+    '                    try: im = _POps.exif_transpose(im)   # 폰 사진의 회전 정보 반영 (안 하면 옆으로 누워 붙음)',
+    '                    except Exception: pass',
     '        if im is not None and hasattr(im, "save"):',
     '            try:',
     '                if im.mode not in ("RGB", "RGBA", "L"): im = im.convert("RGBA")',
@@ -3978,7 +4006,7 @@ function pyClipImgFuncs() {
     '            except Exception as _e:',
     '                _last_err[0] = "save"; _clip_msg[0] = str(_e); return False',
     '        if k < tries - 1: time.sleep(0.2)',
-    '    _last_err[0] = "noimg"; return False',
+    '    _last_err[0] = "nofmt" if had_files else "noimg"; return False   # nofmt = 파일은 복사됐는데 그림으로 못 엶',
     'def clip_img_put(path):   # path 이미지를 클립보드에: 일반 그림(투명 부분은 흰 배경) + PNG(투명 그대로). 성공 True (+ _last_err: nofile/nopil/badfile/clipbusy)',
     '    _last_err[0] = ""',
     '    if not os.path.exists(path): _last_err[0] = "nofile"; return False',
@@ -4025,20 +4053,24 @@ function pyClipImgStep(s, made) {
   const nopil = '"클립보드 이미지엔 pillow 가 필요해요 (실행용 .bat 이 처음에 자동 설치)"';
   if (s.type === 'clipsave') return ['while True:',
     `    _cp = img_path(${J(nm)})`,
-    '    if clip_img_save(_cp): print("   클립보드 이미지를 보관했어요:", _cp); break',
-    `    _msg = ${J('클립보드에 이미지가 없어요 — 바로 앞에 이미지를 복사하는 동작(이미지 위 우클릭 → 이미지 복사, 또는 단축키 복사)을 넣으세요')}`,
+    `    if clip_img_save(_cp): _clip_stale.discard(${J(nm)}); print("   클립보드 이미지를 보관했어요:", _cp); break`,
+    `    _msg = ${J(CLIP_NOIMG)}`,
+    `    if _last_err[0] == 'nofmt': _msg = ${J(CLIP_NOFMT_PY)}`,
     `    if _last_err[0] == 'save': _msg = ${J('이미지를 저장하지 못했어요: ')} + _cp + " (" + _clip_msg[0] + ")"`,
     `    if _last_err[0] == 'nopil': _msg = ${nopil}`,
-    "    if error_pause(_msg) == 'skip': break"];
+    `    if error_pause(_msg) == 'skip': _clip_stale.add(${J(nm)}); break   # 건너뛰면 뒤의 붙여넣기가 지난 이미지를 몰래 붙이지 않게`];
   const why = made ? ' — 앞의 [클립보드 이미지 보관] 동작이 먼저 실행돼야 해요' : pyPackMode ? ' — START 메뉴 [이미지 찍기] 로 찍어 두세요' : ' — 이미지 캡처 도우미로 찍어 두세요';
-  return ['while True:',
+  const put = 'clip_img_put(_cp): time.sleep(0.12); pyautogui.hotkey(PASTE_MOD, "v"); time.sleep(0.3); break   # 붙여넣은 프로그램이 클립보드를 읽을 틈';
+  return [...(made ? ['_cp_force = False'] : []), 'while True:',
     `    _cp = img_path(${J(nm)})`,
-    '    if clip_img_put(_cp): time.sleep(0.12); pyautogui.hotkey(PASTE_MOD, "v"); time.sleep(0.3); break   # 붙여넣은 프로그램이 클립보드를 읽을 틈',
+    ...(made ? [`    if not _cp_force and ${J(nm)} in _clip_stale: _last_err[0] = 'stale'`, `    elif ${put}`] : [`    if ${put}`]),
     `    _msg = ${J('클립보드를 다른 프로그램이 쓰고 있어 이미지를 올리지 못했어요')}`,
+    ...(made ? [`    if _last_err[0] == 'stale': _msg = ${J(clipStaleMsg(nm))}`] : []),
     `    if _last_err[0] == 'nofile': _msg = ${J(`이미지 '${nm}' 파일이 없어요: `)} + _cp + ${J(why)}`,
     `    if _last_err[0] == 'badfile': _msg = ${J(`이미지 '${nm}' 파일을 읽을 수 없어요: `)} + _cp`,
     `    if _last_err[0] == 'nopil': _msg = ${nopil}`,
-    "    if error_pause(_msg) == 'skip': break"];
+    "    if error_pause(_msg) == 'skip': break",
+    ...(made ? ["    if _last_err[0] == 'stale': _cp_force = True   # F8 = 지난 이미지라도 붙이기"] : [])];
 }
 function pyImgFuncs() {
   return [
