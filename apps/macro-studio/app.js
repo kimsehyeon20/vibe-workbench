@@ -25,7 +25,9 @@ const TYPES = {
   webclick: { ico: '🧭', label: '웹 요소 찾아 클릭 (이름)' },
   readput:  { ico: '📋', label: '영역 값 읽어 입력' },
   excel:    { ico: '📗', label: '엑셀 칸에 입력 (파일·시트·칸)' },
-  setvar:   { ico: '📦', label: '변수에 값 저장' },
+  clipsave: { ico: '📥', label: '클립보드 이미지 보관' },
+  imgpaste: { ico: '📤', label: '이미지 붙여넣기' },
+  setvar:  { ico: '📦', label: '변수에 값 저장' },
   repeat:   { ico: '🔁', label: '반복문 (동작을 묶어 반복)' },
   if:       { ico: '❓', label: '조건 (맞으면 동작 실행)' },
   break:    { ico: '⏏️', label: '반복 빠져나가기' },
@@ -220,10 +222,20 @@ function varNames(l) {
   return [...s];
 }
 /* 아직 안 쓴 기본 이미지 이름 (이미지1, 이미지2 …) */
-function freeImgName(l) { const used = new Set(imgNames(l)); let n = 1; while (used.has(`이미지${n}`)) n++; return `이미지${n}`; }
+function freeImgName(l, base = '이미지') { const used = new Set([...imgNames(l), ...clipImgNames(l)]); let n = 1; while (used.has(`${base}${n}`)) n++; return `${base}${n}`; }
+/* 미리 찍어 둬야 하는 이미지 (찾기용 + 보관 동작이 만들지 않는 붙여넣기용) */
 function imgNames(l) {
+  const s = new Set(), made = new Set(clipImgNames(l));
+  walkSteps(l.steps, x => {
+    const n = cleanImgName(x.img);
+    if (n && (x.type === 'imgclick' || (x.type === 'if' && x.what === 'img') || (x.type === 'imgpaste' && !made.has(n)))) s.add(n);
+  });
+  return [...s];
+}
+/* 실행 중에 클립보드에서 보관하는 이미지 (미리 찍을 필요 없음) */
+function clipImgNames(l) {
   const s = new Set();
-  walkSteps(l.steps, x => { if (x.type === 'imgclick' || (x.type === 'if' && x.what === 'img')) { const n = cleanImgName(x.img); if (n) s.add(n); } });
+  walkSteps(l.steps, x => { if (x.type === 'clipsave') { const n = cleanImgName(x.img); if (n) s.add(n); } });
   return [...s];
 }
 /* 반복문 밖에 놓인 "반복 빠져나가기"(갈 곳이 없음) */
@@ -491,6 +503,8 @@ function stepDesc(s) {
       const v = s.src === 'clip' ? '클립보드' : `"${String(s.value ?? '').slice(0, 16)}"`;
       return `엑셀 ${fn}${String(s.sheet || '').trim() ? ` › ${String(s.sheet).trim()}` : ''} › ${where} ← ${v}${s.save ? ' (저장)' : ''}`;
     }
+    case 'clipsave': return `복사한 이미지를 '${cleanImgName(s.img) || '?'}' 로 보관`;
+    case 'imgpaste': return `이미지 '${cleanImgName(s.img) || '?'}' 붙여넣기`;
     case 'setvar': {
       const n = cleanVarName(s.name) || '?';
       if (s.from === 'read') return `{${n}} ← 화면 영역의 ${s.read === 'number' ? '숫자' : '글자'}`;
@@ -576,6 +590,8 @@ function stepIssue(s) {
       if (s.src !== 'clip' && String(s.value ?? '') === '') return '넣을 값이 비었어요';
       return null;
     }
+    case 'clipsave': return cleanImgName(s.img) ? null : '보관할 이름을 정하세요';
+    case 'imgpaste': return cleanImgName(s.img) ? null : '붙여넣을 이미지 이름을 정하세요';
     case 'setvar':
       if (!cleanVarName(s.name)) return '변수 이름을 정하세요';
       if (s.from === 'read' && badR(s.region)) return '읽을 영역을 정하세요';
@@ -853,7 +869,7 @@ function renderSheetBody() {
   html += fieldsFor(draft.type);
   // 이름 고르기 목록 (이미 쓰는 변수·이미지 이름)
   html += `<datalist id="dl-var">${varNames(l).map(n => `<option value="${escapeHtml(n)}">`).join('')}</datalist>`;
-  html += `<datalist id="dl-img">${imgNames(l).map(n => `<option value="${escapeHtml(n)}">`).join('')}</datalist>`;
+  html += `<datalist id="dl-img">${[...new Set([...clipImgNames(l), ...imgNames(l)])].map(n => `<option value="${escapeHtml(n)}">`).join('')}</datalist>`;
   body.innerHTML = html;
   body.querySelectorAll('[data-type]').forEach(b => { b.onclick = () => setType(b.dataset.type); });
   bindFields();
@@ -879,6 +895,8 @@ function setType(type) {
     webclick: { type, name: '', match: 'exact', ctype: 'any', win: '', nth: 1, act: 'click', button: 'left', double: false, dx: 0, dy: 0, retries: 8, every: 0.7, notfound: 'pause', saveTo: '' },
     readput:  { type, read: 'text', mode: 'screen', region: reg(100, 100, 300, 150), after: 'tab' },
     excel:    { type, file: '', sheet: '', pos: 'cell', cell: 'A1', col: 'A', src: 'text', value: '', save: false },
+    clipsave: { type, img: freeImgName(activeLoop(), '복사이미지') },
+    imgpaste: { type, img: clipImgNames(activeLoop()).slice(-1)[0] || '' },
     setvar:   { type, name: varNames(activeLoop())[0] || '변수1', from: 'text', value: '', read: 'text', mode: 'screen', region: reg(100, 100, 300, 150), datePart: 'yyyy', dateOffset: 0, askText: '', askDefault: '' },
     repeat:   { type, alias: '', count: 3, children: [] },
     if:       { type, alias: '', what: 'region', read: 'number', mode: 'screen', region: reg(100, 100, 300, 150), src: 'const', op: 'ge', value: '', mode2: 'screen', region2: reg(100, 300, 300, 350),
@@ -1116,6 +1134,14 @@ function fieldsFor(type) {
         + `<p class="hint">켜면 넣을 때마다 저장해요(저장만 실패하면 F8 은 저장만 다시 — 두 번 넣지 않아요). 끄면 엑셀이 열린 채로 남아 직접 확인하고 저장할 수 있어요.</p>`
         + `<p class="hint">넣는 방식: 숫자처럼 보이면 <b>숫자</b>(1,234 → 1234, 75% → 75%), 2026-10-12 같은 건 <b>날짜</b>, 그 밖의 글자는 엑셀이 수식·날짜로 멋대로 바꾸지 않게 <b>글자 그대로</b>(00123·=합계·3-2 도 그대로). "열의 다음 빈 칸"은 <b>필터로 숨긴 줄까지</b> 보고 맨 아래를 찾아요. 경로를 적었는데 <b>같은 이름의 다른 폴더 파일</b>이 열려 있거나, 파일이 <b>읽기 전용</b>이면 잘못 넣지 않게 멈추고 알려줘요.</p>`;
     }
+    case 'clipsave':
+      return `<p class="hint" style="margin-top:0">지금 <b>클립보드에 복사돼 있는 이미지</b>를 이름 붙여 <b>파일로 보관</b>해요. 보관한 이미지는 <b>📤 이미지 붙여넣기</b>로 몇 번이든, 나중에도 붙일 수 있어요(중간에 글자 입력 등으로 클립보드가 바뀌어도 그대로). <b>무설치(윈도우)·파이썬</b> 전용.</p>`
+        + inpT('보관할 이름', 'img', '예: 복사이미지1', 'list="dl-img"')
+        + `<p class="hint">바로 앞에 이미지를 복사하는 동작을 넣으세요 — 예) 이미지 위에서 <b>우클릭 → "이미지 복사"</b>, 또는 그림을 선택하고 <b>단축키 "복사"</b>. 탐색기에서 <b>그림 파일</b>을 복사해도 돼요. 파일: <code>${escapeHtml(imgDirOf(activeLoop()))}\\${escapeHtml(cleanImgName(draft.img) || '이름')}.png</code> ${imgDirOf(activeLoop()) === 'images' ? '(PC로 받기 묶음은 공용 폴더 <code>macro-studio\\images</code> 에 저장 — 다른 작업방에서도 붙일 수 있어요)' : '(따로 정한 폴더에 저장돼요 — 같은 폴더를 쓰는 작업방에서만 붙일 수 있어요)'}. 같은 이름이면 매번 새 이미지로 바꿔 저장해요.</p>`;
+    case 'imgpaste':
+      return `<p class="hint" style="margin-top:0">이름으로 정한 이미지를 <b>클립보드에 올리고 붙여넣기(Ctrl+V)</b> 해요. 메일 본문·엑셀·메신저처럼 <b>그림 붙여넣기가 되는 곳</b>에 커서를 두고 쓰세요. <b>무설치(윈도우)·파이썬</b> 전용.</p>`
+        + inpT('붙여넣을 이미지 이름', 'img', '예: 복사이미지1', 'list="dl-img"')
+        + `<p class="hint">① 앞의 <b>📥 클립보드 이미지 보관</b>에서 정한 이름이면 그 이미지를, ② 아니면 <b>미리 찍어 둔 이미지</b>(실행할 때 없으면 "지금 찍을까요?" — 로고·도장처럼 늘 같은 그림)를 붙여요. 투명 배경 그림은 투명을 지원하는 프로그램엔 그대로, 아니면 <b>흰 배경</b>으로 들어가요.</p>`;
     case 'setvar': {
       let h = `<p class="hint" style="margin-top:0">값을 <b>이름 붙은 상자(변수)</b>에 담아 두고, 나중에 글자 입력·조건 등에서 <b>{이름}</b>으로 꺼내 써요.</p>`
         + inpT('변수 이름', 'name', '예: 금액', 'list="dl-var"')
@@ -1531,6 +1557,8 @@ async function doStepPreview(s, fast) {
     }
     case 'readput': { drawRegion('prev-region', s.mode, s.region || {}, 'r1'); hideOne('prev-region2'); badge('📋 읽어 입력'); setCap(stepDesc(s)); const r = await wait(c(1300)); hideRegions(); return r; }
     case 'excel': { badge('📗 엑셀 입력'); setCap(stepDesc(s)); return wait(c(1000)); }
+    case 'clipsave': { badge('📥 이미지 보관'); setCap(stepDesc(s)); return wait(c(700)); }
+    case 'imgpaste': { badge('📤 이미지 붙여넣기'); setCap(stepDesc(s)); return wait(c(900)); }
     case 'setvar': {
       if (s.from === 'read') drawRegion('prev-region', s.mode, s.region || {}, 'r1');
       badge(`📦 {${cleanVarName(s.name)}}`); setCap(stepDesc(s));
@@ -2005,6 +2033,8 @@ function genAHKStep(s) {
     case 'wait': return [`Sleep ${Math.round((Number(s.sec) || 0) * 1000)}`];
     case 'readput': return ['; [영역 값 읽어 입력] 은 .ahk 에서 지원되지 않아 건너뜁니다 — "무설치(윈도우)" 또는 파이썬으로 내보내세요.'];
     case 'excel': return ['; [엑셀 칸에 입력] 은 .ahk 에서 지원되지 않아 건너뜁니다 — "무설치(윈도우)" 또는 파이썬으로 내보내세요.'];
+    case 'clipsave': return ['; [클립보드 이미지 보관] 은 .ahk 에서 지원되지 않아 건너뜁니다 — "무설치(윈도우)" 또는 파이썬으로 내보내세요.'];
+    case 'imgpaste': return ['; [이미지 붙여넣기] 는 .ahk 에서 지원되지 않아 건너뜁니다 — "무설치(윈도우)" 또는 파이썬으로 내보내세요.'];
     default: return [];
   }
 }
@@ -2073,6 +2103,8 @@ function batPick(fileName, suffix) {
 }
 /* 찾기 실패 이유별 안내 (파일 없음·이미지 기능 없음·OCR 없음) → $msg 덮어쓰기 */
 let psPackMode = false;   // genPS1 이 PC로 받기(macro-studio 폴더)용을 만드는 중인지 → 안내 문구가 달라짐
+let genClipMade = new Set();   // 만드는 중인 매크로에서 클립보드로 보관하는 이미지 이름 (붙여넣기 오류 안내가 달라짐)
+let pyPackMode = false;   // genPY 가 파이썬 묶음용을 만드는 중인지
 function psErrMsgs(imgName) {
   const L = [];
   if (imgName != null) {
@@ -2374,6 +2406,96 @@ function psExcelStep(s) {
     "  if((ErrorPause $msg) -eq 'skip'){ $script:xlPend = $null; break }",
     '}'];
 }
+/* 클립보드 이미지 오류 안내 (PS·파이썬 공통) */
+const CLIP_NOIMG = '클립보드에 이미지가 없어요 — 바로 앞에 이미지를 복사하는 동작(이미지 위 우클릭 → 이미지 복사, 또는 단축키 복사)을 넣으세요';
+const CLIP_NOFMT_PS = '복사한 파일을 그림으로 열 수 없어요 — png·jpg·bmp·gif·tif 그림 파일을 복사하세요';
+const CLIP_NOFMT_PY = '복사한 파일을 그림으로 열 수 없어요 — png·jpg·bmp·gif·tif·webp 그림 파일을 복사하세요';
+function clipStaleMsg(nm) { return `앞의 [클립보드 이미지 보관] '${nm}' 을(를) 이번에 건너뛰어서, 붙이면 지난번 이미지가 들어가요 — F8 = 그래도 지난 이미지 붙이기 / F7 = 붙이지 않고 넘어가기`; }
+/* 클립보드 이미지: 보관(클립보드 → png 파일) / 붙여넣기(png 파일 → 클립보드 → Ctrl+V). 실행 창이 -STA 라 WinForms 클립보드를 바로 씀 */
+function psClipImgFuncs() {
+  return [
+    '# ===== 클립보드 이미지 (보관·붙여넣기) =====',
+    '# 파일을 잠그지 않게 복사본으로 + 96dpi 로 맞춤(화면 배율 125·150% 에서 오피스에 작게 붙는 것 방지) + $exif 면 폰 사진의 회전 정보 반영',
+    'function ImgFromBytes($b, $exif){',
+    '  $ms = New-Object System.IO.MemoryStream(,$b); $im = [System.Drawing.Image]::FromStream($ms)',
+    '  try {',
+    '    $bm = New-Object System.Drawing.Bitmap $im; $bm.SetResolution(96, 96)',
+    '    if($exif){ try { if($im.PropertyIdList -contains 274){   # 274 = 사진 방향(EXIF)',
+    '      $o = [int][BitConverter]::ToUInt16($im.GetPropertyItem(274).Value, 0)',
+    "      $rf = @{ 2 = 'RotateNoneFlipX'; 3 = 'Rotate180FlipNone'; 4 = 'Rotate180FlipX'; 5 = 'Rotate90FlipX'; 6 = 'Rotate90FlipNone'; 7 = 'Rotate270FlipX'; 8 = 'Rotate270FlipNone' }[$o]",
+    '      if($rf){ $bm.RotateFlip([System.Drawing.RotateFlipType]$rf) }',
+    '    } } catch {} }',
+    '    return $bm',
+    '  } finally { $im.Dispose(); $ms.Dispose() }',
+    '}',
+    '# 클립보드의 이미지를 $path 로 저장. 성공 $true, 실패 $false (+ $script:lastErr = noimg/nofmt/save)',
+    'function ClipImgSave($path){',
+    '  $script:lastErr = ""; $script:clipMsg = ""; $hadFiles = $false',
+    '  for($k = 0; $k -lt 10; $k++){   # 복사 직후엔 이미지가 늦게 올라올 수 있어 잠깐씩 다시 봄',
+    '    Pump',
+    '    $bm = $null',
+    '    try {',
+    '      $d = [System.Windows.Forms.Clipboard]::GetDataObject()',
+    '      if($d){',
+    "        if($d.GetDataPresent('PNG')){ $st = $d.GetData('PNG'); if($st -is [System.IO.Stream]){ if($st.CanSeek){ $st.Position = 0 }; $ms = New-Object System.IO.MemoryStream; $st.CopyTo($ms); $bm = ImgFromBytes ($ms.ToArray()); $ms.Dispose() } }   # 투명 배경까지 (브라우저 \"이미지 복사\")",
+    "        if(-not $bm -and $d.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)){   # 탐색기에서 그림 파일을 복사한 경우",
+    '          $fs = @($d.GetData([System.Windows.Forms.DataFormats]::FileDrop)); if($fs.Count){ $hadFiles = $true }',
+    "          $f = $fs | Where-Object { [string]$_ -match '\\.(png|jpe?g|jpe|jfif|bmp|dib|gif|tiff?)$' } | Select-Object -First 1",
+    '          if($f){ try { $bm = ImgFromBytes ([System.IO.File]::ReadAllBytes([string]$f)) $true } catch { $bm = $null } }',
+    '        }',
+    '        if(-not $bm -and [System.Windows.Forms.Clipboard]::ContainsImage()){ $im = [System.Windows.Forms.Clipboard]::GetImage(); if($im){ $bm = New-Object System.Drawing.Bitmap $im; $bm.SetResolution(96, 96); $im.Dispose() } }',
+    '      }',
+    '    } catch { $bm = $null }',
+    '    if($bm){',
+    '      try {',
+    '        $dir = Split-Path -Parent $path',
+    '        if(-not (Test-Path -LiteralPath $dir)){ New-Item -ItemType Directory -Path $dir -Force | Out-Null }',
+    '        $bm.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); return $true',
+    '      } catch { $script:lastErr = "save"; $script:clipMsg = $_.Exception.Message; return $false }',
+    '      finally { $bm.Dispose() }',
+    '    }',
+    '    if($k -lt 9){ WaitMs 200 }',
+    '  }',
+    '  $script:lastErr = $(if($hadFiles){ "nofmt" } else { "noimg" }); return $false   # nofmt = 파일은 복사됐는데 그림으로 못 엶',
+    '}',
+    '# $path 이미지를 클립보드에 올림: 일반 그림(투명 부분은 흰 배경) + PNG(투명 그대로). 성공 $true (+ $script:lastErr = nofile/badfile/clipbusy)',
+    'function ClipImgPut($path){',
+    '  $script:lastErr = ""',
+    '  if(-not (Test-Path -LiteralPath $path)){ $script:lastErr = "nofile"; return $false }',
+    '  try { $src = ImgFromBytes ([System.IO.File]::ReadAllBytes($path)) } catch { $script:lastErr = "badfile"; return $false }',
+    '  $flat = $null; $png = $null',
+    '  try {',
+    '    $flat = New-Object System.Drawing.Bitmap $src.Width, $src.Height; $flat.SetResolution(96, 96)',
+    '    $g = [System.Drawing.Graphics]::FromImage($flat); $g.Clear([System.Drawing.Color]::White); $g.DrawImage($src, 0, 0, $src.Width, $src.Height); $g.Dispose()',
+    '    $png = New-Object System.IO.MemoryStream; $src.Save($png, [System.Drawing.Imaging.ImageFormat]::Png); $png.Position = 0',
+    '    $do = New-Object System.Windows.Forms.DataObject',
+    '    $do.SetData([System.Windows.Forms.DataFormats]::Bitmap, $true, $flat)',
+    "    $do.SetData('PNG', $false, $png)",
+    '    for($i = 0; $i -lt 5; $i++){ try { [System.Windows.Forms.Clipboard]::SetDataObject($do, $true, 5, 150); return $true } catch { Start-Sleep -Milliseconds 150 } }   # 다른 프로그램이 클립보드를 잡고 있으면 잠깐 뒤 다시',
+    '    $script:lastErr = "clipbusy"; return $false',
+    '  } finally { $src.Dispose(); if($flat){ $flat.Dispose() }; if($png){ $png.Dispose() } }',
+    '}',
+  ];
+}
+function psClipImgStep(s, made) {
+  const nm = cleanImgName(s.img);
+  if (s.type === 'clipsave') return ['while($true){',
+    `  $cp = ImgPath ${psStr(nm)}`,
+    `  if(ClipImgSave $cp){ $script:ClipStale.Remove(${psStr(nm)}); Write-Host ("   클립보드 이미지를 보관했어요: " + $cp); break }`,
+    `  $msg = $(if($script:lastErr -eq 'noimg'){ ${psStr(CLIP_NOIMG)} } elseif($script:lastErr -eq 'nofmt'){ ${psStr(CLIP_NOFMT_PS)} } else { ${psStr('이미지를 저장하지 못했어요: ')} + $cp + ' (' + $script:clipMsg + ')' })`,
+    `  if((ErrorPause $msg) -eq 'skip'){ $script:ClipStale[${psStr(nm)}] = $true; break }   # 건너뛰면 뒤의 붙여넣기가 지난 이미지를 몰래 붙이지 않게`,
+    '}'];
+  const why = made ? ' — 앞의 [클립보드 이미지 보관] 동작이 먼저 실행돼야 해요' : psPackMode ? ' — START 메뉴 [이미지 찍기] 로 찍어 두세요 (다시 실행해도 찍을지 물어봐요)' : ' — 매크로를 다시 실행하면 지금 찍을지 물어봐요';
+  const stale = made ? [`  if(-not $cpForce -and $script:ClipStale.ContainsKey(${psStr(nm)})){ $script:lastErr = 'stale' }`, '  elseif(ClipImgPut $cp){ Start-Sleep -Milliseconds 120; Keys "^v"; Start-Sleep -Milliseconds 300; break }   # 붙여넣은 프로그램이 클립보드를 읽을 틈']
+    : ['  if(ClipImgPut $cp){ Start-Sleep -Milliseconds 120; Keys "^v"; Start-Sleep -Milliseconds 300; break }   # 붙여넣은 프로그램이 클립보드를 읽을 틈'];
+  return [...(made ? ['$cpForce = $false'] : []), 'while($true){',
+    `  $cp = ImgPath ${psStr(nm)}`,
+    ...stale,
+    `  $msg = $(if($script:lastErr -eq 'stale'){ ${psStr(clipStaleMsg(nm))} } elseif($script:lastErr -eq 'nofile'){ ${psStr(`이미지 '${nm}' 파일이 없어요: `)} + $cp + ${psStr(why)} } elseif($script:lastErr -eq 'badfile'){ ${psStr(`이미지 '${nm}' 파일을 읽을 수 없어요: `)} + $cp } else { ${psStr('클립보드를 다른 프로그램이 쓰고 있어 이미지를 올리지 못했어요')} })`,
+    "  if((ErrorPause $msg) -eq 'skip'){ break }",
+    ...(made ? ["  if($script:lastErr -eq 'stale'){ $cpForce = $true }   # F8 = 지난 이미지라도 붙이기"] : []),
+    '}'];
+}
 function psWebFuncs() {
   return [
     '# ===== 웹 요소 찾기 (UI Automation: 단추·링크의 이름으로, 위치와 상관없이) =====',
@@ -2485,11 +2607,13 @@ function needsOcr(steps) {
 }
 function needsImg(steps) { return anyStep(steps, s => s.type === 'imgclick' || (s.type === 'if' && s.what === 'img')); }
 function needsExcel(steps) { return anyStep(steps, s => s.type === 'excel'); }
+function needsClipImg(steps) { return anyStep(steps, s => s.type === 'clipsave' || s.type === 'imgpaste'); }
 
 function genPS1(l, opts = {}) {
   refreshOrphans(l);
   const pack = !!opts.pack;   // PC로 받기(macro-studio 폴더) 안의 macro.ps1 이면 true
   psPackMode = pack;
+  genClipMade = new Set(clipImgNames(l));
   const P = [];
   P.push('# -*- 매크로: ' + (l.name || '').replace(/[\r\n]/g, ' ') + ` (설계소 ${APP_VERSION}) -*-`);
   P.push('# 설치가 필요 없습니다. macro-studio 폴더의 START.bat(메뉴) 또는 이 폴더의 RUN.bat 을 더블클릭하세요. (따로 받았다면 "...-noinstall.bat")');
@@ -2640,6 +2764,7 @@ function genPS1(l, opts = {}) {
   P.push('# ==== PURE-END ====');
   P.push('function InitVars(){');
   P.push("  $script:MacroVars = New-Object 'System.Collections.Generic.Dictionary[string,string]'");
+  if (needsClipImg(l.steps)) P.push('  $script:ClipStale = @{}   # 이번 실행에서 보관을 건너뛴 이미지 이름');
   (l.vars || []).forEach(v => { const n = cleanVarName(v.name); if (n) P.push(`  SetVar ${psStr(n)} ${psStr(v.value ?? '')}`); });
   P.push("  $vf = Join-Path $PSScriptRoot 'variables.txt'   # 폴더의 variables.txt 가 있으면 그 값으로 덮어씀");
   P.push('  if(Test-Path -LiteralPath $vf){');
@@ -2664,6 +2789,7 @@ function genPS1(l, opts = {}) {
   if (needsImg(l.steps)) P.push(...psImgFuncs());
   if (needsWeb(l.steps)) P.push(...psWebFuncs());
   if (needsExcel(l.steps)) P.push(...psExcelFuncs());
+  if (needsClipImg(l.steps)) P.push(...psClipImgFuncs());
   const need = imgNames(l);
   P.push(`$script:ImgsNeeded = @(${need.map(psStr).join(', ')})   # 이 매크로가 찾는 이미지 이름`);
   P.push('function MissingImages(){ return @($script:ImgsNeeded | Where-Object { -not (Test-Path -LiteralPath (ImgPath $_)) }) }');
@@ -3042,6 +3168,7 @@ function genPSStep(s) {
     case 'wait': return [`WaitMs ${Math.round((Number(s.sec) || 0) * 1000)}`];
     case 'readput': return genPSReadPut(s);
     case 'excel': return psExcelStep(s);
+    case 'clipsave': case 'imgpaste': return psClipImgStep(s, genClipMade.has(cleanImgName(s.img)));
     default: return [];
   }
 }
@@ -3115,11 +3242,12 @@ function pyConf(s) {
 function genPY(l, opts = {}) {
   const pack = !!opts.pack;   // PC로 받기(파이썬 묶음)용이면 variables.txt 만들기 + --capture/--editvars 지원
   refreshOrphans(l);
+  pyPackMode = pack; genClipMade = new Set(clipImgNames(l));
   const P = [];
   P.push('# -*- coding: utf-8 -*-');
   P.push(`# 매크로: ${(l.name || '').replace(/[\r\n]/g, ' ')} (설계소 ${APP_VERSION})`);
   P.push('# 실행: 같이 받은 "...-python.bat" 을 더블클릭 (처음 한 번 필요한 부품을 깔고 실행). 직접 하려면  pip install pyautogui pygetwindow keyboard pyperclip  후  python "이파일.py"');
-  P.push('#  (화면 글자 읽기·글자 찾기:  pip install winocr pillow  / 이미지 찾기:  pip install opencv-python pillow  / 웹 요소 찾기:  pip install uiautomation  / 엑셀 칸 입력:  pip install pywin32 )');
+  P.push('#  (화면 글자 읽기·글자 찾기:  pip install winocr pillow  / 이미지 찾기:  pip install opencv-python pillow  / 웹 요소 찾기:  pip install uiautomation  / 엑셀 칸 입력:  pip install pywin32  / 클립보드 이미지:  pip install pillow )');
   P.push(`#  단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.startNowLabel} 예약 즉시시작·오류 때 건너뛰기, ${CTRL_KEYS.restartLabel} 재실행 (keyboard 설치 시)`);
   P.push('#  급할 때: 마우스를 화면 왼쪽 맨 위 구석으로 휙 옮기면 멈춥니다.');
   P.push('import time, webbrowser, datetime, os, sys, re');
@@ -3314,8 +3442,10 @@ function genPY(l, opts = {}) {
   P.push('# ==== PURE-BEGIN (변수·비교: 화면과 상관없는 계산) ====');
   P.push('V = {}');
   P.push(`INIT_VARS = {${(l.vars || []).filter(v => cleanVarName(v.name)).map(v => `${pyJ(cleanVarName(v.name))}: ${pyJ(v.value ?? '')}`).join(', ')}}`);
+  if (needsClipImg(l.steps)) P.push('_clip_stale = set()   # 이번 실행에서 보관을 건너뛴 이미지 이름 (뒤의 붙여넣기가 지난 이미지를 몰래 붙이지 않게)');
   P.push('def init_vars():');
   P.push('    V.clear(); V.update(INIT_VARS)');
+  if (needsClipImg(l.steps)) P.push('    _clip_stale.clear()');
   P.push("    f = os.path.join(BASE_DIR, 'variables.txt')   # 폴더의 variables.txt 가 있으면 그 값으로 덮어씀");
   P.push('    if os.path.exists(f):');
   P.push('        _txt = None');
@@ -3440,6 +3570,7 @@ function genPY(l, opts = {}) {
   if (needsImg(l.steps)) P.push(...pyImgFuncs());
   if (needsWeb(l.steps)) P.push(...pyWebFuncs());
   if (needsExcel(l.steps)) P.push(...pyExcelFuncs());
+  if (needsClipImg(l.steps)) P.push(...pyClipImgFuncs());
   P.push('');
   P.push('# ==== RUN ====');
   P.push('def run():');
@@ -3837,6 +3968,110 @@ function pyExcelStep(s) {
     "    if _last_err[0] == 'nowin32': _msg = \"엑셀 칸 입력엔 pywin32 가 필요해요 (실행용 .bat 이 처음에 자동 설치)\"",
     "    if error_pause(_msg) == 'skip': _xl_pend[0] = None; break"];
 }
+/* 클립보드 이미지: 보관(클립보드 → png 파일) / 붙여넣기(png 파일 → 클립보드 → Ctrl+V). Pillow + 윈도우 기본 기능(ctypes) */
+function pyClipImgFuncs() {
+  return [
+    '', '# ===== 클립보드 이미지 (보관·붙여넣기) — pip install pillow =====',
+    'import io',
+    '_clip_msg = [""]',
+    'try:',
+    '    from PIL import Image as _PImg, ImageGrab as _PGrab, ImageOps as _POps',
+    '    _clipimg = True',
+    'except Exception:',
+    '    _clipimg = False',
+    '    print("(클립보드 이미지엔  pip install pillow  필요. 없으면 이미지 보관·붙여넣기에서 오류로 멈춰요)")',
+    'def clip_img_save(path, tries=10):   # 클립보드의 이미지를 path 에 png 로 저장. 성공 True (+ _last_err: nopil/noimg/nofmt/save)',
+    '    _last_err[0] = ""; _clip_msg[0] = ""; had_files = False',
+    '    if not _clipimg: _last_err[0] = "nopil"; return False',
+    '    for k in range(tries):   # 복사 직후엔 이미지가 늦게 올라올 수 있어 잠깐씩 다시 봄',
+    '        control()',
+    '        try: im = _PGrab.grabclipboard()',
+    '        except Exception: im = None',
+    '        if isinstance(im, list):   # 탐색기에서 그림 파일을 복사한 경우: 파일 경로 목록',
+    '            had_files = had_files or bool(im)',
+    '            f = next((x for x in im if str(x).lower().endswith((".png", ".jpg", ".jpeg", ".jpe", ".jfif", ".bmp", ".dib", ".gif", ".tif", ".tiff", ".webp"))), None)',
+    '            im = None',
+    '            if f:',
+    '                try:',
+    '                    with open(f, "rb") as fh: im = _PImg.open(io.BytesIO(fh.read())); im.load()   # 파일을 잠그지 않게 복사본으로',
+    '                except Exception: im = None',
+    '                if im is not None:',
+    '                    try: im = _POps.exif_transpose(im)   # 폰 사진의 회전 정보 반영 (안 하면 옆으로 누워 붙음)',
+    '                    except Exception: pass',
+    '        if im is not None and hasattr(im, "save"):',
+    '            try:',
+    '                if im.mode not in ("RGB", "RGBA", "L"): im = im.convert("RGBA")',
+    '                os.makedirs(os.path.dirname(path), exist_ok=True)',
+    '                im.save(path, "PNG"); return True',
+    '            except Exception as _e:',
+    '                _last_err[0] = "save"; _clip_msg[0] = str(_e); return False',
+    '        if k < tries - 1: time.sleep(0.2)',
+    '    _last_err[0] = "nofmt" if had_files else "noimg"; return False   # nofmt = 파일은 복사됐는데 그림으로 못 엶',
+    'def clip_img_put(path):   # path 이미지를 클립보드에: 일반 그림(투명 부분은 흰 배경) + PNG(투명 그대로). 성공 True (+ _last_err: nofile/nopil/badfile/clipbusy)',
+    '    _last_err[0] = ""',
+    '    if not os.path.exists(path): _last_err[0] = "nofile"; return False',
+    '    if not _clipimg: _last_err[0] = "nopil"; return False',
+    '    try:',
+    '        with open(path, "rb") as fh: src = _PImg.open(io.BytesIO(fh.read())); src.load()',
+    '        rgba = src.convert("RGBA")',
+    '        flat = _PImg.new("RGB", rgba.size, (255, 255, 255)); flat.paste(rgba, mask=rgba.getchannel("A"))',
+    '        b = io.BytesIO(); flat.save(b, "BMP"); dib = b.getvalue()[14:]   # BMP 파일 머리(14바이트)를 떼면 클립보드 그림 형식(CF_DIB)',
+    '        b = io.BytesIO(); rgba.save(b, "PNG"); png = b.getvalue()',
+    '    except Exception:',
+    '        _last_err[0] = "badfile"; return False',
+    '    import ctypes',
+    '    from ctypes import wintypes',
+    '    k32 = ctypes.windll.kernel32; u32 = ctypes.windll.user32',
+    '    k32.GlobalAlloc.restype = ctypes.c_void_p; k32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]',
+    '    k32.GlobalLock.restype = ctypes.c_void_p; k32.GlobalLock.argtypes = [ctypes.c_void_p]',
+    '    k32.GlobalUnlock.argtypes = [ctypes.c_void_p]; k32.GlobalFree.argtypes = [ctypes.c_void_p]',
+    '    u32.SetClipboardData.restype = ctypes.c_void_p; u32.SetClipboardData.argtypes = [wintypes.UINT, ctypes.c_void_p]',
+    '    u32.RegisterClipboardFormatW.restype = wintypes.UINT; u32.RegisterClipboardFormatW.argtypes = [wintypes.LPCWSTR]',
+    '    def _put(fmt, data):   # 성공하면 클립보드가 메모리를 가져감, 실패하면 직접 풂',
+    '        h = k32.GlobalAlloc(0x0002, len(data))',
+    '        if not h: return False',
+    '        p = k32.GlobalLock(h); ctypes.memmove(p, data, len(data)); k32.GlobalUnlock(h)',
+    '        if u32.SetClipboardData(fmt, h): return True',
+    '        k32.GlobalFree(h); return False',
+    '    for _k in range(5):   # 다른 프로그램이 클립보드를 잡고 있으면 잠깐 뒤 다시',
+    '        ok = False',
+    '        if u32.OpenClipboard(None):',
+    '            try:',
+    '                u32.EmptyClipboard()',
+    '                ok = _put(8, dib)   # 8 = CF_DIB',
+    '                _fp = u32.RegisterClipboardFormatW("PNG")',
+    '                if ok and _fp: _put(_fp, png)',
+    '            finally:',
+    '                u32.CloseClipboard()',
+    '            if ok: return True',
+    '        time.sleep(0.15)',
+    '    _last_err[0] = "clipbusy"; return False',
+  ];
+}
+function pyClipImgStep(s, made) {
+  const nm = cleanImgName(s.img), J = pyJ;
+  const nopil = '"클립보드 이미지엔 pillow 가 필요해요 (실행용 .bat 이 처음에 자동 설치)"';
+  if (s.type === 'clipsave') return ['while True:',
+    `    _cp = img_path(${J(nm)})`,
+    `    if clip_img_save(_cp): _clip_stale.discard(${J(nm)}); print("   클립보드 이미지를 보관했어요:", _cp); break`,
+    `    _msg = ${J(CLIP_NOIMG)}`,
+    `    if _last_err[0] == 'nofmt': _msg = ${J(CLIP_NOFMT_PY)}`,
+    `    if _last_err[0] == 'save': _msg = ${J('이미지를 저장하지 못했어요: ')} + _cp + " (" + _clip_msg[0] + ")"`,
+    `    if _last_err[0] == 'nopil': _msg = ${nopil}`,
+    `    if error_pause(_msg) == 'skip': _clip_stale.add(${J(nm)}); break   # 건너뛰면 뒤의 붙여넣기가 지난 이미지를 몰래 붙이지 않게`];
+  const why = made ? ' — 앞의 [클립보드 이미지 보관] 동작이 먼저 실행돼야 해요' : pyPackMode ? ' — START 메뉴 [이미지 찍기] 로 찍어 두세요' : ' — 이미지 캡처 도우미로 찍어 두세요';
+  const put = 'clip_img_put(_cp): time.sleep(0.12); pyautogui.hotkey(PASTE_MOD, "v"); time.sleep(0.3); break   # 붙여넣은 프로그램이 클립보드를 읽을 틈';
+  return [...(made ? ['_cp_force = False'] : []), 'while True:',
+    `    _cp = img_path(${J(nm)})`,
+    ...(made ? [`    if not _cp_force and ${J(nm)} in _clip_stale: _last_err[0] = 'stale'`, `    elif ${put}`] : [`    if ${put}`]),
+    `    _msg = ${J('클립보드를 다른 프로그램이 쓰고 있어 이미지를 올리지 못했어요')}`,
+    ...(made ? [`    if _last_err[0] == 'stale': _msg = ${J(clipStaleMsg(nm))}`] : []),
+    `    if _last_err[0] == 'nofile': _msg = ${J(`이미지 '${nm}' 파일이 없어요: `)} + _cp + ${J(why)}`,
+    `    if _last_err[0] == 'badfile': _msg = ${J(`이미지 '${nm}' 파일을 읽을 수 없어요: `)} + _cp`,
+    `    if _last_err[0] == 'nopil': _msg = ${nopil}`,
+    "    if error_pause(_msg) == 'skip': break",
+    ...(made ? ["    if _last_err[0] == 'stale': _cp_force = True   # F8 = 지난 이미지라도 붙이기"] : [])];
+}
 function pyImgFuncs() {
   return [
     '', '# ===== 이미지 찾기 (opencv 필요) =====',
@@ -3906,6 +4141,7 @@ function genPYStep(s) {
     case 'wait': return [`time.sleep(${Number(s.sec) || 0})`];
     case 'readput': return genPYReadPut(s);
     case 'excel': return pyExcelStep(s);
+    case 'clipsave': case 'imgpaste': return pyClipImgStep(s, genClipMade.has(cleanImgName(s.img)));
     default: return [`print("[주의] 이 버전이 모르는 동작이라 건너뜁니다: " + ${pyJ(String(s.type || ''))})`];
   }
 }
@@ -4217,13 +4453,14 @@ function genHelperBat(ps1Name) {
 /* 파이썬 실행용 .bat (ASCII 만): 파이썬 찾기 → 기본 부품 먼저, 선택 부품은 따로따로 → 실행.
    화면 글자 읽기(winocr)는 아직 파이썬 3.15 이상용 부품이 없어 3.14 이하에서만 설치 시도 */
 function genPyBat(l, pyName) {
-  const ocr = needsOcr(l.steps), img = needsImg(l.steps), web = needsWeb(l.steps), xl = needsExcel(l.steps);
+  const ocr = needsOcr(l.steps), img = needsImg(l.steps), web = needsWeb(l.steps), xl = needsExcel(l.steps), ci = needsClipImg(l.steps);
   const base = ['pyautogui', 'keyboard', 'pyperclip', 'pygetwindow'];   // 모듈명 = 패키지명
   const gating = [...base];   // 이게 다 깔려 있으면 설치를 건너뜀 (winocr 는 3.15+ 에서 못 깔려 제외)
   if (img) gating.push('cv2', 'PIL');
   if (web) gating.push('uiautomation');
   if (ocr) gating.push('PIL');
   if (xl) gating.push('win32com');
+  if (ci) gating.push('PIL');
   const L = [
     '@echo off',
     'cd /d "%TEMP%" 2>nul',
@@ -4244,6 +4481,7 @@ function genPyBat(l, pyName) {
   if (img) L.push('%PY% -m pip install --user --disable-pip-version-check opencv-python pillow');
   if (web) L.push('%PY% -m pip install --user --disable-pip-version-check uiautomation');
   if (xl) L.push('%PY% -m pip install --user --disable-pip-version-check pywin32');
+  if (ci && !img) L.push('%PY% -m pip install --user --disable-pip-version-check pillow');
   if (ocr) L.push('%PY% -c "import sys; sys.exit(0 if sys.version_info[:2] <= (3, 14) else 1)" >nul 2>nul && (%PY% -m pip install --user --disable-pip-version-check winocr pillow) || echo  [!] Screen-text reader (winocr) needs Python 3.14 or lower - skipped. Other actions still work.');
   L.push(
     // 3) 기본 부품이 끝내 안 깔렸으면 .py 로 넘어가지 않고 여기서 멈춤 (엉뚱한 오류 2연발 방지)
@@ -4280,6 +4518,8 @@ function ahkUnsupported(l) {
   walkSteps(l.steps, s => {
     if (s.type === 'readput') m.add('영역 값 읽어 입력');
     if (s.type === 'excel') m.add('엑셀 칸에 입력');
+    if (s.type === 'clipsave') m.add('클립보드 이미지 보관');
+    if (s.type === 'imgpaste') m.add('이미지 붙여넣기');
     if (s.type === 'textclick') m.add('글자 찾아 클릭');
     if (s.type === 'webclick') m.add('웹 요소 찾아 클릭');
     if (s.type === 'setvar' && s.from === 'read') m.add('변수 ← 화면 글자 읽기');
@@ -4769,6 +5009,7 @@ const HELP = `
 <li><b>🧭 웹 요소 찾아 클릭 (이름)</b> — 브라우저의 단추·링크·입력칸을 <b>이름(aria-label·title·단추 글자)</b>으로 찾아 눌러요. 화면 배치·위치·테마가 달라도 돼요. 아이콘만 있는 단추도 이름표(aria-label)가 있으면 찾아요. 아래 "F12 페이지 소스에서 이름 찾기"에 요소를 붙여넣으면 바로 만들어 줘요. 무설치·파이썬(베타).</li>
 <li><b>📋 영역 값 읽어 입력</b> — 영역의 글자/숫자를 읽어 지금 커서 칸에 붙여넣어요(자료수집).</li>
 <li><b>📗 엑셀 칸에 입력</b> — 엑셀 <b>파일·시트·칸</b>을 정해 값을 넣어요(이미 열려 있으면 그 파일, 아니면 열어서). <b>값만</b> 넣어 그 칸의 원래 서식을 그대로 따르고, <b>"열의 다음 빈 칸"</b>을 고르면 반복할 때마다 한 줄씩 아래로 쌓여요. 클립보드(복사한 값)도 붙일 수 있어요. 무설치(윈도우)·파이썬 전용, PC에 엑셀 필요.</li>
+<li><b>📥 클립보드 이미지 보관 / 📤 이미지 붙여넣기</b> — 복사한 이미지를 이름 붙여 <b>파일로 보관</b>해 두고, 나중에 <b>몇 번이든 붙여넣어요</b>(중간에 글자 입력으로 클립보드가 바뀌어도 그대로). 미리 찍어 둔 이미지(로고·도장)도 붙일 수 있어요. 무설치(윈도우)·파이썬 전용.</li>
 <li><b>📦 변수에 값 저장</b> — 직접 쓴 값 / <b>화면 영역에서 읽은 값</b> / <b>클립보드(복사한 값)</b>를 이름 붙인 변수에 담아요.</li>
 <li><b>🔁 반복문</b> — 담은 동작을 N번(0 = 멈출 때까지) 반복.</li>
 <li><b>❓ 조건</b> — 화면 글자·숫자 / 변수 값 / 이미지가 보이는지 / 글자가 보이는지를 확인해 <b>맞으면 담은 동작</b>, 아니면 "아니면" 칸 동작을 실행.</li>
