@@ -1092,12 +1092,12 @@ function fieldsFor(type) {
     case 'textclick':
       return `<p class="hint" style="margin-top:0">화면에 <b>보이는 글자를 읽어(OCR)</b> 그 위치를 눌러요. 글꼴이 바뀌어도 글자만 같으면 찾아요. <b>무설치(윈도우)·파이썬</b> 전용(.ahk 불가, 베타).</p>`
         + inpT('찾을 글자', 'text', '예: 확인') + varHint()
-        + `<p class="hint">띄어쓰기·대소문자는 무시해요. 화면을 <b>2배로 키워</b> 읽고, 못 찾으면 다시 찾을 때마다 <b>읽는 방식을 바꿔요</b>(그대로 → 진하게 → 색 반전: 어두운 화면용). 똑같은 글자가 없으면 <b>90% 이상 비슷한 글자</b>(10글자에 1글자 틀림까지)를 찾아요. 못 찾으면 화면에서 <b>가장 비슷하게 읽힌 글자</b>를 알려 주니, 그걸 보고 찾을 글자를 고치세요. 작은 글자는 "지정한 네모 안만"으로 좁히면 더 잘 읽어요.</p>`
+        + `<p class="hint">띄어쓰기·대소문자는 무시해요. 화면을 <b>2배로 키워</b> 읽고, 못 찾으면 다시 찾을 때마다 <b>읽는 방식을 바꿔요</b>(그대로 → 진하게 → 진하고 굵게: 얇은·회색 글씨용 → 색 반전: 어두운 화면용). 똑같은 글자가 없으면 <b>90% 이상 비슷한 글자</b>(10글자에 1글자 틀림까지)를 찾아요. 못 찾으면 화면에서 <b>가장 비슷하게 읽힌 글자</b>를 알려 주니, 그걸 보고 찾을 글자를 고치세요. 작은 글자는 "지정한 네모 안만"으로 좁히면 더 잘 읽어요. PC에서 <b>START 메뉴 [글자 찾기 시험]</b>(또는 아래 "글자 찾기 시험 도우미")으로 그 화면에서 찾아지는지 미리 확인할 수 있어요.</p>`
         + areaBlock()
         + inpN('여러 개면 몇 번째', 'nth', 'min="1"')
         + `<p class="hint">위→아래, 왼쪽→오른쪽 순서로 셉니다.</p>`
         + toggle('sharp', '연한·작은 글씨 또렷하게 (OCR 보정)')
-        + `<p class="hint">켜면 처음부터 <b>진하게</b>(더 크게 키우고 대비를 올려) 읽어요 — 연한 회색·작은 글씨용(흰 배경에 가장 효과적). 꺼 둬도 못 읽으면 자동으로 진하게·색 반전으로 다시 읽어요.</p>`
+        + `<p class="hint">켜면 처음부터 <b>진하게</b>(더 크게 키우고 대비를 올려) 읽어요 — 연한 회색·얇은·작은 글씨용(흰 배경에 가장 효과적). 꺼 둬도 못 읽으면 자동으로 진하게·굵게·색 반전으로 다시 읽어요.</p>`
         + actBlock() + retryBlock();
     case 'webclick':
       return `<p class="hint" style="margin-top:0">브라우저(크롬·엣지 등)의 <b>단추·링크·입력칸을 이름으로</b> 찾아 눌러요. 화면 배치·위치·테마가 달라도 <b>이름만 같으면</b> 찾아요. <b>무설치(윈도우)·파이썬</b> 전용(베타).</p>`
@@ -1202,11 +1202,18 @@ function fieldsFor(type) {
       }
       return h + `<p class="hint" style="margin-top:12px">저장한 뒤 목록에서 이 조건 아래 <b>"맞으면 실행할 동작"</b>·<b>"아니면"</b> 칸에 <b>+ 동작 넣기</b>로 담으세요. 멈추려면 그 안에 <b>🛑 멈춤</b>, 반복을 끝내려면 <b>⏏️ 반복 빠져나가기</b>를 넣어요.</p>`;
     }
-    case 'repeat':
-      return inpT('별명 (선택)', 'alias', '예: 메일 10통 보내기')
-        + `<p class="hint">안에 담은 동작들을 정한 횟수만큼 반복해요. 저장한 뒤 목록에서 <b>+ 동작 넣기</b>로 반복할 동작을 담으세요.</p>`
-        + inpN('반복 횟수', 'count', 'min="0"')
-        + `<p class="hint"><b>0</b>이면 멈출 때까지 무한 반복(${CTRL_KEYS.stopLabel}로 종료, 또는 안에서 "반복 빠져나가기"). 전체를 계속 돌리려면 모든 동작을 반복문 하나에 담고 0으로 두세요.</p>`;
+    case 'repeat': {
+      // 무한 반복은 저장값 count=0. 화면에선 "멈출 때까지" 선택지로 보여줌 (loopMode 는 고르는 동안만 쓰는 값)
+      if (draft.loopMode !== 'count' && draft.loopMode !== 'forever') draft.loopMode = num(draft.count) === 0 && String(draft.count ?? '') !== '' ? 'forever' : 'count';
+      if (draft.loopMode === 'forever') draft.count = 0;
+      else if (!(num(draft.count) > 0)) draft.count = 3;
+      let h = inpT('별명 (선택)', 'alias', '예: 메일 10통 보내기')
+        + `<p class="hint">안에 담은 동작들을 반복해요. 저장한 뒤 목록에서 <b>+ 동작 넣기</b>로 반복할 동작을 담으세요.</p>`
+        + chips('몇 번', 'loopMode', { count: '정한 횟수만큼', forever: '♾️ 멈출 때까지 (무한)' });
+      if (draft.loopMode === 'forever') h += `<p class="hint"><b>계속 반복</b>해요. 끝내려면 ${CTRL_KEYS.stopLabel}(종료), 또는 안에 <b>조건 + ⏏️ 반복 빠져나가기</b>를 넣어 "이럴 때 끝" 을 정하세요. 전체를 계속 돌리려면 모든 동작을 이 반복문 하나에 담으세요.</p>`;
+      else h += inpN('반복 횟수', 'count', 'min="1"');
+      return h;
+    }
     case 'break':
       return `<p class="hint" style="margin-top:0">자기를 감싼 <b>가장 가까운 반복문</b>을 그 자리에서 끝내고, 반복문 다음 동작으로 넘어가요. 보통 반복문 안 <b>조건</b>의 "맞으면" 칸에 넣어요.<br>예) 반복문(0=무한) 안: 조건 "이미지 '로딩중'이 안 보이면" → 반복 빠져나가기 / 대기 0.5초 → 로딩이 끝날 때까지 기다림.</p>`;
     case 'stop':
@@ -1306,6 +1313,7 @@ function finalizeDraft(d) {
   if (d.saveTo != null) d.saveTo = cleanVarName(d.saveTo);
   if (d.varName != null) d.varName = cleanVarName(d.varName);
   if (d.alias != null) d.alias = String(d.alias).replace(/[\r\n]/g, ' ').trim().slice(0, 40);
+  if (d.type === 'repeat') { if (d.loopMode === 'forever') d.count = 0; delete d.loopMode; }   // 화면용 선택값은 저장 안 함
   if (d.type === 'hotkey') {
     if (String(d.preset).startsWith('my:')) {
       const mk = myKey(d.preset.slice(3));
@@ -2950,7 +2958,7 @@ function psOcrFuncs() {
     '# 비슷한 글자 찾기 (줄 안에서 찾을 글자와 가장 비슷한 부분: {틀린 글자 수, 시작, 끝}) — C#5 문법',
     '$script:fzReady = $false',
     'try {',
-    '  Add-Type -TypeDefinition @"',
+    '  Add-Type -ErrorAction Stop -TypeDefinition @"',
     'using System;',
     'public static class OcrFz {',
     '  public static int[] Best(string s, string t) {',
@@ -2972,6 +2980,43 @@ function psOcrFuncs() {
     '"@',
     '  $script:fzReady = $true',
     '} catch {}',
+    '# 얇은 글씨를 굵게 (3x3 에서 가장 어두운 값: 밝은 배경의 어두운 획이 사방 1픽셀씩 두꺼워짐) — C#5 문법',
+    '$script:thickReady = $false',
+    'try {',
+    '  Add-Type -ErrorAction Stop -ReferencedAssemblies System.Drawing -TypeDefinition @"',
+    'using System; using System.Drawing; using System.Drawing.Imaging; using System.Runtime.InteropServices;',
+    'public static class OcrThick {',
+    '  // 핵심 계산(따로 시험 가능): p = BGRA 픽셀, 결과 = 3x3 에서 가장 어두운 회색값으로 채운 BGRA',
+    '  public static byte[] Core(byte[] p, int w, int h, int sa, int sb) {',
+    '    byte[] g = new byte[w * h];',
+    '    for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) { int i = y * sa + x * 4; g[y * w + x] = (byte)((p[i] * 29 + p[i + 1] * 150 + p[i + 2] * 77) >> 8); }',
+    '    byte[] o = new byte[sb * h];',
+    '    for (int y = 0; y < h; y++) {',
+    '      int y0 = y > 0 ? y - 1 : 0, y1 = y < h - 1 ? y + 1 : y;',
+    '      for (int x = 0; x < w; x++) {',
+    '        int x0 = x > 0 ? x - 1 : 0, x1 = x < w - 1 ? x + 1 : x; byte m = 255;',
+    '        for (int yy = y0; yy <= y1; yy++) for (int xx = x0; xx <= x1; xx++) { byte v = g[yy * w + xx]; if (v < m) m = v; }',
+    '        int j = y * sb + x * 4; o[j] = m; o[j + 1] = m; o[j + 2] = m; o[j + 3] = 255;',
+    '      }',
+    '    }',
+    '    return o;',
+    '  }',
+    '  public static Bitmap Thicken(Bitmap src) {',
+    '    int w = src.Width, h = src.Height; Rectangle r = new Rectangle(0, 0, w, h);',
+    '    Bitmap dst = new Bitmap(w, h, PixelFormat.Format32bppArgb);',
+    '    BitmapData a = src.LockBits(r, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);',
+    '    BitmapData b = dst.LockBits(r, ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);',
+    '    try {',
+    '      byte[] p = new byte[a.Stride * h]; Marshal.Copy(a.Scan0, p, 0, p.Length);',
+    '      byte[] o = Core(p, w, h, a.Stride, b.Stride);',
+    '      Marshal.Copy(o, 0, b.Scan0, o.Length);',
+    '    } finally { src.UnlockBits(a); dst.UnlockBits(b); }',
+    '    return dst;',
+    '  }',
+    '}',
+    '"@',
+    '  $script:thickReady = $true',
+    '} catch {}',
     '# 화면(또는 네모)을 찍음 → @{ B = 그림; X; Y } (영역이 없으면 모니터 전체)',
     'function OcrGrab($x1,$y1,$x2,$y2){',
     '  if($x2 -le $x1 -or $y2 -le $y1){ $vs=[System.Windows.Forms.SystemInformation]::VirtualScreen; $x1=$vs.Left; $y1=$vs.Top; $x2=$vs.Right; $y2=$vs.Bottom }',
@@ -2982,7 +3027,7 @@ function psOcrFuncs() {
     '    return @{ B = $bmp; X = [int]$x1; Y = [int]$y1 }',
     '  } catch { return $null }',
     '}',
-    '# 그림 한 장을 OCR: 크게 키우고 $kind 방식으로 다듬어 읽음 (n = 그대로, s = 진하게(흰 배경의 연한 글씨), i = 색 반전(어두운 배경의 밝은 글씨))',
+    '# 그림 한 장을 OCR: 크게 키우고 $kind 방식으로 다듬어 읽음 (n = 그대로, s = 진하게(흰 배경의 연한·회색 글씨), b = 더 진하고 굵게(얇은 글씨), i = 색 반전(어두운 배경의 밝은 글씨))',
     'function OcrOne($src, $sc, $kind){',
     '  $ms=New-Object System.IO.MemoryStream',
     '  try {',
@@ -2992,11 +3037,12 @@ function psOcrFuncs() {
     '    if($kind -eq \'n\'){ $g.DrawImage($src,0,0,$nw,$nh) } else {',
     '      $cm=New-Object System.Drawing.Imaging.ColorMatrix; $cm.Matrix33=1; $cm.Matrix44=1',
     '      if($kind -eq \'i\'){ $cm.Matrix00=-1; $cm.Matrix11=-1; $cm.Matrix22=-1; $cm.Matrix40=1; $cm.Matrix41=1; $cm.Matrix42=1 }',
-    '      else { $cc=3.0; $cm.Matrix00=$cc; $cm.Matrix11=$cc; $cm.Matrix22=$cc; $cm.Matrix40=(1-$cc); $cm.Matrix41=(1-$cc); $cm.Matrix42=(1-$cc) }',
+    '      else { $cc = $(if($kind -eq \'b\'){ 4.0 } else { 3.0 }); $cm.Matrix00=$cc; $cm.Matrix11=$cc; $cm.Matrix22=$cc; $cm.Matrix40=(1-$cc); $cm.Matrix41=(1-$cc); $cm.Matrix42=(1-$cc) }',
     '      $ia=New-Object System.Drawing.Imaging.ImageAttributes; $ia.SetColorMatrix($cm)',
     '      $g.DrawImage($src,(New-Object System.Drawing.Rectangle 0,0,$nw,$nh),0,0,$src.Width,$src.Height,[System.Drawing.GraphicsUnit]::Pixel,$ia); $ia.Dispose()',
     '    }',
     '    $g.Dispose()',
+    '    if($kind -eq \'b\' -and $script:thickReady){ $t2 = [OcrThick]::Thicken($bmp); $bmp.Dispose(); $bmp = $t2 }   # 얇은 획을 굵게',
     '    $bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose(); $ms.Position=0',
     '    $ras=[System.IO.WindowsRuntimeStreamExtensions]::AsRandomAccessStream($ms)',
     '    $dec=Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($ras)) ([Windows.Graphics.Imaging.BitmapDecoder])',
@@ -3004,11 +3050,13 @@ function psOcrFuncs() {
     '    return (Await ($script:ocr.RecognizeAsync($sb)) ([Windows.Media.Ocr.OcrResult]))',
     '  } catch { return $null } finally { $ms.Dispose() }',
     '}',
+    '# 읽는 방식 순서: 그대로 → 진하게 → 진하고 굵게 → 색 반전 (OCR 보정을 켜면 진하게부터)',
+    'function OcrKinds($sharp){ if($sharp){ return @(\'s\', \'b\', \'n\', \'i\') }; return @(\'n\', \'s\', \'b\', \'i\') }',
     'function Starts($n, $t, $ov){ if($n -le $t){ return @(0) }; $r = @(); $x = 0; while($true){ $r += $x; if($x + $t -ge $n){ return $r }; $x += ($t - $ov) } }',
     '# 찍은 그림을 크게 키워 OCR → @( @{ R = 결과; X; Y; S = 배율 } ... ). $tiles 면 엔진 한도를 넘을 때 400px 겹치게 나눠 읽음(단어가 잘리지 않게)',
     'function OcrParts($cap, $kind, $tiles){',
     '  $img = $cap.B; $w = $img.Width; $h = $img.Height; $mx = [Math]::Max($w,$h); $lim = [double]$script:ocrMax',
-    '  $sc = 2.0; if($kind -eq \'s\' -and $mx -lt 1200){ $sc = [Math]::Min(4.0, 2400.0/$mx) }   # 작은 글씨를 잘 읽게 키움',
+    '  $sc = 2.0; if(($kind -eq \'s\' -or $kind -eq \'b\') -and $mx -lt 1200){ $sc = [Math]::Min(4.0, 2400.0/$mx) }   # 작은 글씨를 잘 읽게 키움',
     '  $boxes = @(,@(0, 0, $w, $h))',
     '  if($tiles -and ($mx * $sc) -gt $lim){',
     '    $t = [Math]::Max(300, [int](($lim - 1) / $sc)); $ov = [Math]::Min(400, [int]($t / 3))',
@@ -3032,7 +3080,7 @@ function psOcrFuncs() {
     '  if(-not $script:ocrReady){ return "" }',
     '  $cap = OcrGrab ([Math]::Min($x1,$x2)) ([Math]::Min($y1,$y2)) ([Math]::Max($x1,$x2)) ([Math]::Max($y1,$y2)); if($null -eq $cap){ return "" }',
     '  try {',
-    '    foreach($kind in $(if($sharp){ @(\'s\',\'n\',\'i\') } else { @(\'n\',\'s\',\'i\') })){',
+    '    foreach($kind in (OcrKinds $sharp)){',
     '      $o = @(OcrParts $cap $kind $false)',
     '      if($o.Count -and ([string]$o[0].R.Text).Trim() -ne \'\'){ return [string]$o[0].R.Text }',
     '    }',
@@ -3070,14 +3118,14 @@ function psOcrFuncs() {
     '  $t = (([string]$target) -replace "\\s", "").ToLower()',
     '  if($t -eq ""){ $script:lastErr = "notfound"; return $null }',
     '  if($nth -lt 1){ $nth = 1 }',
-    '  $kinds = $(if($sharp){ @(\'s\',\'n\',\'i\') } else { @(\'n\',\'s\',\'i\') })',
+    '  $kinds = OcrKinds $sharp',
     '  $allow = [int][Math]::Floor($t.Length * 0.1 + 1e-9)',
     '  for($k = 0; $k -lt $retries; $k++){',
     '    Pump',
     '    $cap = OcrGrab $x1 $y1 $x2 $y2',
     '    if($null -ne $cap){',
     '      try {',
-    '        $ks = $(if($retries -le 1){ $kinds } else { @($kinds[$k % 3]) })',
+    '        $ks = $(if($retries -le 1){ $kinds } else { @($kinds[$k % $kinds.Count]) })',
     '        foreach($kind in $ks){',
     '          $hits = New-Object System.Collections.ArrayList; $near = New-Object System.Collections.ArrayList; $nd = $allow + 1',
     '          foreach($p in @(OcrParts $cap $kind $true)){',
@@ -3934,14 +3982,19 @@ function pyOcrFuncs() {
     '        if bbox: return ImageGrab.grab(bbox=bbox, all_screens=True), bbox[0], bbox[1]',
     '        ox, oy = _vorigin(); return ImageGrab.grab(all_screens=True), ox, oy',
     '    except Exception: return None',
-    'def _ocr_prep(img, kind):   # n = 그대로, s = 진하게(흰 배경의 연한 글씨), i = 색 반전(어두운 배경의 밝은 글씨)',
+    'def _ocr_prep(img, kind):   # n = 그대로, s = 진하게(흰 배경의 연한·회색 글씨), b = 더 진하고 굵게(얇은 글씨), i = 색 반전(어두운 배경의 밝은 글씨)',
     '    if kind == "n": return img',
     '    try:',
     '        g = img.convert("L")',
     '        if kind == "i":',
     '            from PIL import ImageOps',
     '            return ImageOps.autocontrast(ImageOps.invert(g))',
-    '        return g.point(lambda _p: max(0, min(255, int(255 + 3.0 * (_p - 255)))))',
+    '        cc = 4.0 if kind == "b" else 3.0   # 흰색 기준 대비: 흰색은 그대로, 회색은 어둡게',
+    '        g = g.point(lambda _p: max(0, min(255, int(255 + cc * (_p - 255)))))',
+    '        if kind == "b":',
+    '            from PIL import ImageFilter',
+    '            g = g.filter(ImageFilter.MinFilter(3))   # 어두운 획을 사방 1픽셀씩 굵게',
+    '        return g',
     '    except Exception: return img',
     'def _starts(n, t, ov):   # 길이 n 을 t 씩, ov 만큼 겹치게 나눈 시작점들',
     '    if n <= t: return [0]',
@@ -3952,7 +4005,7 @@ function pyOcrFuncs() {
     '        x += t - ov',
     'def _ocr_parts(img, ox, oy, kind, tiles=False):   # 크게 키워 OCR. 엔진 한도를 넘으면 겹치게 나눠 읽음 → [(결과, x, y, 배율)]',
     '    w, h = img.size; mx = max(w, h); lim = _OCRMAX[0]',
-    '    sc = min(4.0, 2400.0 / mx) if (kind == "s" and mx < 1200) else 2.0   # 작은 글씨를 잘 읽게 키움',
+    '    sc = min(4.0, 2400.0 / mx) if (kind in ("s", "b") and mx < 1200) else 2.0   # 작은 글씨를 잘 읽게 키움',
     '    boxes = [(0, 0, w, h)]',
     '    if tiles and mx * sc > lim:',
     '        t = max(300, int((lim - 1) / sc)); ov = min(400, t // 3)   # 400px 겹쳐서 단어가 잘리지 않게',
@@ -3966,12 +4019,14 @@ function pyOcrFuncs() {
     '        r = _ocr_img(_ocr_prep(part, kind))',
     '        if r is not None: out.append((r, ox + a, oy + b, s2))',
     '    return out',
+    'OCR_KINDS = ("n", "s", "b", "i")   # 그대로 → 진하게 → 진하고 굵게 → 색 반전',
+    'def ocr_kinds(sharp): return ("s", "b", "n", "i") if sharp else OCR_KINDS',
     'def read_region(x1, y1, x2, y2, sharp=False):   # 못 읽으면(빈 값) 다른 방식으로 다시 읽음',
     '    if abs(x2 - x1) < 1 or abs(y2 - y1) < 1: return ""',
     '    if not _ocr: return ""',
     '    g = _grab((min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)))',
     '    if not g: return ""',
-    '    for kind in (("s", "n", "i") if sharp else ("n", "s", "i")):',
+    '    for kind in ocr_kinds(sharp):',
     '        o = _ocr_parts(g[0], g[1], g[2], kind)',
     '        t = str(_g(o[0][0], "text", "") or "") if o else ""',
     '        if t.strip(): return t',
@@ -4014,13 +4069,13 @@ function pyOcrFuncs() {
     '    _last_err[0] = ""; _ocr_best[0] = -1.0; _ocr_best[1] = ""',
     '    if not _ocr: _last_err[0] = "noocr"; return None',
     '    if not t: _last_err[0] = "notfound"; return None',
-    '    kinds = ("s", "n", "i") if sharp else ("n", "s", "i")   # 그대로 → 진하게 → 색 반전 (다시 찾을 때마다 바꿔 가며)',
+    '    kinds = ocr_kinds(sharp)   # 다시 찾을 때마다 읽는 방식을 바꿔 가며',
     '    allow = int(len(t) * 0.1 + 1e-9)   # 90% 이상 같으면 비슷한 글자로 인정 (10글자에 1글자 틀림까지)',
     '    for k in range(retries):',
     '        control()',
     '        g = _grab(bbox)',
     '        if g:',
-    '            for kind in (kinds if retries == 1 else (kinds[k % 3],)):',
+    '            for kind in (kinds if retries == 1 else (kinds[k % len(kinds)],)):',
     '                hits = []; near = []; nd = allow + 1',
     '                for (r, px, py, sc) in _ocr_parts(g[0], g[1], g[2], kind, True):',
     '                    for line in (_g(r, "lines", []) or []):',
@@ -4512,6 +4567,128 @@ function psSnipFn() {
   ];
 }
 
+/* --- 글자 찾기 시험 도우미: 지금 화면에서 그 글자가 매크로 방식으로 찾아지는지 (무설치, 매크로와 같은 OCR 코드) --- */
+function genOcrTester() {
+  return [
+    '# -*- 글자 찾기 시험 -*-  (매크로의 "글자 찾아 클릭"과 같은 방법으로, 지금 화면에서 그 글자가 찾아지는지 시험)',
+    'try {',
+    ...psDpiFix(),
+    'try { [DpiFix]::Apply() } catch {}',
+    'Add-Type -AssemblyName System.Windows.Forms',
+    'Add-Type -AssemblyName System.Drawing',
+    '[System.Windows.Forms.Application]::EnableVisualStyles()',
+    'function Pump(){ [System.Windows.Forms.Application]::DoEvents() }',
+    'function WaitMs($ms){ Start-Sleep -Milliseconds $ms }',
+    ...psOcrFuncs(),
+    ...psSnipFn(),
+    '# 쓴 글자를 지금 화면에서 찾아봄: 매크로의 "글자 찾아 클릭"과 똑같은 방법(읽는 방식 4가지)으로',
+    '$KNAME = @{ n = "그대로"; s = "진하게"; b = "진하고 굵게"; i = "색 반전" }',
+    'function Uniq($pts){ $u = New-Object System.Collections.ArrayList; foreach($h in @($pts | Sort-Object R, X)){ $dup = $false; foreach($v in $u){ if([Math]::Abs($h.X - $v.X) -le 10 -and [Math]::Abs($h.Y - $v.Y) -le 10){ $dup = $true; break } }; if(-not $dup){ [void]$u.Add($h) } }; return ,$u }',
+    'function TryKind($cap, $t, $kind){',
+    '  $sw = [System.Diagnostics.Stopwatch]::StartNew(); $hits = New-Object System.Collections.ArrayList; $lines = New-Object System.Collections.ArrayList',
+    '  $best = -1.0; $bestText = ""; $near = $null; $allow = [int][Math]::Floor($t.Length * 0.1 + 1e-9)',
+    '  foreach($p in @(OcrParts $cap $kind $true)){',
+    '    foreach($line in $p.R.Lines){',
+    '      $ws = @($line.Words); $s = ""; $st = New-Object System.Collections.ArrayList',
+    '      foreach($w in $ws){ [void]$st.Add($s.Length); $s += ((([string]$w.Text) -replace "\\s", "").ToLower()) }',
+    '      [void]$lines.Add([string]$line.Text)',
+    '      if($s -eq ""){ continue }',
+    '      $from = 0',
+    '      while($from -le $s.Length){ $i = $s.IndexOf($t, $from); if($i -lt 0){ break }; $xy = SpanXY $ws $st $i ($i + $t.Length) $p; if($xy){ [void]$hits.Add($xy) }; $from = $i + 1 }',
+    '      if($script:fzReady){',
+    '        $b = [OcrFz]::Best($s, $t); $sim = 1.0 - $b[0] / $t.Length',
+    '        if($sim -gt $best){ $best = $sim; $bestText = $s.Substring($b[1], $b[2] - $b[1]); $near = $(if($b[0] -gt 0 -and $b[0] -le $allow){ SpanXY $ws $st $b[1] $b[2] $p } else { $null }) }',
+    '      }',
+    '    }',
+    '  }',
+    '  return [pscustomobject]@{ Kind = $kind; Hits = (Uniq $hits); Best = $best; BestText = $bestText; Near = $near; Ms = $sw.ElapsedMilliseconds; Text = ($lines -join "`r`n") }',
+    '}',
+    '# 찾은 자리를 빨간 네모로 잠깐 보여줌',
+    'function Flash($x, $y){',
+    '  try {',
+    '    $f = New-Object System.Windows.Forms.Form; $f.FormBorderStyle = "None"; $f.StartPosition = "Manual"; $f.ShowInTaskbar = $false; $f.TopMost = $true',
+    '    $f.BackColor = [System.Drawing.Color]::Red; $f.Opacity = 0.45; $f.SetBounds($x - 40, $y - 18, 80, 36)',
+    '    $f.Show(); $f.Refresh(); Start-Sleep -Milliseconds 1500; $f.Close(); $f.Dispose()',
+    '  } catch {}',
+    '}',
+    'function Pct($v){ return ([string][int][Math]::Floor([Math]::Max(0, $v) * 100) + "%") }',
+    'function DoTest($pick){',
+    '  $t = (([string]$tb.Text) -replace "\\s", "").ToLower()',
+    '  if($t -eq ""){ $out.Text = "찾을 글자를 적어 주세요."; return }',
+    '  if(-not $script:ocrReady){ $out.Text = "이 PC에서 화면 글자 읽기(OCR)를 쓸 수 없어요 (윈도우 10/11 의 한국어 OCR 이 필요해요)."; return }',
+    '  $x1 = 0; $y1 = 0; $x2 = 0; $y2 = 0',
+    '  $form.Hide(); Start-Sleep -Milliseconds 350',
+    '  if($pick){',
+    '    $r = Snip',
+    '    if($r -ne "ok"){ $form.Show(); $out.Text = $(if($r -eq "esc"){ "취소했어요." } else { "네모가 너무 작아요. 조금 더 크게 드래그하세요." }); return }',
+    '    $x1 = $script:vsLeft + $script:rect.X; $y1 = $script:vsTop + $script:rect.Y; $x2 = $x1 + $script:rect.Width; $y2 = $y1 + $script:rect.Height',
+    '    Start-Sleep -Milliseconds 200',
+    '  }',
+    '  $cap = OcrGrab $x1 $y1 $x2 $y2',
+    '  $form.Show(); $form.Activate()',
+    '  if($null -eq $cap){ $out.Text = "화면을 찍지 못했어요 (화면 잠금·보안 창이면 안 돼요)."; return }',
+    '  $out.Text = "읽는 중이에요... (방식 4가지, 몇 초 걸려요)"; Pump',
+    '  $rs = @()',
+    '  try { foreach($k in (OcrKinds $chk.Checked)){ $rs += TryKind $cap $t $k; Pump } } finally { $cap.B.Dispose() }',
+    '  $where = $(if($pick){ "고른 네모 안" } else { "화면 전체" })',
+    '  $L = New-Object System.Collections.ArrayList',
+    '  $hitIdx = -1; for($q = 0; $q -lt $rs.Count; $q++){ if($rs[$q].Hits.Count -gt 0){ $hitIdx = $q; break } }',
+    '  $nearIdx = -1; for($q = 0; $q -lt $rs.Count; $q++){ if($null -ne $rs[$q].Near){ $nearIdx = $q; break } }',
+    '  $bestR = $rs | Sort-Object -Property Best -Descending | Select-Object -First 1',
+    '  if($hitIdx -ge 0){',
+    '    $h = $rs[$hitIdx]; $f = $h.Hits[0]',
+    '    [void]$L.Add("✔ 찾아요 — \'" + $KNAME[$h.Kind] + "\' 방식에서 " + $h.Hits.Count + "곳 (첫째: X " + $f.X + ", Y " + $f.Y + ")")',
+    '    [void]$L.Add("   매크로에서는 " + ($hitIdx + 1) + "번째 시도에서 찾아요" + $(if($hitIdx -gt 0){ " → \'찾는 횟수\'를 " + ($hitIdx + 1) + " 이상으로 두세요 (조건은 한 번에 모두 시도)" } else { "" }) + ".")',
+    '  } elseif($nearIdx -ge 0){',
+    '    $h = $rs[$nearIdx]',
+    '    [void]$L.Add("△ 똑같은 글자는 없지만 비슷한 글자로 찾아요 — \'" + $h.BestText + "\' (" + (Pct $h.Best) + ", \'" + $KNAME[$h.Kind] + "\' 방식)")',
+    '    [void]$L.Add("   찾을 글자를 \'" + $h.BestText + "\' 처럼 읽히는 대로 고치면 더 확실해요.")',
+    '  } else {',
+    '    [void]$L.Add("✘ " + $where + "에서 못 찾아요 — " + $(if($bestR.Best -ge 0.3){ "가장 비슷하게 읽힌 글자: \'" + $bestR.BestText + "\' (" + (Pct $bestR.Best) + ")" } else { "비슷한 글자도 못 읽었어요" }))',
+    '    [void]$L.Add("   ① 아래 \'읽힌 글자\'에 찾을 글자가 어떻게 읽혔는지 보고 그대로 고쳐 보세요  ② [네모 골라 찾기]로 좁혀 보세요  ③ 글자가 화면에 보이는지(가려지지 않았는지) 확인하세요")',
+    '  }',
+    '  [void]$L.Add("")',
+    '  foreach($r in $rs){',
+    '    $line = "  · " + $KNAME[$r.Kind] + ": "',
+    '    if($r.Hits.Count -gt 0){ $line += ($r.Hits.Count.ToString() + "곳 (" + ((@($r.Hits) | Select-Object -First 3 | ForEach-Object { "X " + $_.X + ", Y " + $_.Y }) -join " / ") + ")") }',
+    '    else { $line += $(if($r.Best -ge 0.3){ "없음 (가장 비슷: \'" + $r.BestText + "\' " + (Pct $r.Best) + ")" } else { "없음" }) }',
+    '    [void]$L.Add($line + "  · " + ([Math]::Round($r.Ms / 1000.0, 1)) + "초")',
+    '  }',
+    '  [void]$L.Add(""); [void]$L.Add("--- 읽힌 글자 (\'" + $KNAME[$bestR.Kind] + "\' 방식, " + $where + ") ---")',
+    '  $txt = [string]$bestR.Text; if($txt.Length -gt 4000){ $txt = $txt.Substring(0, 4000) + "`r`n..." }',
+    '  [void]$L.Add($txt)',
+    '  $out.Text = ($L -join "`r`n")',
+    '  if($hitIdx -ge 0){ $f = $rs[$hitIdx].Hits[0]; Flash $f.X $f.Y } elseif($nearIdx -ge 0){ Flash $rs[$nearIdx].Near.X $rs[$nearIdx].Near.Y }',
+    '}',
+    '$form = New-Object System.Windows.Forms.Form',
+    '$form.Text = "글자 찾기 시험"; $form.StartPosition = "CenterScreen"; $form.TopMost = $true',
+    '$form.ClientSize = New-Object System.Drawing.Size 560, 460; $form.MinimumSize = New-Object System.Drawing.Size 420, 320',
+    '$form.Font = New-Object System.Drawing.Font("Malgun Gothic", 10)',
+    '$top = New-Object System.Windows.Forms.FlowLayoutPanel; $top.Dock = "Top"; $top.Height = 118; $top.Padding = New-Object System.Windows.Forms.Padding 8',
+    '$lbl = New-Object System.Windows.Forms.Label; $lbl.AutoSize = $true; $lbl.Text = "찾을 글자 (매크로에 적을 그대로):"; $lbl.Margin = New-Object System.Windows.Forms.Padding 0, 6, 4, 0',
+    '$tb = New-Object System.Windows.Forms.TextBox; $tb.Width = 250',
+    '$chk = New-Object System.Windows.Forms.CheckBox; $chk.AutoSize = $true; $chk.Text = "진하게부터 (OCR 보정)"',
+    '$bAll = New-Object System.Windows.Forms.Button; $bAll.Text = "화면 전체에서 찾기"; $bAll.AutoSize = $true',
+    '$bBox = New-Object System.Windows.Forms.Button; $bBox.Text = "네모 골라 찾기"; $bBox.AutoSize = $true',
+    '$bEnd = New-Object System.Windows.Forms.Button; $bEnd.Text = "닫기"; $bEnd.AutoSize = $true',
+    '$top.Controls.AddRange(@($lbl, $tb, $chk, $bAll, $bBox, $bEnd))',
+    '$out = New-Object System.Windows.Forms.TextBox; $out.Multiline = $true; $out.ReadOnly = $true; $out.ScrollBars = "Vertical"; $out.Dock = "Fill"; $out.Font = New-Object System.Drawing.Font("Malgun Gothic", 10)',
+    '$out.Text = "찾을 페이지를 화면에 띄워 두고, 글자를 적은 뒤 [화면 전체에서 찾기] 또는 [네모 골라 찾기]를 누르세요.`r`n이 창은 찾는 동안 잠깐 숨어요. 찾으면 그 자리에 빨간 네모가 잠깐 떠요."',
+    '$bAll.Add_Click({ try { DoTest $false } catch { $form.Show(); $out.Text = "오류: " + $_.Exception.Message } })',
+    '$bBox.Add_Click({ try { DoTest $true } catch { $form.Show(); $out.Text = "오류: " + $_.Exception.Message } })',
+    '$bEnd.Add_Click({ $form.Close() })',
+    '$form.AcceptButton = $bAll; $form.CancelButton = $bEnd',
+    '$form.Controls.Add($out); $form.Controls.Add($top)',
+    '[void]$form.ShowDialog()',
+    '} catch {',
+    '  try { [System.Windows.Forms.MessageBox]::Show("오류가 났어요:`n" + $_.Exception.Message, "글자 찾기 시험") | Out-Null } catch {}',
+    '  Write-Host ("오류: " + $_.Exception.Message)',
+    '  exit 1',
+    '}',
+    '',
+  ].join('\r\n');
+}
+
 /* --- 영역 선택 도우미 (드래그로 네모 긁어 좌표 알려주기, 무설치) → 조건 OCR 영역용 --- */
 function genRegionPicker() {
   return [
@@ -4869,7 +5046,7 @@ function genMenu() {
     "function RunPs($file, $extra, $style){ Start-Process -FilePath $psExe -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -STA -File \"' + $file + '\"' + $extra) -WindowStyle $style -ErrorAction Stop }",
     '$form = New-Object System.Windows.Forms.Form',
     '$form.Text = "매크로 설계소" + $(if($pack.built){ "  (" + [string]$pack.built + " 받음)" } else { "" })',
-    '$form.StartPosition = "CenterScreen"; $form.ClientSize = New-Object System.Drawing.Size 600, 440; $form.MinimumSize = New-Object System.Drawing.Size 460, 360',
+    '$form.StartPosition = "CenterScreen"; $form.ClientSize = New-Object System.Drawing.Size 600, 480; $form.MinimumSize = New-Object System.Drawing.Size 460, 400',
     '$form.Font = New-Object System.Drawing.Font("Malgun Gothic", 10)',
     '$head = New-Object System.Windows.Forms.Label',
     '$head.Dock = "Top"; $head.Height = 52; $head.Padding = New-Object System.Windows.Forms.Padding 10, 8, 10, 0',
@@ -4877,7 +5054,7 @@ function genMenu() {
     '$lb = New-Object System.Windows.Forms.ListBox',
     '$lb.Dock = "Fill"; $lb.IntegralHeight = $false; $lb.Font = New-Object System.Drawing.Font("Malgun Gothic", 11)',
     '$bar = New-Object System.Windows.Forms.FlowLayoutPanel',
-    '$bar.Dock = "Bottom"; $bar.Height = 100; $bar.Padding = New-Object System.Windows.Forms.Padding 6',
+    '$bar.Dock = "Bottom"; $bar.Height = 144   # 단추 세 줄까지; $bar.Padding = New-Object System.Windows.Forms.Padding 6',
     '# 단추마다 오류가 나도 메뉴가 죽지 않고 알림으로 보여줌',
     'function Btn($text, $act){ $b = New-Object System.Windows.Forms.Button; $b.Text = $text; $b.AutoSize = $true; $b.MinimumSize = New-Object System.Drawing.Size 90, 36; $b.Tag = $act; $b.Add_Click({ param($sender, $e) try { & $sender.Tag } catch { Say ("오류: " + $_.Exception.Message) } }); [void]$bar.Controls.Add($b); return $b }',
     'function Sel(){ $i = $lb.SelectedIndex; if($i -lt 0 -or $i -ge $items.Count){ return $null }; return $items[$i] }',
@@ -4914,6 +5091,7 @@ function genMenu() {
     "$bImgMgr = Btn \"이미지 관리\" { RunPs (Join-Path $PSScriptRoot 'images.ps1') '' 'Minimized' }",
     "$bXY = Btn \"좌표 찾기\" { RunPs (Join-Path $PSScriptRoot 'find-xy.ps1') '' 'Minimized' }",
     "$bReg = Btn \"영역 선택\" { RunPs (Join-Path $PSScriptRoot 'pick-region.ps1') '' 'Minimized' }",
+    "$bOcr = Btn \"글자 찾기 시험\" { RunPs (Join-Path $PSScriptRoot 'ocr-test.ps1') '' 'Minimized' }",
     '$bEnd = Btn "닫기" { $form.Close() }',
     '$lb.Add_DoubleClick({ $bRun.PerformClick() })',
     '$form.AcceptButton = $bRun; $form.CancelButton = $bEnd',
@@ -4954,7 +5132,7 @@ function packReadme(list, built) {
     '폴더 이름을 바꿨다면, zip 속 macro-studio 폴더를 열어 안의 내용을 전부 그 폴더로 끌어다 놓으세요.',
     '',
     '[폴더 안]',
-    '  START.bat         메뉴 (실행 · 한 단계씩 · 이미지 찍기 · 변수 고치기 · 이미지 관리 · 폴더 열기 · 좌표 찾기 · 영역 선택)',
+    '  START.bat         메뉴 (실행 · 한 단계씩 · 이미지 찍기 · 변수 고치기 · 이미지 관리 · 폴더 열기 · 좌표 찾기 · 영역 선택 · 글자 찾기 시험)',
     '                    [이미지 관리] = 공용 폴더의 이미지 목록·있음/없음, 이름 정해 미리 찍기·다시 찍기·삭제',
     '                    [한 단계씩] = (파이썬 묶음) 동작을 하나씩 멈춰 가며 실행 — F8 다음 / F7 끝까지 / F9 종료',
     '  images\\           공용 이미지 폴더 — 모든 작업방이 함께 써요. 한 번 찍어 두면 여러 매크로가 같이 찾아요.',
@@ -5002,6 +5180,7 @@ function packFiles(built, chain = [], lang = 'ps') {
     T('tools/menu.ps1', genMenu(), true),
     T('tools/find-xy.ps1', genFinder(), true),
     T('tools/pick-region.ps1', genRegionPicker(), true),
+    T('tools/ocr-test.ps1', genOcrTester(), true),
     T('tools/images.ps1', genImageManager(), true),
     T('tools/macros.json', JSON.stringify({ kind: 'macro-studio-pack', v: 1, app: APP_VERSION, built: built || '', pack: chain[chain.length - 1] || '', chain, macros: list }, null, 1)),
     // 받을 때마다 새 이름(덮어써지지 않게) → 웹 데이터를 잃어도 가장 최근 것으로 복원
@@ -5079,6 +5258,11 @@ function doExport(kind) {
     download(ps1, genRegionPicker(), 'text/plain;charset=utf-8');
     download('region-picker-run.bat', genHelperBat(ps1), 'application/bat');
     toast('영역 선택 도우미를 받았어요 (region-picker)');
+  } else if (kind === 'ocrtest') {
+    const ps1 = 'text-find-test.ps1';
+    download(ps1, genOcrTester(), 'text/plain;charset=utf-8');
+    download('text-find-test-run.bat', genHelperBat(ps1), 'application/bat');
+    toast('글자 찾기 시험 도우미를 받았어요 (text-find-test)');
   } else if (kind === 'imgcap') {
     const ps1 = 'image-capture.ps1';
     download(ps1, genImageCapturer(imgNames(l), imgDirOf(l)), 'text/plain;charset=utf-8');
@@ -5271,7 +5455,7 @@ const HELP = `
 <li><b>📗 엑셀 칸에 입력</b> — 엑셀 <b>파일·시트·칸</b>을 정해 값을 넣어요(이미 열려 있으면 그 파일, 아니면 열어서). <b>값만</b> 넣어 그 칸의 원래 서식을 그대로 따르고, <b>"열의 다음 빈 칸"</b>을 고르면 반복할 때마다 한 줄씩 아래로 쌓여요. 클립보드(복사한 값)도 붙일 수 있어요. 무설치(윈도우)·파이썬 전용, PC에 엑셀 필요.</li>
 <li><b>📥 클립보드 이미지 보관 / 📤 이미지 붙여넣기</b> — 복사한 이미지를 이름 붙여 <b>파일로 보관</b>해 두고, 나중에 <b>몇 번이든 붙여넣어요</b>(중간에 글자 입력으로 클립보드가 바뀌어도 그대로). 미리 찍어 둔 이미지(로고·도장)도 붙일 수 있어요. 무설치(윈도우)·파이썬 전용.</li>
 <li><b>📦 변수에 값 저장</b> — 직접 쓴 값 / <b>화면 영역에서 읽은 값</b> / <b>클립보드(복사한 값)</b>를 이름 붙인 변수에 담아요.</li>
-<li><b>🔁 반복문</b> — 담은 동작을 N번(0 = 멈출 때까지) 반복.</li>
+<li><b>🔁 반복문</b> — 담은 동작을 정한 횟수만큼, 또는 <b>♾️ 멈출 때까지(무한)</b> 반복. 무한 반복은 F9 나 안에 넣은 <b>⏏️ 반복 빠져나가기</b>로 끝내요.</li>
 <li><b>❓ 조건</b> — 화면 글자·숫자 / 변수 값 / 이미지가 보이는지 / 글자가 보이는지를 확인해 <b>맞으면 담은 동작</b>, 아니면 "아니면" 칸 동작을 실행.</li>
 <li><b>⏏️ 반복 빠져나가기</b> — 감싼 반복문을 그 자리에서 끝내고 다음으로. <b>🛑 멈춤</b> — 매크로 전체를 끝내요.</li>
 </ul>
