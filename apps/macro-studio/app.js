@@ -2711,6 +2711,10 @@ function genPS1(l, opts = {}) {
   P.push('    if(TakeKey 2){ $script:paused = $false; Write-Host "> 재생" }');
   P.push('  }');
   P.push('}');
+  P.push('function PumpQuit(){   # 화면을 읽는 도중엔 종료(F9)·재실행(F10)만. F8 일시정지는 다음 Pump(새로 찍기 전)에서 — 재개하면 새 화면으로 찾게');
+  P.push('  if(TakeKey 4){ Write-Host "[] 종료"; exit }');
+  P.push('  if((TakeKey 8) -and $script:canRestart){ throw "RESTART" }');
+  P.push('}');
   P.push('function WaitMs($ms){ $end=[Environment]::TickCount+$ms; while([Environment]::TickCount -lt $end){ Pump; Start-Sleep -Milliseconds 80 } }');
   P.push('function MoveMouse($x,$y){ [U]::SetCursorPos($x,$y) | Out-Null; Start-Sleep -Milliseconds 60 }');
   P.push('function ClickAt($x,$y,$btn,$double){');
@@ -2921,7 +2925,7 @@ function psFindStep(s) {
   const call = isImg
     ? `FindImg (ImgPath ${psStr(name)}) ${num(s.tol) || 25} ${Math.min(100, Math.max(50, num(s.sim) || 100))} $${s.bright ? 'true' : 'false'} ${psArea(s)} ${nth} ${retries} ${everyMs}`
     : isWeb ? `FindWeb ${psFill(name)} '${s.match === 'has' ? 'has' : 'exact'}' '${CTYPE[s.ctype] ? s.ctype : 'any'}' ${psFill(s.win || '')} ${nth} ${retries} ${everyMs}`
-    : `FindText ${psFill(name)} ${psArea(s)} ${nth} ${retries} ${everyMs} $${s.sharp ? 'true' : 'false'}`;
+    : `FindText ${psFill(name)} ${psArea(s)} ${nth} ${retries} ${everyMs} $${s.sharp ? 'true' : 'false'}${s.act === 'none' || cleanVarName(s.saveTo) ? ' $false' : ''}`;   // 찾기만·결과 변수는 "있나 없나" 확인이라 비슷한 글자 안 씀
   const what = isImg ? `이미지 '${name}'` : `글자 '${name}'`;
   const tail = `${nth > 1 ? ` (${nth}번째)` : ''} 을(를) ${isWeb ? '창에서' : '화면에서'} 찾을 수 없어요 (${retries}번 시도)`;
   const L = ['$p = $null', 'while($true){', `  $p = ${call}`, '  if($null -ne $p){ break }'];
@@ -3094,18 +3098,18 @@ function psOcrFuncs() {
     '    $t = [Math]::Max(300, [int](($lim - 1) / $sc)); $ov = [Math]::Min(400, [int]($t / 3))',
     '    $boxes = @(); foreach($y in (Starts $h $t $ov)){ foreach($x in (Starts $w $t $ov)){ $boxes += ,@($x, $y, [Math]::Min($w, $x + $t), [Math]::Min($h, $y + $t)) } }',
     '  }',
-    '  $out = @()',
+    '  $res = @()',
     '  foreach($bx in $boxes){',
     '    $pw = $bx[2] - $bx[0]; $ph = $bx[3] - $bx[1]',
     '    $part = $img; if($pw -ne $w -or $ph -ne $h){ $part = $img.Clone((New-Object System.Drawing.Rectangle $bx[0], $bx[1], $pw, $ph), $img.PixelFormat) }',
     '    try {',
     '      $s2 = [Math]::Min($sc, ($lim - 1) / [Math]::Max($pw, $ph)); if([Math]::Abs($s2 - 1.0) -le 0.01){ $s2 = 1.0 }',
     '      $r = OcrOne $part $s2 $kind',
-    '      if($null -ne $r){ $out += ,@{ R = $r; X = $cap.X + $bx[0]; Y = $cap.Y + $bx[1]; S = $s2 } }',
+    '      if($null -ne $r){ $res += ,@{ R = $r; X = $cap.X + $bx[0]; Y = $cap.Y + $bx[1]; S = $s2 } }',
     '    } finally { if(-not [object]::ReferenceEquals($part, $img)){ $part.Dispose() } }',
-    '    Pump',
+    '    PumpQuit   # 읽는 도중엔 종료·재실행만 (일시정지는 새로 찍기 전에 — 재개하면 새 화면으로)',
     '  }',
-    '  return $out   # 하나씩 내보냄 (부르는 쪽에서 @( ) 로 받음)',
+    '  return $res   # 하나씩 내보냄 (부르는 쪽에서 @( ) 로 받음)',
     '}',
     '# 네모 안 글자 읽기: 못 읽으면(빈 값) 다른 방식으로 다시 읽음',
     'function ReadRegion($x1,$y1,$x2,$y2,$sharp){',
@@ -3138,12 +3142,15 @@ function psOcrFuncs() {
     '  $cx = $p.X + [int](($mnx + $mxx) / 2 / $p.S); $cy = $p.Y + [int](($mny + $mxy) / 2 / $p.S)',
     '  return [pscustomobject]@{ X = $cx; Y = $cy; R = [int][Math]::Floor($cy / 12) }',
     '}',
+    '# 한 글자로 뜻이 뒤집히는 글자(가능/불가능, 있습니다/없습니다 …)가 다른지',
+    '$script:negCh = \'불미비못안없않\'',
+    'function NegDiff($a, $b){ foreach($c in $script:negCh.ToCharArray()){ $s = [string]$c; if(($a.Length - $a.Replace($s, \'\').Length) -ne ($b.Length - $b.Replace($s, \'\').Length)){ return $true } }; return $false }',
     '# 겹쳐 읽은 조각의 같은 자리는 하나로, 위→아래·왼→오른 순',
     'function Uniq($pts){ $u = New-Object System.Collections.ArrayList; foreach($h in @($pts | Sort-Object R, X)){ $dup = $false; foreach($v in $u){ if([Math]::Abs($h.X - $v.X) -le 10 -and [Math]::Abs($h.Y - $v.Y) -le 10){ $dup = $true; break } }; if(-not $dup){ [void]$u.Add($h) } }; return ,$u }',
     'function PickNth($pts, $nth){ $u = Uniq $pts; if($u.Count -ge $nth){ $h = $u[$nth - 1]; return @($h.X, $h.Y) }; return $null }',
     '# 화면에서 글자를 찾아 가운데 좌표 반환 (띄어쓰기·대소문자 무시, 위→아래·왼→오른 순 n번째)',
     '# 다시 찾을 때마다 읽는 방식을 바꿈. 비슷한 글자(90% 이상, 10글자에 1글자 틀림까지)는 마지막 수단:',
-    '#   끝까지 똑같은 글자가 안 보였고 · 몇 번째=1 · 조건이 아니고($nearOk) · 숫자가 모두 같고 · 후보가 한 곳일 때만',
+    '#   끝까지 똑같은 글자가 안 보였고 · 몇 번째=1 · 누르는 동작이고($nearOk: 조건·찾기만·결과 변수는 안 씀) · 숫자·불/미/없 같은 글자가 같고 · 후보가 한 곳일 때만',
     'function FindText($target, $x1, $y1, $x2, $y2, $nth, $retries, $everyMs, $sharp, $nearOk = $true){',
     '  $script:lastErr = ""; $script:ocrBest = @(-1.0, \'\'); $script:ocrSeen = @(0, 0)',
     '  if(-not $script:ocrReady){ $script:lastErr = "noocr"; return $null }',
@@ -3161,7 +3168,7 @@ function psOcrFuncs() {
     '        $kinds = @(OcrKinds $sharp (OcrDark $cap.B))',
     '        $ks = $(if($retries -le 1){ $kinds } else { @($kinds[$k % $kinds.Count]) })',
     '        foreach($kind in $ks){',
-    '          Pump',
+    '          PumpQuit',
     '          $hits = New-Object System.Collections.ArrayList',
     '          foreach($p in @(OcrParts $cap $kind $true)){',
     '            foreach($line in $p.R.Lines){',
@@ -3177,7 +3184,7 @@ function psOcrFuncs() {
     '              if($script:fzReady){',
     '                $b = [OcrFz]::Best($s, $t); $sim = 1.0 - $b[0] / $t.Length; $span = $s.Substring($b[1], $b[2] - $b[1])',
     '                if($sim -gt $script:ocrBest[0]){ $script:ocrBest = @($sim, $span) }',
-    '                if($b[0] -gt 0 -and $b[0] -le $allow -and ($span -replace "\\D", "") -eq $tdig){   # 날짜·번호·금액이 다른 건 비슷해도 안 됨',
+    '                if($b[0] -gt 0 -and $b[0] -le $allow -and ($span -replace "\\D", "") -eq $tdig -and -not (NegDiff $span $t)){   # 날짜·번호·금액이나 불/미/없 처럼 뜻이 바뀌는 글자가 다르면 비슷해도 안 됨',
     '                  $xy = SpanXY $ws $st $b[1] $b[2] $p',
     '                  if($xy){ $xy | Add-Member NoteProperty Txt $span; $xy | Add-Member NoteProperty Sim $sim; [void]$near.Add($xy) }',
     '                }',
@@ -3193,7 +3200,7 @@ function psOcrFuncs() {
     '  }',
     '  if($allow -gt 0 -and $script:ocrSeen[0] -eq 0 -and $near.Count -gt 0){   # 끝까지 똑같은 글자가 안 보였을 때만',
     '    $u = Uniq $near; $script:ocrSeen[1] = $u.Count',
-    '    if($u.Count -eq 1){ $h = $u[0]; Write-Host ("   (똑같은 글자는 끝까지 없어 " + [int][Math]::Floor($h.Sim * 100) + "% 비슷한 \'" + $h.Txt + "\' 을(를) 눌러요)"); return @($h.X, $h.Y) }',
+    '    if($u.Count -eq 1){ $h = $u[0]; Write-Host ("   (똑같은 글자는 끝까지 없어 " + [int][Math]::Floor($h.Sim * 100) + "% 비슷한 \'" + $h.Txt + "\' 을(를) 찾은 것으로 봐요)"); return @($h.X, $h.Y) }',
     '  }',
     '  $script:lastErr = "notfound"; return $null',
     '}',
@@ -3974,7 +3981,7 @@ function pyFindStep(s) {
   const call = isImg
     ? `find_img(img_path(${pyJ(name)}), ${pyConf(s)}, False, ${pyBox(s)}, ${nth}, ${retries}, ${every})`
     : isWeb ? `find_web(${pyFill(name)}, ${pyJ(s.match === 'has' ? 'has' : 'exact')}, ${pyJ(CTYPE[s.ctype] ? s.ctype : 'any')}, ${pyFill(s.win || '')}, ${nth}, ${retries}, ${every})`
-    : `find_text(${pyFill(name)}, ${pyBox(s)}, ${nth}, ${retries}, ${every}, ${s.sharp ? 'True' : 'False'})`;
+    : `find_text(${pyFill(name)}, ${pyBox(s)}, ${nth}, ${retries}, ${every}, ${s.sharp ? 'True' : 'False'}${s.act === 'none' || cleanVarName(s.saveTo) ? ', False' : ''})`;   // 찾기만·결과 변수는 "있나 없나" 확인이라 비슷한 글자 안 씀
   const what = isImg ? `이미지 '${name}'` : `글자 '${name}'`;
   const tail = `${nth > 1 ? ` (${nth}번째)` : ''} 을(를) ${isWeb ? '창에서' : '화면에서'} 찾을 수 없어요 (${retries}번 시도)`;
   const L = ['_p = None', 'while True:', `    _p = ${call}`, '    if _p: break'];
@@ -4101,6 +4108,11 @@ function pyOcrFuncs() {
     '        while e - a > 1 and _ed(s[a + 1:e], t) <= d: a += 1',
     '        while e - a > 1 and _ed(s[a:e - 1], t) <= d: e -= 1',
     '    return (d, a, e)',
+    '_NEG = "불미비못안없않"   # 한 글자로 뜻이 뒤집히는 글자 (가능/불가능, 있습니다/없습니다 …)',
+    'def _neg_diff(a, b): return any(a.count(c) != b.count(c) for c in _NEG)',
+    'def _quit_check():   # 읽는 도중엔 종료(F9)·재실행(F10)만. F8 일시정지는 새로 찍기 전 control() 에서 (재개하면 새 화면으로 찾게)',
+    '    if _stop["v"]: raise SystemExit("종료")',
+    '    if _restart["v"] and _can_restart["v"]: _restart["v"] = False; raise _Restart()',
     '_ocr_best = [-1.0, ""]   # 못 찾았을 때 안내용: 가장 비슷하게 읽힌 글자와 비슷한 정도',
     '_ocr_seen = [0, 0]   # [똑같은 글자가 보인 곳 수, 비슷한 글자 후보 수]',
     'def ocr_hint():',
@@ -4132,7 +4144,7 @@ function pyOcrFuncs() {
     '    _last_err[0] = ""; _ocr_best[0] = -1.0; _ocr_best[1] = ""; _ocr_seen[0] = _ocr_seen[1] = 0',
     '    if not _ocr: _last_err[0] = "noocr"; return None',
     '    if not t: _last_err[0] = "notfound"; return None',
-    '    # 비슷한 글자(90% 이상, 10글자에 1글자 틀림까지)는 마지막 수단: 몇 번째=1 · 조건이 아닐 때 · 숫자가 모두 같을 때 · 후보가 한 곳일 때만',
+    '    # 비슷한 글자(90% 이상, 10글자에 1글자 틀림까지)는 마지막 수단: 몇 번째=1 · 누르는 동작일 때(조건·찾기만·결과 변수는 안 씀) · 숫자·불/미/없 같은 글자가 같을 때 · 후보가 한 곳일 때만',
     '    allow = int(len(t) * 0.1 + 1e-9) if (near_ok and nth == 1) else 0',
     '    tdig = re.sub(r\'\\D\', \'\', t); near = []',
     '    for k in range(retries):',
@@ -4141,7 +4153,7 @@ function pyOcrFuncs() {
     '        if g:',
     '            kinds = ocr_kinds(sharp, _dark(g[0]))   # 다시 찾을 때마다 읽는 방식을 바꿔 가며 (한 번만 보는 조건은 모두)',
     '            for kind in (kinds if retries == 1 else (kinds[k % len(kinds)],)):',
-    '                control()',
+    '                _quit_check()',
     '                hits = []',
     '                for (r, px, py, sc) in _ocr_parts(g[0], g[1], g[2], kind, True):',
     '                    for line in (_g(r, "lines", []) or []):',
@@ -4157,7 +4169,7 @@ function pyOcrFuncs() {
     '                            frm = i + 1',
     '                        d, a, e = _fuzzy(s, t); sim = 1.0 - float(d) / len(t)',
     '                        if sim > _ocr_best[0]: _ocr_best[0] = sim; _ocr_best[1] = s[a:e]',
-    '                        if 0 < d <= allow and re.sub(r\'\\D\', \'\', s[a:e]) == tdig:   # 날짜·번호·금액이 다른 건 비슷해도 안 됨',
+    '                        if 0 < d <= allow and re.sub(r\'\\D\', \'\', s[a:e]) == tdig and not _neg_diff(s[a:e], t):   # 날짜·번호·금액이나 불/미/없 처럼 뜻이 바뀌는 글자가 다르면 비슷해도 안 됨',
     '                            xy = _span_xy(ws, st, a, e, px, py, sc)',
     '                            if xy: near.append((xy[0], xy[1], s[a:e], sim))',
     '                p = _pick(hits, nth)',
@@ -4167,7 +4179,7 @@ function pyOcrFuncs() {
     '    if allow and _ocr_seen[0] == 0 and near:   # 끝까지 똑같은 글자가 안 보였을 때만',
     '        u = _uniq(near); _ocr_seen[1] = len(u)',
     '        if len(u) == 1:',
-    '            print("   (똑같은 글자는 끝까지 없어 " + str(int(u[0][3] * 100)) + "% 비슷한 \'" + u[0][2] + "\' 을(를) 눌러요)")',
+    '            print("   (똑같은 글자는 끝까지 없어 " + str(int(u[0][3] * 100)) + "% 비슷한 \'" + u[0][2] + "\' 을(를) 찾은 것으로 봐요)")',
     '            return (u[0][0], u[0][1])',
     '    _last_err[0] = "notfound"; return None',
   ];
@@ -4645,6 +4657,7 @@ function genOcrTester() {
     '[System.Windows.Forms.Application]::EnableVisualStyles()',
     'function Pump(){ [System.Windows.Forms.Application]::DoEvents() }',
     'function WaitMs($ms){ Start-Sleep -Milliseconds $ms }',
+    'function PumpQuit(){}   # 읽는 도중엔 창 이벤트를 처리하지 않음 (단추를 또 눌러 겹쳐 실행되지 않게)',
     ...psOcrFuncs(),
     ...psSnipFn(),
     '# 쓴 글자를 지금 화면에서 찾아봄: 매크로의 "글자 찾아 클릭"과 똑같은 방법(읽는 방식 4가지)으로',
@@ -4663,7 +4676,7 @@ function genOcrTester() {
     '      if($script:fzReady){',
     '        $b = [OcrFz]::Best($s, $t); $sim = 1.0 - $b[0] / $t.Length; $span = $s.Substring($b[1], $b[2] - $b[1])',
     '        if($sim -gt $best){ $best = $sim; $bestText = $span }',
-    '        if($b[0] -gt 0 -and $b[0] -le $allow -and ($span -replace "\\D", "") -eq $tdig){ $xy = SpanXY $ws $st $b[1] $b[2] $p; if($xy){ $xy | Add-Member NoteProperty Txt $span; $xy | Add-Member NoteProperty Sim $sim; [void]$near.Add($xy) } }   # 매크로와 같은 규칙: 숫자가 다르면 안 됨',
+    '        if($b[0] -gt 0 -and $b[0] -le $allow -and ($span -replace "\\D", "") -eq $tdig -and -not (NegDiff $span $t)){ $xy = SpanXY $ws $st $b[1] $b[2] $p; if($xy){ $xy | Add-Member NoteProperty Txt $span; $xy | Add-Member NoteProperty Sim $sim; [void]$near.Add($xy) } }   # 매크로와 같은 규칙: 숫자가 다르면 안 됨',
     '      }',
     '    }',
     '  }',
@@ -4708,7 +4721,7 @@ function genOcrTester() {
     '  } elseif($nearAll.Count -eq 1){',
     '    $h = $nearAll[0]',
     '    [void]$L.Add("△ 똑같은 글자는 없어요. 비슷한 글자 \'" + $h.Txt + "\' (" + (Pct $h.Sim) + ")가 한 곳 있어요.")',
-    '    [void]$L.Add("   \'글자 찾아 클릭\'은 찾는 횟수를 다 써도 똑같은 글자가 안 보이면 마지막에 여기를 눌러요. 조건(보이면/안 보이면)은 비슷한 글자를 안 써요.")',
+    '    [void]$L.Add("   \'글자 찾아 클릭\'(누르기·이동)은 찾는 횟수를 다 써도 똑같은 글자가 안 보이면 마지막에 여기를 눌러요. 찾기만·결과 변수·조건(보이면/안 보이면)은 비슷한 글자를 안 써요.")',
     '    [void]$L.Add("   찾을 글자를 \'" + $h.Txt + "\' 처럼 읽히는 대로 고치면 바로·확실히 찾아요.")',
     '  } elseif($nearAll.Count -gt 1){',
     '    [void]$L.Add("✘ 똑같은 글자는 없고, 비슷한 글자가 " + $nearAll.Count + "곳이라 매크로는 어느 것인지 몰라 누르지 않아요.")',
@@ -4733,11 +4746,12 @@ function genOcrTester() {
     '}',
     '$form = New-Object System.Windows.Forms.Form',
     '$form.Text = "글자 찾기 시험"; $form.StartPosition = "CenterScreen"; $form.TopMost = $true',
-    '$form.ClientSize = New-Object System.Drawing.Size 560, 460; $form.MinimumSize = New-Object System.Drawing.Size 420, 320',
     '$form.Font = New-Object System.Drawing.Font("Malgun Gothic", 10)',
-    '$top = New-Object System.Windows.Forms.FlowLayoutPanel; $top.Dock = "Top"; $top.Height = 118; $top.Padding = New-Object System.Windows.Forms.Padding 8',
+    '$k = 1.0; try { $gg = [System.Drawing.Graphics]::FromHwnd([IntPtr]::Zero); $k = [Math]::Max(1.0, $gg.DpiX / 96.0); $gg.Dispose() } catch {}   # 화면 배율(125~200%)에 맞춰 창 크기',
+    '$form.ClientSize = New-Object System.Drawing.Size ([int](560 * $k)), ([int](460 * $k)); $form.MinimumSize = New-Object System.Drawing.Size ([int](420 * $k)), ([int](320 * $k))',
+    '$top = New-Object System.Windows.Forms.FlowLayoutPanel; $top.Dock = "Top"; $top.AutoSize = $true; $top.AutoSizeMode = "GrowAndShrink"; $top.Padding = New-Object System.Windows.Forms.Padding 8   # 내용에 맞춰 높이가 늘어남(단추가 잘리지 않게)',
     '$lbl = New-Object System.Windows.Forms.Label; $lbl.AutoSize = $true; $lbl.Text = "찾을 글자 (매크로에 적을 그대로):"; $lbl.Margin = New-Object System.Windows.Forms.Padding 0, 6, 4, 0',
-    '$tb = New-Object System.Windows.Forms.TextBox; $tb.Width = 250',
+    '$tb = New-Object System.Windows.Forms.TextBox; $tb.Width = [int](250 * $k)',
     '$chk = New-Object System.Windows.Forms.CheckBox; $chk.AutoSize = $true; $chk.Text = "진하게부터 (OCR 보정)"',
     '$bAll = New-Object System.Windows.Forms.Button; $bAll.Text = "화면 전체에서 찾기"; $bAll.AutoSize = $true',
     '$bBox = New-Object System.Windows.Forms.Button; $bBox.Text = "네모 골라 찾기"; $bBox.AutoSize = $true',
@@ -4745,8 +4759,10 @@ function genOcrTester() {
     '$top.Controls.AddRange(@($lbl, $tb, $chk, $bAll, $bBox, $bEnd))',
     '$out = New-Object System.Windows.Forms.TextBox; $out.Multiline = $true; $out.ReadOnly = $true; $out.ScrollBars = "Vertical"; $out.Dock = "Fill"; $out.Font = New-Object System.Drawing.Font("Malgun Gothic", 10)',
     '$out.Text = "찾을 페이지를 화면에 띄워 두고, 글자를 적은 뒤 [화면 전체에서 찾기] 또는 [네모 골라 찾기]를 누르세요.`r`n이 창은 찾는 동안 잠깐 숨어요. 찾으면 그 자리에 빨간 네모가 잠깐 떠요."',
-    '$bAll.Add_Click({ try { DoTest $false } catch { $form.Show(); $out.Text = "오류: " + $_.Exception.Message } })',
-    '$bBox.Add_Click({ try { DoTest $true } catch { $form.Show(); $out.Text = "오류: " + $_.Exception.Message } })',
+    '$script:busy = $false   # 시험 중에 단추를 또 누르면 무시 (겹쳐 실행되지 않게)',
+    'function RunTest($pick){ if($script:busy){ return }; $script:busy = $true; $script:top.Enabled = $false; try { DoTest $pick } catch { $script:form.Show(); $script:out.Text = "오류: " + $_.Exception.Message } finally { $script:busy = $false; $script:top.Enabled = $true } }',
+    '$bAll.Add_Click({ RunTest $false })',
+    '$bBox.Add_Click({ RunTest $true })',
     '$bEnd.Add_Click({ $form.Close() })',
     '$form.AcceptButton = $bAll; $form.CancelButton = $bEnd',
     '$form.Controls.Add($out); $form.Controls.Add($top)',
@@ -4911,7 +4927,7 @@ function genImageManager() {
     '$head.Text = "매크로가 쓰는 이미지예요. [없음] 을 골라 [찍기] 로 미리 찍어 두세요.`n공용 폴더: " + $dir',
     '$lb = New-Object System.Windows.Forms.ListBox; $lb.Dock = "Fill"; $lb.IntegralHeight = $false',
     '$lb.Font = New-Object System.Drawing.Font("Malgun Gothic", 11)',
-    '$bar = New-Object System.Windows.Forms.FlowLayoutPanel; $bar.Dock = "Bottom"; $bar.Height = 96; $bar.Padding = New-Object System.Windows.Forms.Padding 6',
+    '$bar = New-Object System.Windows.Forms.FlowLayoutPanel; $bar.Dock = "Bottom"; $bar.AutoSize = $true; $bar.AutoSizeMode = "GrowAndShrink"; $bar.Padding = New-Object System.Windows.Forms.Padding 6   # 화면 배율이 커도 단추가 잘리지 않게',
     'function Status($n){ if((Test-Path -LiteralPath (Join-Path $dir ($n + ".png"))) -or (Copies $n).Count -gt 0){ return "[있음]" } else { return "[없음]" } }',
     'function SelName(){ $i = $lb.SelectedIndex; if($i -lt 0 -or $i -ge $names.Count){ return $null }; return [string]$names[$i] }',
     'function Fill(){',
