@@ -1093,7 +1093,7 @@ function fieldsFor(type) {
       return `<p class="hint" style="margin-top:0">화면에 <b>보이는 글자를 읽어(OCR)</b> 그 위치를 눌러요. 글꼴이 바뀌어도 글자만 같으면 찾아요. <b>무설치(윈도우)·파이썬</b> 전용(.ahk 불가, 베타).</p>`
         + inpT('찾을 글자', 'text', '예: 확인') + varHint()
         + `<p class="hint">띄어쓰기·대소문자는 무시해요. 화면을 <b>2배로 키워</b> 읽고, 못 찾으면 다시 찾을 때마다 <b>읽는 방식을 바꿔요</b>(그대로 → 진하게 → 진하고 굵게: 얇은·회색 글씨용 → 색 반전: 어두운 화면용). 똑같은 글자가 없으면 <b>90% 이상 비슷한 글자</b>(10글자에 1글자 틀림까지)를 찾아요. 못 찾으면 화면에서 <b>가장 비슷하게 읽힌 글자</b>를 알려 주니, 그걸 보고 찾을 글자를 고치세요. 작은 글자는 "지정한 네모 안만"으로 좁히면 더 잘 읽어요. PC에서 <b>START 메뉴 [글자 찾기 시험]</b>(또는 아래 "글자 찾기 시험 도우미")으로 그 화면에서 찾아지는지 미리 확인할 수 있어요.</p>`
-        + `<p class="hint"><b>그림으로 기억</b>: 글자를 못 찾아 멈췄을 때 <b>F6</b>을 누르고 그 글자 부분을 드래그하면 그림(<code>글자-…png</code>)으로 기억해, <b>다음부터 그림으로 먼저</b> 찾아요(같은 화면·글꼴·배율일 때 정확). 글자 찾기 시험의 [그림으로 기억]으로 미리 해 둘 수도 있어요. 파이썬은 그림 찾기 부품(opencv)도 같이 설치돼요.</p>`
+        + `<p class="hint"><b>그림으로 기억</b>: '끝내 못 찾으면'이 <b>일시정지</b>일 때, 글자를 못 찾아 멈춘 화면에서 <b>F6</b>을 누르고 그 글자를 감싸게 드래그하면 글자 부분만 그림(<code>글자-…png</code>)으로 기억해, <b>다음부터 그림으로 먼저</b> 찾아요. 점 하나하나가 같아야 찾아서(화면 배율·글꼴·색이 같을 때) 비슷한 다른 단추를 누르지 않아요 — 안 맞으면 글자 읽기로 찾아요. '몇 번째'가 1일 때만 써요. 글자 찾기 시험의 [그림으로 기억]으로 미리 해 둘 수도 있어요. 파이썬은 그림 찾기 부품(opencv)도 같이 설치돼요.${draft.notfound && draft.notfound !== 'pause' ? ` <b>지금 설정(${NF[draft.notfound] || draft.notfound})에선 F6을 못 써요</b> — 일시정지로 바꾸거나 글자 찾기 시험을 쓰세요.` : ''}</p>`
         + areaBlock()
         + inpN('여러 개면 몇 번째', 'nth', 'min="1"')
         + `<p class="hint">위→아래, 왼쪽→오른쪽 순서로 셉니다.</p>`
@@ -2812,6 +2812,7 @@ function genPS1(l, opts = {}) {
     P.push('$IMGDIRS = @($IMGDIR)');
   }
   P.push("function ImgPath($name){ foreach($d in $IMGDIRS){ $p = Join-Path $d ([string]$name + '.png'); if(Test-Path -LiteralPath $p){ return $p } }; return (Join-Path $IMGDIRS[0] ([string]$name + '.png')) }   # 있는 곳을 먼저, 없으면 새로 저장할 곳(공용 먼저)");
+  if (needsTextFind(l.steps)) P.push(pack ? '$TXTIMGDIR = $IMGSHARED   # 글자를 기억한 그림은 공용 폴더에 (글자 찾기 시험·이미지 관리와 같은 곳)' : '$TXTIMGDIR = $IMGDIR   # 글자를 기억한 그림 폴더');
   if (needsOcr(l.steps)) P.push(...psOcrFuncs());
   if (needsImg(l.steps) || needsTextFind(l.steps)) P.push(...psImgFuncs());   // 글자 찾기도 기억한 그림으로 먼저 찾음
   if (needsWeb(l.steps)) P.push(...psWebFuncs());
@@ -2951,7 +2952,7 @@ function psFindStep(s) {
   if (s.type === 'textclick') L.push("  if($script:lastErr -eq 'notfound'){ $msg += (OcrHint) }   # 화면에서 무엇을 읽었는지 같이 보여줌");
   if (s.notfound === 'continue') L.push('  Write-Host ("[주의] " + $msg + " -> 건너뛰어요") -ForegroundColor Yellow; break');
   else if (s.notfound === 'stop') L.push('  Write-Host ("[오류] " + $msg + " -> 매크로를 멈춰요") -ForegroundColor Red; FocusConsole; exit');
-  else if (s.type === 'textclick') L.push(`  if((ErrorPause $msg { TextRemember ${psFill(name)} }) -eq 'skip'){ break }   # F6 = 이 글자를 그림으로 기억`);
+  else if (s.type === 'textclick' && nth === 1) L.push(`  if((ErrorPause $msg $(if($script:imgReady){ { TextRemember ${psFill(name)} } } else { $null })) -eq 'skip'){ break }   # F6 = 이 글자를 그림으로 기억 (그림 찾기를 쓸 수 있을 때)`);
   else L.push("  if((ErrorPause $msg) -eq 'skip'){ break }");
   L.push('}');
   const pos = `($p[0] + ${num(s.dx)}) ($p[1] + ${num(s.dy)})`;
@@ -3167,44 +3168,54 @@ function psOcrFuncs() {
     'function PickNth($pts, $nth){ $u = Uniq $pts; if($u.Count -ge $nth){ $h = $u[$nth - 1]; return @($h.X, $h.Y) }; return $null }',
     '# 글자를 그림으로 기억할 때 이름: 글자-OOO (띄어쓰기·파일에 못 쓰는 글자 뺌)',
     'function TextImgName($t){ $n = (([string]$t) -replace \'[\\\\/:*?"<>|`\\s]\', \'\'); if($n.Length -gt 56){ $n = $n.Substring(0, 56) }; return (\'글자-\' + $n) }',
-    '# 기억한 그림이 있으면 그걸로 먼저 찾음 (글꼴·배율이 같을 때 정확)',
+    'function TextImgPath($t){ return (Join-Path $TXTIMGDIR ((TextImgName $t) + \'.png\')) }   # 기억한 그림은 한 폴더에만 (시험 도구·이미지 관리와 같은 곳)',
+    '# 기억한 그림이 있으면 그걸로 먼저 찾음: 점 하나하나가 같을 때만 (글꼴·배율·색이 같을 때). 몇 번째가 1일 때만',
     'function TextImgFind($target, $x1, $y1, $x2, $y2, $nth){',
-    '  if(-not $script:imgReady){ return $null }',
-    '  $p = ImgPath (TextImgName $target); if(-not (Test-Path -LiteralPath $p)){ return $null }',
-    '  $r = FindImg $p 25 95 $false $x1 $y1 $x2 $y2 $nth 1 0; $script:lastErr = ""',
-    '  return $r',
+    '  if(-not $script:imgReady -or $nth -gt 1){ return $null }',
+    '  $p = TextImgPath $target; if(-not (Test-Path -LiteralPath $p)){ return $null }',
+    '  try { $r = [Img]::FindExact([string]$p, [int]$x1, [int]$y1, [int]$x2, [int]$y2, 40) } catch { return $null }',
+    '  if($r[0] -ne [int]::MinValue){ return @($r[0], $r[1]) }; return $null',
     '}',
     '# 못 찾은 글자를 그림으로 기억: 화면에서 그 글자를 드래그 → 글자-OOO.png (다음부터 그림으로 먼저 찾음)',
     'function TextRemember($t){',
     '  if(-not $script:imgReady){ Write-Host "[주의] 이 PC에서 그림 찾기를 쓸 수 없어 기억하지 못해요" -ForegroundColor Yellow; return $false }',
     '  Write-Host ("   \'" + $t + "\' 글자 부분을 마우스로 드래그하세요 (Esc = 취소)")',
     '  while($true){ $r = Snip; if($r -eq \'esc\'){ Write-Host "   기억을 취소했어요"; return $false }; if($r -eq \'ok\'){ break }; Write-Host "   너무 작아요. 조금 더 크게 드래그하세요." }',
-    '  Start-Sleep -Milliseconds 200   # 어두운 덮개가 사라진 뒤에 찍기',
-    '  $p = ImgPath (TextImgName $t)',
+    '  $L = $script:vsLeft + $script:rect.X; $T = $script:vsTop + $script:rect.Y; $W = $script:rect.Width; $H = $script:rect.Height',
+    '  $cp = [System.Windows.Forms.Cursor]::Position   # 마우스를 글자에서 치우고 찍음 (단추가 마우스 올린 색으로 찍히지 않게)',
+    '  $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen; $mx = $L - 30; $my = $T - 30',
+    '  if($mx -lt $vs.Left -or $my -lt $vs.Top){ $mx = [Math]::Min($vs.Right - 1, $L + $W + 30); $my = [Math]::Min($vs.Bottom - 1, $T + $H + 30) }',
+    '  $p = TextImgPath $t; $bmp = $null; $cut = $null',
     '  try {',
+    '    [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point $mx, $my',
+    '    Start-Sleep -Milliseconds 400   # 어두운 덮개가 사라지고 마우스 올림 효과도 풀린 뒤에 찍기',
+    '    $bmp = New-Object System.Drawing.Bitmap $W, $H; $g = [System.Drawing.Graphics]::FromImage($bmp)',
+    '    $g.CopyFromScreen($L, $T, 0, 0, (New-Object System.Drawing.Size $W, $H)); $g.Dispose()',
+    '    $ib = [Img]::InkBox($bmp, 40)   # 글자 둘레만 남김 (버튼 전체·여백을 잡아도 글자 모양으로 찾게)',
+    '    if($ib.Width -lt 3 -or $ib.Height -lt 3){ Write-Host "   드래그한 곳에 글자가 안 보여요. 글자를 감싸게 다시 드래그하세요." -ForegroundColor Yellow; return $false }',
+    '    $cut = $bmp.Clone($ib, $bmp.PixelFormat)',
     '    $d = Split-Path -Parent $p; if(-not (Test-Path -LiteralPath $d)){ New-Item -ItemType Directory -Path $d -Force | Out-Null }',
-    '    $bmp = New-Object System.Drawing.Bitmap $script:rect.Width, $script:rect.Height; $g = [System.Drawing.Graphics]::FromImage($bmp)',
-    '    $g.CopyFromScreen($script:vsLeft + $script:rect.X, $script:vsTop + $script:rect.Y, 0, 0, (New-Object System.Drawing.Size $script:rect.Width, $script:rect.Height)); $g.Dispose()',
-    '    $bmp.Save($p, [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()',
+    '    $cut.Save($p, [System.Drawing.Imaging.ImageFormat]::Png)',
     '    Write-Host ("   그림으로 기억했어요: " + $p); return $true',
     '  } catch { Write-Host ("[주의] 저장하지 못했어요: " + $_.Exception.Message) -ForegroundColor Yellow; return $false }',
+    '  finally { if($cut){ $cut.Dispose() }; if($bmp){ $bmp.Dispose() }; try { [System.Windows.Forms.Cursor]::Position = $cp } catch {} }',
     '}',
     '# 화면에서 글자를 찾아 가운데 좌표 반환 (띄어쓰기·대소문자 무시, 위→아래·왼→오른 순 n번째)',
     '# 다시 찾을 때마다 읽는 방식을 바꿈. 비슷한 글자(90% 이상, 10글자에 1글자 틀림까지)는 마지막 수단:',
     '#   끝까지 똑같은 글자가 안 보였고 · 몇 번째=1 · 누르는 동작이고($nearOk: 조건·찾기만·결과 변수는 안 씀) · 숫자·불/미/없 같은 글자가 같고 · 후보가 한 곳일 때만',
     'function FindText($target, $x1, $y1, $x2, $y2, $nth, $retries, $everyMs, $sharp, $nearOk = $true){',
     '  $script:lastErr = ""; $script:ocrBest = @(-1.0, \'\'); $script:ocrSeen = @(0, 0)',
-    '  if(-not $script:ocrReady){ $script:lastErr = "noocr"; return $null }',
     '  $t = (([string]$target) -replace "\\s", "").ToLower()',
     '  if($t -eq ""){ $script:lastErr = "notfound"; return $null }',
     '  if($nth -lt 1){ $nth = 1 }',
+    '  if(-not $script:ocrReady -and ($nth -gt 1 -or -not $script:imgReady -or -not (Test-Path -LiteralPath (TextImgPath $target)))){ $script:lastErr = "noocr"; return $null }   # 글자 읽기가 없어도 기억한 그림은 찾음',
     '  $allow = $(if($nearOk -and $nth -eq 1){ [int][Math]::Floor($t.Length * 0.1 + 1e-9) } else { 0 })',
     '  $tdig = $t -replace "\\D", ""',
     '  $near = New-Object System.Collections.ArrayList',
     '  for($k = 0; $k -lt $retries; $k++){',
     '    Pump',
     '    $ir = TextImgFind $target $x1 $y1 $x2 $y2 $nth; if($null -ne $ir){ return $ir }   # 기억한 그림 먼저',
-    '    $cap = OcrGrab $x1 $y1 $x2 $y2',
+    '    $cap = $(if($script:ocrReady){ OcrGrab $x1 $y1 $x2 $y2 } else { $null })',
     '    if($null -ne $cap){',
     '      try {',
     '        $kinds = @(OcrKinds $sharp (OcrDark $cap.B))',
@@ -3244,7 +3255,7 @@ function psOcrFuncs() {
     '    $u = Uniq $near; $script:ocrSeen[1] = $u.Count',
     '    if($u.Count -eq 1){ $h = $u[0]; Write-Host ("   (똑같은 글자는 끝까지 없어 " + [int][Math]::Floor($h.Sim * 100) + "% 비슷한 \'" + $h.Txt + "\' 을(를) 찾은 것으로 봐요)"); return @($h.X, $h.Y) }',
     '  }',
-    '  $script:lastErr = "notfound"; return $null',
+    '  $script:lastErr = $(if($script:ocrReady){ "notfound" } else { "noocr" }); return $null',
     '}',
     'function CursorXY(){ $pt=New-Object POINT; [U]::GetCursorPos([ref]$pt)|Out-Null; return @($pt.X,$pt.Y) }',
   ];
@@ -3330,6 +3341,41 @@ const IMG_CORE_CS = [
   '    }',
   '    return bad;',
   '  }',
+  '  static bool Near(byte[] a, int i, byte[] b, int j, int tol) { return Math.Abs(a[i] - b[j]) <= tol && Math.Abs(a[i + 1] - b[j + 1]) <= tol && Math.Abs(a[i + 2] - b[j + 2]) <= tol; }',
+  '  // 배경(네 귀퉁이에 가장 많은 색)과 다른 점만 둘러싼 네모 + 여백 2 → {x1,y1,x2,y2} (x2·y2 는 끝 다음 칸). 글자가 없으면 null',
+  '  public static int[] InkCore(byte[] a, int st, int w, int h, int tol) {',
+  '    int[] cx = new int[] { 0, w - 1, 0, w - 1 }, cy = new int[] { 0, 0, h - 1, h - 1 };',
+  '    int bi = 0, bc = -1;',
+  '    for (int i = 0; i < 4; i++) { int c = 0; for (int j = 0; j < 4; j++) if (Near(a, cy[i] * st + cx[i] * 4, a, cy[j] * st + cx[j] * 4, tol)) c++; if (c > bc) { bc = c; bi = cy[i] * st + cx[i] * 4; } }',
+  '    int x1 = w, y1 = h, x2 = -1, y2 = -1;',
+  '    for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) { if (!Near(a, y * st + x * 4, a, bi, tol)) { if (x < x1) x1 = x; if (x > x2) x2 = x; if (y < y1) y1 = y; if (y > y2) y2 = y; } }',
+  '    if (x2 < 0) return null;',
+  '    return new int[] { Math.Max(0, x1 - 2), Math.Max(0, y1 - 2), Math.Min(w, x2 + 3), Math.Min(h, y2 + 3) };',
+  '  }',
+  '  // 모든 점이 tol 안으로 같을 때만 (한 글자·숫자만 달라도 아님 → 비슷한 다른 단추를 누르지 않게). 글자 점을 먼저 비교해 빈 곳은 바로 아님',
+  '  // (ox,oy) = 찍은 곳의 화면 좌표. box 면 가운데가 (x1,y1)~(x2,y2) 안인 것만. 위→아래(12줄 단위)·왼→오른 순 첫째의 가운데 {x,y}, 없으면 {MinValue,MinValue}',
+  '  public static int[] ExactCore(byte[] sb, int sw, int sh, int ss, byte[] tb, int tw, int th, int ts, int tol, int ox, int oy, bool box, int x1, int y1, int x2, int y2) {',
+  '    int[] res = new int[] { int.MinValue, int.MinValue };',
+  '    if (tw < 1 || th < 1 || tw > sw || th > sh) return res;',
+  '    List<int> ink = new List<int>(), rest = new List<int>();',
+  '    for (int y = 0; y < th; y++) for (int x = 0; x < tw; x++) { if (Near(tb, y * ts + x * 4, tb, 0, tol)) rest.Add(y * tw + x); else ink.Add(y * tw + x); }',
+  '    ink.AddRange(rest); int[] o = ink.ToArray();',
+  '    int bx = 0, by = 0; bool got = false;',
+  '    for (int y = 0; y <= sh - th; y++) {',
+  '      if (got && oy + y + th / 2 > by + 12) break;',
+  '      for (int x = 0; x <= sw - tw; x++) {',
+  '        bool ok = true;',
+  '        for (int k = 0; k < o.Length; k++) { int p = o[k], px = p % tw, py = p / tw; if (!Near(sb, (y + py) * ss + (x + px) * 4, tb, py * ts + px * 4, tol)) { ok = false; break; } }',
+  '        if (!ok) continue;',
+  '        int cx = ox + x + tw / 2, cy = oy + y + th / 2;',
+  '        if (box && (cx < x1 || cx > x2 || cy < y1 || cy > y2)) continue;',
+  '        if (!got || Row(cy) < Row(by) || (Row(cy) == Row(by) && cx < bx)) { bx = cx; by = cy; got = true; }',
+  '      }',
+  '    }',
+  '    if (got) { res[0] = bx; res[1] = by; }',
+  '    return res;',
+  '  }',
+  '  static int Row(int y) { return (int)Math.Floor(y / 12.0); }   // 파이썬 y // 12 와 같게 (음수 좌표도)',
 ];
 function psImgFuncs() {
   return [
@@ -3343,9 +3389,31 @@ function psImgFuncs() {
     '    try { stride = d.Stride; byte[] a = new byte[d.Stride * b.Height]; Marshal.Copy(d.Scan0, a, 0, a.Length); return a; }',
     '    finally { b.UnlockBits(d); }',
     '  }',
-    '  // 찾으면 화면 좌표(가운데) {x,y}, 없으면 {-1,-1}. x2<=x1 이면 화면 전체',
+    '  // 글자를 기억한 그림: 글자 둘레 네모 (InkCore). 글자가 없으면 빈 네모',
+    '  public static Rectangle InkBox(Bitmap b, int tol) {',
+    '    int st; byte[] a = Pixels(b, out st); int[] r = InkCore(a, st, b.Width, b.Height, tol);',
+    '    return r == null ? Rectangle.Empty : new Rectangle(r[0], r[1], r[2] - r[0], r[3] - r[1]);',
+    '  }',
+    '  // 글자를 기억한 그림 찾기 (ExactCore). 네모가 있으면 그림 크기만큼 넓혀 찍음',
+    '  public static int[] FindExact(string path, int x1, int y1, int x2, int y2, int tol) {',
+    '    int[] res = new int[] { int.MinValue, int.MinValue };',
+    '    bool box = x2 > x1 && y2 > y1;',
+    '    Bitmap tpl = null, scr = null;',
+    '    try {',
+    '      using (Bitmap raw = new Bitmap(path)) { tpl = new Bitmap(raw); }',
+    '      int tw = tpl.Width, th = tpl.Height;',
+    '      Rectangle vs = SystemInformation.VirtualScreen;',
+    '      Rectangle area = box ? Rectangle.Intersect(vs, Rectangle.FromLTRB(x1 - tw, y1 - th, x2 + tw, y2 + th)) : vs;',
+    '      if (area.Width < tw || area.Height < th) return res;',
+    '      scr = new Bitmap(area.Width, area.Height, PixelFormat.Format32bppArgb);',
+    '      using (Graphics g = Graphics.FromImage(scr)) { g.CopyFromScreen(area.Left, area.Top, 0, 0, scr.Size); }',
+    '      int ss, ts; byte[] sb = Pixels(scr, out ss); byte[] tb = Pixels(tpl, out ts);',
+    '      return ExactCore(sb, area.Width, area.Height, ss, tb, tw, th, ts, tol, area.Left, area.Top, box, x1, y1, x2, y2);',
+    '    } finally { if (tpl != null) tpl.Dispose(); if (scr != null) scr.Dispose(); }',
+    '  }',
+    '  // 찾으면 화면 좌표(가운데) {x,y}, 없으면 {MinValue,MinValue} (왼쪽 모니터는 좌표가 음수라 -1 로는 못 가림). x2<=x1 이면 화면 전체',
     '  public static int[] Find(string path, int x1, int y1, int x2, int y2, int tol, int sim, bool bright, int nth) {',
-    '    int[] res = new int[] { -1, -1 };',
+    '    int[] res = new int[] { int.MinValue, int.MinValue };',
     '    Rectangle area = (x2 > x1 && y2 > y1) ? new Rectangle(x1, y1, x2 - x1, y2 - y1) : SystemInformation.VirtualScreen;',
     '    Bitmap tpl = null, scr = null;',
     '    try {',
@@ -3372,8 +3440,8 @@ function psImgFuncs() {
     '  if(-not $script:imgReady){ $script:lastErr = "noimg"; return $null }',
     '  for($k = 0; $k -lt $retries; $k++){',
     '    Pump',
-    '    try { $r = [Img]::Find([string]$path, [int]$x1, [int]$y1, [int]$x2, [int]$y2, [int]$tol, [int]$sim, [bool]$bright, [int]$nth) } catch { $r = @(-1, -1) }',
-    '    if($r[0] -ge 0){ return @($r[0], $r[1]) }',
+    '    try { $r = [Img]::Find([string]$path, [int]$x1, [int]$y1, [int]$x2, [int]$y2, [int]$tol, [int]$sim, [bool]$bright, [int]$nth) } catch { $r = @([int]::MinValue, 0) }',
+    '    if($r[0] -ne [int]::MinValue){ return @($r[0], $r[1]) }   # 왼쪽 모니터면 좌표가 음수',
     '    if($k -lt $retries - 1){ WaitMs $everyMs }',
     '  }',
     '  $script:lastErr = "notfound"; return $null',
@@ -3484,7 +3552,7 @@ function genPY(l, opts = {}) {
   P.push('# -*- coding: utf-8 -*-');
   P.push(`# 매크로: ${(l.name || '').replace(/[\r\n]/g, ' ')} (설계소 ${APP_VERSION})`);
   P.push('# 실행: 같이 받은 "...-python.bat" 을 더블클릭 (처음 한 번 필요한 부품을 깔고 실행). 직접 하려면  pip install pyautogui pygetwindow keyboard pyperclip  후  python "이파일.py"');
-  P.push('#  (화면 글자 읽기·글자 찾기:  pip install winocr pillow  / 이미지 찾기:  pip install opencv-python pillow  / 웹 요소 찾기:  pip install uiautomation  / 엑셀 칸 입력:  pip install pywin32  / 클립보드 이미지:  pip install pillow )');
+  P.push('#  (화면 글자 읽기:  pip install winocr pillow  / 글자 찾기:  pip install winocr pillow opencv-python (opencv = 기억한 그림으로 찾기)  / 이미지 찾기:  pip install opencv-python pillow  / 웹 요소 찾기:  pip install uiautomation  / 엑셀 칸 입력:  pip install pywin32  / 클립보드 이미지:  pip install pillow )');
   P.push(`#  단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.startNowLabel} 예약 즉시시작·오류 때 건너뛰기, ${CTRL_KEYS.restartLabel} 재실행 (keyboard 설치 시)`);
   P.push('#  급할 때: 마우스를 화면 왼쪽 맨 위 구석으로 휙 옮기면 멈춥니다.');
   P.push('import time, webbrowser, datetime, os, sys, re');
@@ -3512,7 +3580,7 @@ function genPY(l, opts = {}) {
   P.push("PASTE_MOD = 'command' if sys.platform == 'darwin' else 'ctrl'");
   P.push('_paused = {"v": False}; _stop = {"v": False}; _restart = {"v": False}; _can_restart = {"v": False}; _last_err = [""]');
   P.push('_step = {"v": False}   # 한 단계씩 실행(--step): 동작마다 멈춤');
-  P.push('_ev = {"f6": False, "f7": False, "f8": False}; _in_err = {"v": False}; _ign = {"v": False}');
+  P.push('_ev = {"f6": False, "f7": False, "f8": False}; _in_err = {"v": False}; _ign = {"v": False}; _learn_on = {"v": False}');
   P.push('class _Restart(Exception): pass');
   P.push('def _hk(fn):   # 매크로가 받은 F7~F10 은 앞 프로그램(엑셀 등)에 안 넘김. 매크로가 직접 보내는 F키(_ign)는 그대로 통과');
   P.push('    def h():');
@@ -3528,10 +3596,12 @@ function genPY(l, opts = {}) {
   P.push("    keyboard.add_hotkey('f7', _hk(lambda: _ev.__setitem__('f7', True)), suppress=True)");
   P.push("    keyboard.add_hotkey('f9', _hk(lambda: _stop.__setitem__('v', True)), suppress=True)");
   P.push("    keyboard.add_hotkey('f10', _hk(lambda: _restart.__setitem__('v', True)), suppress=True)");
-  P.push("    def _on_f6():   # F6 은 오류로 멈췄을 때만 받음 (그 밖엔 앞 프로그램으로 그대로)");
-  P.push('        if _ign["v"] or not _in_err["v"]: return True');
-  P.push('        _ev["f6"] = True; return False');
-  P.push("    keyboard.add_hotkey('f6', _on_f6, suppress=True)");
+  if (needsTextFind(l.steps)) {
+    P.push("    def _on_f6():   # F6 은 글자를 못 찾아 멈췄을 때만 받음 (그 밖엔 앞 프로그램으로 그대로)");
+    P.push('        if _ign["v"] or not (_in_err["v"] and _learn_on["v"]): return True');
+    P.push('        _ev["f6"] = True; return False');
+    P.push("    keyboard.add_hotkey('f6', _on_f6, suppress=True)");
+  }
   P.push(`    print("단축키: ${CTRL_KEYS.pauseLabel} 일시정지/재생, ${CTRL_KEYS.stopLabel} 종료, ${CTRL_KEYS.restartLabel} 재실행")`);
   P.push('except Exception:');
   P.push('    keyboard = None');
@@ -3690,7 +3760,7 @@ function genPY(l, opts = {}) {
   P.push('    st = show_console()');
   P.push('    try:');
   P.push('        if keyboard:');
-  P.push('            _ev["f6"] = _ev["f7"] = _ev["f8"] = False; _in_err["v"] = True   # 이전에 눌러 둔 키는 무시');
+  P.push('            _ev["f6"] = _ev["f7"] = _ev["f8"] = False; _in_err["v"] = True; _learn_on["v"] = bool(learn)   # 이전에 눌러 둔 키는 무시');
   P.push('            while True:');
   P.push('                time.sleep(0.08)');
   P.push('                if _stop["v"]: raise SystemExit("종료")');
@@ -3706,7 +3776,7 @@ function genPY(l, opts = {}) {
   P.push('        if a == "g" and learn: hide_console(st); learn(); return "retry"');
   P.push('        return "skip" if a == "s" else "retry"');
   P.push('    finally:');
-  P.push('        _in_err["v"] = False; hide_console(st)');
+  P.push('        _in_err["v"] = False; _learn_on["v"] = False; hide_console(st)');
   P.push('');
   P.push('# ==== PURE-BEGIN (변수·비교: 화면과 상관없는 계산) ====');
   P.push('V = {}');
@@ -3767,6 +3837,7 @@ function genPY(l, opts = {}) {
   P.push('        _p = os.path.join(_d, str(name) + ".png")');
   P.push('        if os.path.exists(_p): return _p');
   P.push('    return os.path.join(IMGDIRS[0], str(name) + ".png")');
+  if (needsTextFind(l.steps)) P.push(pack ? 'TXTIMGDIR = IMGSHARED   # 글자를 기억한 그림은 공용 폴더에 (글자 찾기 시험·이미지 관리와 같은 곳)' : 'TXTIMGDIR = IMGDIR   # 글자를 기억한 그림 폴더');
   P.push('def _vorigin():   # 모니터 여러 대일 때 전체 화면의 왼쪽 위 좌표(음수일 수 있음)');
   P.push('    try:');
   P.push('        import ctypes; u = ctypes.windll.user32; return u.GetSystemMetrics(76), u.GetSystemMetrics(77)');
@@ -4019,7 +4090,7 @@ function pyFindStep(s) {
   if (s.type === 'textclick') L.push("    if _last_err[0] == 'notfound': _msg += ocr_hint()   # 화면에서 무엇을 읽었는지 같이 보여줌");
   if (s.notfound === 'continue') L.push('    print("[주의] " + _msg + " -> 건너뛰어요"); break');
   else if (s.notfound === 'stop') L.push('    print("[오류] " + _msg + " -> 매크로를 멈춰요"); focus_console(); raise SystemExit("멈춤")');
-  else if (s.type === 'textclick') L.push(`    if error_pause(_msg, lambda: text_remember(${pyFill(name)})) == 'skip': break   # F6 = 이 글자를 그림으로 기억`);
+  else if (s.type === 'textclick' && nth === 1) L.push(`    if error_pause(_msg, (lambda: text_remember(${pyFill(name)})) if globals().get("_imgcv") else None) == 'skip': break   # F6 = 이 글자를 그림으로 기억 (opencv 있을 때)`);
   else L.push("    if error_pause(_msg) == 'skip': break");
   const x = `_p[0] + ${num(s.dx)}`, y = `_p[1] + ${num(s.dy)}`;
   if (s.act === 'move') L.push(`if _p: pyautogui.moveTo(${x}, ${y}, duration=0.2)`);
@@ -4170,32 +4241,74 @@ function pyOcrFuncs() {
     '    return u[nth - 1] if len(u) >= nth else None',
     'def _txt_img_name(target):   # 글자를 그림으로 기억할 때 이름: 글자-OOO (띄어쓰기·파일에 못 쓰는 글자 뺌)',
     '    return "글자-" + re.sub(r\'[\\\\/:*?"<>|`\\s]\', \'\', str(target))[:56]',
-    'def _txt_img_find(target, bbox, nth):   # 기억한 그림이 있으면 그걸로 먼저 찾음 (글꼴·배율이 같을 때 정확)',
-    '    if not globals().get("_imgcv"): return None',
-    '    p = img_path(_txt_img_name(target))',
+    'def _txt_img_path(target): return os.path.join(TXTIMGDIR, _txt_img_name(target) + ".png")   # 기억한 그림은 한 폴더에만 (시험 도구·이미지 관리와 같은 곳)',
+    'def _ink_box(im, tol=40):   # 배경(네 귀퉁이에 가장 많은 색)과 다른 점만 둘러싼 네모 + 여백 2 (글자가 없으면 None)',
+    '    from PIL import Image as _I, ImageChops as _C',
+    '    im = im.convert("RGB"); w, h = im.size',
+    '    cs = [im.getpixel(q) for q in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1))]',
+    '    bg = max(cs, key=lambda c: sum(all(abs(c[i] - d[i]) <= tol for i in range(3)) for d in cs))',
+    '    r, g, b = _C.difference(im, _I.new("RGB", im.size, bg)).split()',
+    '    bb = _C.lighter(_C.lighter(r, g), b).point(lambda v: 255 if v > tol else 0).getbbox()',
+    '    if not bb: return None',
+    '    return (max(0, bb[0] - 2), max(0, bb[1] - 2), min(w, bb[2] + 2), min(h, bb[3] + 2))',
+    'def _txt_img_match(hay, tpl, tol=40):   # 모든 점이 같을 때만 (한 글자·숫자만 달라도 아님 → 비슷한 다른 단추를 누르지 않게). 왼쪽 위 좌표들',
+    '    import numpy as _np',
+    '    h8 = _np.asarray(hay.convert("RGB")); t8 = _np.asarray(tpl.convert("RGB")); th, tw = t8.shape[:2]',
+    '    if th > h8.shape[0] or tw > h8.shape[1]: return []',
+    '    res = cv2.matchTemplate(h8, t8, cv2.TM_SQDIFF).ravel()',
+    '    k = min(500, res.size); idx = _np.argpartition(res, k - 1)[:k]   # 차이가 가장 작은 자리 몇 개만 후보로',
+    '    idx = idx[res[idx] <= float(tol * tol * 3) * tw * th]; idx = idx[_np.argsort(res[idx], kind="stable")]',
+    '    W = h8.shape[1] - tw + 1; ti = t8.astype(_np.int16); out = []',
+    '    for i in idx:',
+    '        y, x = int(i) // W, int(i) % W',
+    '        if int(_np.abs(h8[y:y + th, x:x + tw].astype(_np.int16) - ti).max()) <= tol: out.append((x, y))',
+    '    return out',
+    'def _txt_img_find(target, bbox, nth):   # 기억한 그림이 있으면 그걸로 먼저 찾음: 점 하나하나가 같을 때만 (글꼴·배율·색이 같을 때). 몇 번째가 1일 때만',
+    '    if nth > 1 or not globals().get("_imgcv"): return None',
+    '    p = _txt_img_path(target)',
     '    if not os.path.exists(p): return None',
-    '    r = find_img(p, 0.9, False, bbox, nth, 1, 0); _last_err[0] = ""',
-    '    return r',
-    'def text_remember(target):   # 못 찾은 글자를 그림으로 기억: 화면에서 그 글자를 드래그 → 글자-OOO.png',
     '    try:',
-    '        box = _drag_box("\'" + str(target) + "\' 글자 부분을 마우스로 드래그하세요  (그림으로 기억해 다음부터 그림으로 먼저 찾아요 · ESC = 취소)")',
+    '        tpl = Image.open(p); tpl.load(); tw, th = tpl.size',
+    '        if bbox: gb = (bbox[0] - tw, bbox[1] - th, bbox[2] + tw, bbox[3] + th); hay = ImageGrab.grab(bbox=gb, all_screens=True); ox, oy = gb[0], gb[1]   # 네모보다 그림이 조금 커도 찾게 그림 크기만큼 넓혀 찍음',
+    '        else: hay = ImageGrab.grab(all_screens=True); ox, oy = _vorigin()',
+    '        pts = [(ox + x + tw // 2, oy + y + th // 2) for x, y in _txt_img_match(hay, tpl)]',
+    '    except Exception: return None',
+    '    if bbox: pts = [q for q in pts if bbox[0] <= q[0] <= bbox[2] and bbox[1] <= q[1] <= bbox[3]]   # 가운데가 네모 안인 것만',
+    '    pts.sort(key=lambda q: (q[1] // 12, q[0]))',
+    '    return pts[0] if pts else None',
+    'def text_remember(target):   # 못 찾은 글자를 그림으로 기억: 화면에서 그 글자를 드래그 → 글자-OOO.png',
+    '    if not globals().get("_imgcv"): print("[주의] 이 PC에서 그림 찾기(opencv)를 쓸 수 없어 기억하지 못해요  (pip install opencv-python pillow)"); return False',
+    '    try:',
+    '        box = _drag_box("\'" + str(target) + "\' 글자 부분을 마우스로 드래그하세요  (그림으로 기억해 다음부터 그림으로 먼저 찾아요 · ESC·오른쪽 클릭 = 취소)")',
     '    except Exception as _e: print("[주의] 그림으로 기억하지 못했어요:", _e); return False',
     '    if not box: print("   기억을 취소했어요"); return False',
     '    x1, y1, x2, y2 = box',
     '    if x2 - x1 < 3 or y2 - y1 < 3: print("   너무 작아요. F6 으로 다시 드래그하세요"); return False',
-    '    time.sleep(0.2)   # 어두운 덮개가 사라진 뒤에 찍기',
-    '    p = img_path(_txt_img_name(target))',
+    '    p = _txt_img_path(target); cp = None',
     '    try:',
+    '        import ctypes; u = ctypes.windll.user32; cp = pyautogui.position()   # 마우스를 글자에서 치우고 찍음 (단추가 마우스 올린 색으로 찍히지 않게)',
+    '        vx, vy = _vorigin(); mx, my = x1 - 30, y1 - 30',
+    '        if mx < vx or my < vy: mx, my = min(vx + u.GetSystemMetrics(78) - 1, x2 + 30), min(vy + u.GetSystemMetrics(79) - 1, y2 + 30)',
+    '        u.SetCursorPos(int(mx), int(my))',
+    '    except Exception: pass',
+    '    try:',
+    '        time.sleep(0.4)   # 어두운 덮개가 사라지고 마우스 올림 효과도 풀린 뒤에 찍기',
+    '        im = ImageGrab.grab(bbox=(x1, y1, x2, y2), all_screens=True)',
+    '        ib = _ink_box(im)   # 글자 둘레만 남김 (버튼 전체·여백을 잡아도 글자 모양으로 찾게)',
+    '        if not ib or ib[2] - ib[0] < 3 or ib[3] - ib[1] < 3: print("   드래그한 곳에 글자가 안 보여요. 글자를 감싸게 다시 드래그하세요."); return False',
     '        os.makedirs(os.path.dirname(p), exist_ok=True)',
-    '        from PIL import ImageGrab as _IG',
-    '        _IG.grab(bbox=(x1, y1, x2, y2), all_screens=True).save(p)',
+    '        im.crop(ib).save(p)',
     '        print("   그림으로 기억했어요:", p); return True',
     '    except Exception as _e: print("[주의] 저장하지 못했어요:", _e); return False',
+    '    finally:',
+    '        try:',
+    '            if cp: ctypes.windll.user32.SetCursorPos(int(cp[0]), int(cp[1]))',
+    '        except Exception: pass',
     'def find_text(target, bbox, nth, retries, every, sharp=False, near_ok=True):   # 띄어쓰기·대소문자 무시, 위→아래·왼→오른 순 n번째',
     '    t = re.sub(r\'\\s\', \'\', str(target)).lower()',
     '    _last_err[0] = ""; _ocr_best[0] = -1.0; _ocr_best[1] = ""; _ocr_seen[0] = _ocr_seen[1] = 0',
-    '    if not _ocr: _last_err[0] = "noocr"; return None',
     '    if not t: _last_err[0] = "notfound"; return None',
+    '    if not _ocr and (nth > 1 or not globals().get("_imgcv") or not os.path.exists(_txt_img_path(target))): _last_err[0] = "noocr"; return None   # 글자 읽기가 없어도 기억한 그림은 찾음',
     '    # 비슷한 글자(90% 이상, 10글자에 1글자 틀림까지)는 마지막 수단: 몇 번째=1 · 누르는 동작일 때(조건·찾기만·결과 변수는 안 씀) · 숫자·불/미/없 같은 글자가 같을 때 · 후보가 한 곳일 때만',
     '    allow = int(len(t) * 0.1 + 1e-9) if (near_ok and nth == 1) else 0',
     '    tdig = re.sub(r\'\\D\', \'\', t); near = []',
@@ -4203,7 +4316,7 @@ function pyOcrFuncs() {
     '        control()',
     '        p = _txt_img_find(target, bbox, nth)   # 기억한 그림 먼저',
     '        if p: return p',
-    '        g = _grab(bbox)',
+    '        g = _grab(bbox) if _ocr else None',
     '        if g:',
     '            kinds = ocr_kinds(sharp, _dark(g[0]))   # 다시 찾을 때마다 읽는 방식을 바꿔 가며 (한 번만 보는 조건은 모두)',
     '            for kind in (kinds if retries == 1 else (kinds[k % len(kinds)],)):',
@@ -4235,7 +4348,7 @@ function pyOcrFuncs() {
     '        if len(u) == 1:',
     '            print("   (똑같은 글자는 끝까지 없어 " + str(int(u[0][3] * 100)) + "% 비슷한 \'" + u[0][2] + "\' 을(를) 찾은 것으로 봐요)")',
     '            return (u[0][0], u[0][1])',
-    '    _last_err[0] = "notfound"; return None',
+    '    _last_err[0] = "notfound" if _ocr else "noocr"; return None',
   ];
 }
 /* 엑셀 칸에 입력 (실제 Excel 을 COM 으로 조작 — pywin32). 값만 넣어 칸의 원래 서식을 그대로 씀 */
@@ -4534,9 +4647,21 @@ function pyDragBoxFn() {
     '    def _up(e):',
     '        st["box"] = (min(st["sx"], e.x) + ox, min(st["sy"], e.y) + oy, max(st["sx"], e.x) + ox, max(st["sy"], e.y) + oy); root.destroy()',
     '    cv.bind("<Button-1>", _down); cv.bind("<B1-Motion>", _move); cv.bind("<ButtonRelease-1>", _up)',
-    '    root.bind("<Escape>", lambda e: root.destroy())',
+    '    root.bind("<Escape>", lambda e: root.destroy()); cv.bind("<Button-3>", lambda e: root.destroy())   # 오른쪽 클릭 = 취소',
     '    root.after(80, lambda: (root.focus_force(), cv.focus_set()))   # 테두리 없는 창도 Esc 를 받게',
-    '    root.mainloop()',
+    '    _esc = {"v": False}; _hh = None; _kb = globals().get("keyboard")',
+    '    try:   # 덮개가 키보드를 못 받을 때(F6 으로 띄우면 앞 프로그램이 그대로 앞)도 Esc 는 덮개가 받고 앞 프로그램엔 안 넘김',
+    '        if _kb: _hh = _kb.add_hotkey("esc", lambda: (_esc.__setitem__("v", True), False)[1], suppress=True)',
+    '    except Exception: _hh = None',
+    '    def _poll():',
+    '        if _esc["v"]: root.destroy(); return',
+    '        root.after(50, _poll)',
+    '    root.after(50, _poll)',
+    '    try: root.mainloop()',
+    '    finally:',
+    '        if _hh is not None:',
+    '            try: _kb.remove_hotkey(_hh)',
+    '            except Exception: pass',
     '    return st["box"]',
   ];
 }
@@ -4731,7 +4856,7 @@ function psSnipFn() {
 }
 
 /* --- 글자 찾기 시험 도우미: 지금 화면에서 그 글자가 매크로 방식으로 찾아지는지 (무설치, 매크로와 같은 OCR 코드) --- */
-function genOcrTester() {
+function genOcrTester(imgDir = 'images') {
   return [
     '# -*- 글자 찾기 시험 -*-  (매크로의 "글자 찾아 클릭"과 같은 방법으로, 지금 화면에서 그 글자가 찾아지는지 시험)',
     'try {',
@@ -4743,14 +4868,15 @@ function genOcrTester() {
     'function Pump(){ [System.Windows.Forms.Application]::DoEvents() }',
     'function WaitMs($ms){ Start-Sleep -Milliseconds $ms }',
     'function PumpQuit(){}   # 읽는 도중엔 창 이벤트를 처리하지 않음 (단추를 또 눌러 겹쳐 실행되지 않게)',
-    "# 기억한 그림 폴더: PC로 받기(tools 폴더 안)면 공용 macro-studio\\images, 따로 받았으면 이 파일 옆 images",
-    "$IMGDIRS = @($(if((Split-Path -Leaf $PSScriptRoot) -eq 'tools'){ Join-Path (Split-Path -Parent $PSScriptRoot) 'images' } else { Join-Path $PSScriptRoot 'images' }))",
-    "function ImgPath($name){ return (Join-Path $IMGDIRS[0] ([string]$name + '.png')) }",
+    "# 기억한 그림 폴더: PC로 받기(tools 폴더 안)면 공용 macro-studio\\images, 따로 받았으면 매크로와 같은 이미지 폴더 (이 파일을 매크로 옆에 두기)",
+    `$TXTIMGDIR = ${psStr(imgDir)}; if(-not [System.IO.Path]::IsPathRooted($TXTIMGDIR)){ $TXTIMGDIR = Join-Path $PSScriptRoot $TXTIMGDIR }`,
+    "if((Split-Path -Leaf $PSScriptRoot) -eq 'tools' -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'macros.json'))){ $TXTIMGDIR = Join-Path (Split-Path -Parent $PSScriptRoot) 'images' }",
     ...psOcrFuncs(),
     ...psImgFuncs(),
     ...psSnipFn(),
     '# 쓴 글자를 지금 화면에서 찾아봄: 매크로의 "글자 찾아 클릭"과 똑같은 방법(읽는 방식 4가지)으로',
     '$KNAME = @{ n = "그대로"; s = "진하게"; b = "진하고 굵게"; i = "색 반전" }',
+    '$VARPAT = "\\{[^{}\\s]+\\}"; $VARMSG = "{변수} 는 실제 값으로 적어 주세요 (예: {버튼} 대신 variables.txt 에 적은 값 \'확인\'). 매크로는 값을 넣은 글자로 찾고 기억해요."',
     'function TryKind($cap, $t, $kind){',
     '  $sw = [System.Diagnostics.Stopwatch]::StartNew(); $hits = New-Object System.Collections.ArrayList; $lines = New-Object System.Collections.ArrayList',
     '  $best = -1.0; $bestText = ""; $near = New-Object System.Collections.ArrayList; $allow = [int][Math]::Floor($t.Length * 0.1 + 1e-9); $tdig = $t -replace "\\D", ""',
@@ -4783,7 +4909,9 @@ function genOcrTester() {
     'function DoTest($pick){',
     '  $t = (([string]$tb.Text) -replace "\\s", "").ToLower()',
     '  if($t -eq ""){ $out.Text = "찾을 글자를 적어 주세요."; return }',
-    '  if(-not $script:ocrReady){ $out.Text = "이 PC에서 화면 글자 읽기(OCR)를 쓸 수 없어요 (윈도우 10/11 의 한국어 OCR 이 필요해요)."; return }',
+    '  if(([string]$tb.Text) -match $VARPAT){ $out.Text = $VARMSG; return }',
+    '  $imgPath = TextImgPath $tb.Text; $hasImg = Test-Path -LiteralPath $imgPath',
+    '  if(-not $script:ocrReady -and -not $hasImg){ $out.Text = "이 PC에서 화면 글자 읽기(OCR)를 쓸 수 없어요 (윈도우 10/11 의 한국어 OCR 이 필요해요).`r`n늘 같은 모양의 글자면 [그림으로 기억]으로 기억해 두면 그림으로는 찾아요."; return }',
     '  $x1 = 0; $y1 = 0; $x2 = 0; $y2 = 0',
     '  $form.Hide(); Start-Sleep -Milliseconds 350',
     '  if($pick){',
@@ -4792,10 +4920,13 @@ function genOcrTester() {
     '    $x1 = $script:vsLeft + $script:rect.X; $y1 = $script:vsTop + $script:rect.Y; $x2 = $x1 + $script:rect.Width; $y2 = $y1 + $script:rect.Height',
     '    Start-Sleep -Milliseconds 200',
     '  }',
-    '  $imgPath = ImgPath (TextImgName $tb.Text); $hasImg = Test-Path -LiteralPath $imgPath',
     '  $imgHit = $(if($hasImg){ TextImgFind $tb.Text $x1 $y1 $x2 $y2 1 } else { $null })   # 기억한 그림 (매크로는 이걸 먼저 씀)',
-    '  $cap = OcrGrab $x1 $y1 $x2 $y2',
+    '  $cap = $(if($script:ocrReady){ OcrGrab $x1 $y1 $x2 $y2 } else { $null })',
     '  $form.Show(); $form.Activate()',
+    '  if(-not $script:ocrReady){   # 글자 읽기가 없는 PC: 기억한 그림 결과만',
+    '    $out.Text = $(if($null -ne $imgHit){ "✔ 찾아요 — 기억한 그림으로 (X " + $imgHit[0] + ", Y " + $imgHit[1] + "). 매크로는 이 그림으로 찾아요." } else { "✘ 기억한 그림이 지금 화면과 안 맞아요 (화면 배율·글꼴·테마가 바뀌었으면 [그림으로 기억]으로 다시 기억하세요)." }) + "`r`n(이 PC는 글자 읽기(OCR)를 쓸 수 없어 기억한 그림으로만 찾아요)"',
+    '    if($null -ne $imgHit){ Flash $imgHit[0] $imgHit[1] }; return',
+    '  }',
     '  if($null -eq $cap){ $out.Text = "화면을 찍지 못했어요 (화면 잠금·보안 창이면 안 돼요)."; return }',
     '  $out.Text = "읽는 중이에요... (몇 초 걸려요)"; Pump',
     '  $rs = @(); $dark = $true',
@@ -4843,9 +4974,10 @@ function genOcrTester() {
     '# 그 글자를 그림으로 기억 (매크로가 다음부터 그림으로 먼저 찾음)',
     'function DoRemember(){',
     '  if((([string]$tb.Text) -replace "\\s", "") -eq ""){ $out.Text = "기억할 글자를 먼저 적어 주세요 (매크로에 적은 그대로)."; return }',
+    '  if(([string]$tb.Text) -match $VARPAT){ $out.Text = $VARMSG; return }',
     '  $form.Hide(); Start-Sleep -Milliseconds 350',
     '  try { $ok = TextRemember $tb.Text } finally { $form.Show(); $form.Activate() }',
-    '  $p = ImgPath (TextImgName $tb.Text)',
+    '  $p = TextImgPath $tb.Text',
     '  $out.Text = $(if($ok){ "✔ 그림으로 기억했어요: " + $p + "`r`n이제 [화면 전체에서 찾기]로 확인해 보세요. 매크로는 \'" + $tb.Text + "\' 을(를) 찾을 때 이 그림으로 먼저 찾아요." } else { "기억하지 않았어요 (취소했거나 저장하지 못했어요)." })',
     '}',
     '$form = New-Object System.Windows.Forms.Form',
@@ -4854,7 +4986,7 @@ function genOcrTester() {
     '$k = 1.0; try { $gg = [System.Drawing.Graphics]::FromHwnd([IntPtr]::Zero); $k = [Math]::Max(1.0, $gg.DpiX / 96.0); $gg.Dispose() } catch {}   # 화면 배율(125~200%)에 맞춰 창 크기',
     '$form.ClientSize = New-Object System.Drawing.Size ([int](560 * $k)), ([int](460 * $k)); $form.MinimumSize = New-Object System.Drawing.Size ([int](420 * $k)), ([int](320 * $k))',
     '$top = New-Object System.Windows.Forms.FlowLayoutPanel; $top.Dock = "Top"; $top.AutoSize = $true; $top.AutoSizeMode = "GrowAndShrink"; $top.Padding = New-Object System.Windows.Forms.Padding 8   # 내용에 맞춰 높이가 늘어남(단추가 잘리지 않게)',
-    '$lbl = New-Object System.Windows.Forms.Label; $lbl.AutoSize = $true; $lbl.Text = "찾을 글자 (매크로에 적을 그대로):"; $lbl.Margin = New-Object System.Windows.Forms.Padding 0, 6, 4, 0',
+    '$lbl = New-Object System.Windows.Forms.Label; $lbl.AutoSize = $true; $lbl.Text = "찾을 글자 ({변수}는 실제 값으로):"; $lbl.Margin = New-Object System.Windows.Forms.Padding 0, 6, 4, 0',
     '$tb = New-Object System.Windows.Forms.TextBox; $tb.Width = [int](250 * $k)',
     '$chk = New-Object System.Windows.Forms.CheckBox; $chk.AutoSize = $true; $chk.Text = "진하게부터 (OCR 보정)"',
     '$bAll = New-Object System.Windows.Forms.Button; $bAll.Text = "화면 전체에서 찾기"; $bAll.AutoSize = $true',
@@ -5082,7 +5214,8 @@ function genPyBat(l, pyName) {
   const ocr = needsOcr(l.steps), img = needsImg(l.steps) || needsTextFind(l.steps), web = needsWeb(l.steps), xl = needsExcel(l.steps), ci = needsClipImg(l.steps);   // 글자 찾기도 기억한 그림으로 찾을 수 있게 opencv
   const base = ['pyautogui', 'keyboard', 'pyperclip', 'pygetwindow'];   // 모듈명 = 패키지명
   const gating = [...base];   // 이게 다 깔려 있으면 설치를 건너뜀 (winocr 는 3.15+ 에서 못 깔려 제외)
-  if (img) gating.push('cv2', 'PIL');
+  const cvOpt = img && !needsImg(l.steps);   // 글자 찾기만 있으면 opencv 는 있으면 좋은 것(기억한 그림). ARM64 파이썬엔 opencv 가 없어 매번 깔려다 실패하지 않게
+  if (img && !cvOpt) gating.push('cv2', 'PIL');
   if (web) gating.push('uiautomation');
   if (ocr) gating.push('PIL');
   if (xl) gating.push('win32com');
@@ -5097,14 +5230,15 @@ function genPyBat(l, pyName) {
     'py -3 -c "import sys" >nul 2>nul && set "PY=py -3"',
     'if not defined PY python -c "import sys" >nul 2>nul && set "PY=python"',
     'if not defined PY goto nopy',
-    `%PY% -c "import ${[...new Set(gating)].join(', ')}" >nul 2>nul && goto run`,
+    `%PY% -c "import ${[...new Set(gating)].join(', ')}${cvOpt ? "; import sysconfig; sysconfig.get_platform() == 'win-arm64' or __import__('cv2')" : ''}" >nul 2>nul && goto run`,
     'echo  First run: installing required packages. This takes a minute or two...',
     // 1) 기본 부품 먼저 (이게 되면 클릭/입력 매크로는 무조건 돌아감)
     `%PY% -m pip install --user --disable-pip-version-check ${base.join(' ')}`,
     'if errorlevel 1 goto baderr',
   ];
   // 2) 선택 부품은 따로따로, 하나 실패해도 나머지는 그대로 (전체가 함께 죽지 않게)
-  if (img) L.push('%PY% -m pip install --user --disable-pip-version-check opencv-python pillow');
+  if (img && !cvOpt) L.push('%PY% -m pip install --user --disable-pip-version-check opencv-python pillow');
+  if (cvOpt) L.push(`%PY% -c "import sys, sysconfig; sys.exit(sysconfig.get_platform() == 'win-arm64')" >nul 2>nul && %PY% -m pip install --user --disable-pip-version-check opencv-python pillow`);
   if (web) L.push('%PY% -m pip install --user --disable-pip-version-check uiautomation');
   if (xl) L.push('%PY% -m pip install --user --disable-pip-version-check pywin32');
   if (ci && !img) L.push('%PY% -m pip install --user --disable-pip-version-check pillow');
@@ -5454,9 +5588,9 @@ function doExport(kind) {
     toast('영역 선택 도우미를 받았어요 (region-picker)');
   } else if (kind === 'ocrtest') {
     const ps1 = 'text-find-test.ps1';
-    download(ps1, genOcrTester(), 'text/plain;charset=utf-8');
+    download(ps1, genOcrTester(imgDirOf(l)), 'text/plain;charset=utf-8');
     download('text-find-test-run.bat', genHelperBat(ps1), 'application/bat');
-    toast('글자 찾기 시험 도우미를 받았어요 (text-find-test)');
+    toast('글자 찾기 시험 도우미를 받았어요 (text-find-test) — 매크로 파일과 같은 폴더에 두세요');
   } else if (kind === 'imgcap') {
     const ps1 = 'image-capture.ps1';
     download(ps1, genImageCapturer(imgNames(l), imgDirOf(l)), 'text/plain;charset=utf-8');
