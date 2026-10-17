@@ -3305,11 +3305,33 @@ function genPY(l, opts = {}) {
   P.push('        if _restart["v"] and _can_restart["v"]: _restart["v"] = False; _paused["v"] = False; raise _Restart()');
   P.push('def step_gate():   # 한 단계씩: 이 동작을 실행하기 전에 멈춰서 물어봄 (--step 일 때만)');
   P.push('    if not _step["v"]: return');
-  P.push('    focus_console()   # 다른 창에 입력되지 않게 실행 창을 앞으로');
+  P.push('    if keyboard:   # 실행 창은 보이게만 하고 키보드는 대상 창에 그대로 (안 그러면 글자·단축키가 검은 창에 들어감)');
+  P.push('        print("   [한 단계씩] F8 = 이 동작 실행 / F7 = 여기부터 끝까지 그냥 / F9 = 종료")');
+  P.push('        st = show_console()');
+  P.push('        try:');
+  P.push('            _ev["f7"] = _ev["f8"] = False; _in_err["v"] = True');
+  P.push('            while True:');
+  P.push('                time.sleep(0.08)');
+  P.push('                if _stop["v"]: raise SystemExit("한 단계씩: 종료했어요")');
+  P.push('                if _restart["v"] and _can_restart["v"]: _restart["v"] = False; raise _Restart()');
+  P.push('                if _ev["f8"]: _ev["f8"] = False; return');
+  P.push('                if _ev["f7"]: _ev["f7"] = False; _step["v"] = False; print("   이제부터 멈추지 않고 진행해요."); return');
+  P.push('        finally:');
+  P.push('            _in_err["v"] = False; hide_console(st)');
+  P.push('    try:   # keyboard 가 없을 때: 검은 창에서 Enter. 끝나면 원래 창으로 키보드를 돌려줌');
+  P.push('        import ctypes; u = ctypes.windll.user32; u.GetForegroundWindow.restype = ctypes.c_void_p; prev = u.GetForegroundWindow()');
+  P.push('    except Exception: u = prev = None');
+  P.push('    focus_console()');
   P.push('    try: _a = input("   [Enter] 이 동작 실행 / s = 여기부터 끝까지 그냥 / q = 종료 : ").strip().lower()');
   P.push('    except Exception: _a = ""');
   P.push('    if _a == "q": raise SystemExit("한 단계씩: 종료했어요")');
   P.push('    if _a == "s": _step["v"] = False; print("   이제부터 멈추지 않고 진행해요.")');
+  P.push('    try:');
+  P.push('        h = _con()');
+  P.push('        if u and prev and prev != h: u.SetForegroundWindow(ctypes.c_void_p(prev))');
+  P.push('        if u and h and u.GetForegroundWindow() == h: u.ShowWindow(ctypes.c_void_p(h), 6)   # 그래도 검은 창이 앞이면 내려서 다음 창이 앞으로');
+  P.push('        time.sleep(0.3)');
+  P.push('    except Exception: pass');
   P.push('');
   P.push('def activate_window(title):');
   P.push('    if not gw: return');
@@ -3504,40 +3526,78 @@ function genPY(l, opts = {}) {
   P.push('    except Exception: return 0, 0');
   if (pack) {
     P.push(`IMG_NAMES = [${imgNames(l).map(pyJ).join(', ')}]   # 이 작업방이 쓰는 이미지 이름`);
-    P.push('def ensure_vars_file():   # 묶음 전용: variables.txt 가 없으면 처음 값으로 만들고, 있으면 그대로 두되 새 변수만 더함');
-    P.push("    f = os.path.join(BASE_DIR, 'variables.txt')");
+    P.push('# 변수 파일(variables.txt): 없으면 웹의 처음 값으로 만듦. PC에서 고친 값은 그대로 두고, 안 고친 값은 웹에서 바뀌면 따라 바꿈 (무설치 묶음과 같음)');
+    P.push('# (.variables-web.txt = 마지막으로 적어 준 웹 값 기록. 지우지 마세요)');
+    P.push(`VARS_HEAD = [${VARS_HEAD.map(pyJ).join(', ')}]`);
+    P.push('def _write_lines(path, lines):');
+    P.push("    with open(path, 'w', encoding='utf-8-sig') as fh: fh.write('\\n'.join(lines) + '\\n')");
+    P.push('def ensure_vars_file():   # 묶음 전용');
+    P.push("    f = os.path.join(BASE_DIR, 'variables.txt'); sf = os.path.join(BASE_DIR, '.variables-web.txt')");
     P.push('    try:');
-    P.push('        lines = []; have = set()');
-    P.push('        if os.path.exists(f):');
-    P.push("            for _enc in ('utf-8-sig', 'cp949', 'utf-8'):");
+    P.push('        web = {str(k): str(v).replace("\\r", " ").replace("\\n", " ") for k, v in INIT_VARS.items()}');
+    P.push('        side = {}');
+    P.push('        if os.path.exists(sf):');
+    P.push('            try:');
+    P.push("                with open(sf, encoding='utf-8-sig') as fh:");
+    P.push('                    for t in fh.read().splitlines():');
+    P.push("                        q = t.find('=')");
+    P.push('                        if q > 0: side[t[:q]] = t[q + 1:]');
+    P.push('            except Exception: side = {}');
+    P.push('        side_old = dict(side)');
+    P.push('        if not os.path.exists(f):');
+    P.push('            _write_lines(f, VARS_HEAD + [k + "=" + w for k, w in web.items()])');
+    P.push('            side = dict(web)');
+    P.push('            if web: print("variables.txt 를 만들었어요 (변수 값은 여기서 고쳐요):", f)');
+    P.push('        else:');
+    P.push('            lines = None');
+    P.push("            for _enc in ('utf-8-sig', 'cp949', 'utf-8'):   # 메모장 ANSI 등 한글 인코딩도 견디게");
     P.push('                try:');
     P.push('                    with open(f, encoding=_enc) as fh: lines = fh.read().splitlines(); break');
     P.push('                except Exception: continue');
-    P.push('            for ln in lines:');
-    P.push("                if '=' in ln and not ln.lstrip().startswith('#'):");
-    P.push("                    k = ln.split('=', 1)[0].strip()");
-    P.push('                    if k: have.add(k)');
-    P.push('        add = [str(k) + "=" + str(v) for k, v in INIT_VARS.items() if k not in have]');
-    P.push("        if not lines: lines = ['# 변수 값 (= 뒤를 고치세요. 맨 앞이 # 이면 메모)']");
-    P.push('        if add or not os.path.exists(f):');
-    P.push("            with open(f, 'w', encoding='utf-8') as fh: fh.write('\\n'.join(lines + add) + '\\n')");
-    P.push("    except Exception as _e: print('[주의] variables.txt 를 만들지 못했어요:', _e)");
+    P.push('            if lines is None: print("[주의] variables.txt 를 읽지 못해 그대로 둬요 (UTF-8 로 저장해 주세요)"); return f');
+    P.push('            cur = {}');
+    P.push('            for t in lines:');
+    P.push("                if t.lstrip().startswith('#'): continue");
+    P.push("                q = t.find('=')");
+    P.push('                if q > 0: cur[t[:q].strip()] = t[q + 1:]');
+    P.push('            add = []; upd = []');
+    P.push('            for k, w in web.items():');
+    P.push('                if k not in cur: add.append(k + "=" + w); side[k] = w; continue');
+    P.push('                if k in side and cur[k] == side[k] and w != side[k]:   # PC에서 안 고친 값이고 웹 값이 바뀌었으면 → 새 웹 값으로');
+    P.push('                    for j, t in enumerate(lines):');
+    P.push("                        if t.lstrip().startswith('#'): continue");
+    P.push("                        q = t.find('=')");
+    P.push('                        if q > 0 and t[:q].strip() == k: lines[j] = t[:q + 1] + w');
+    P.push('                    side[k] = w; upd.append(k)');
+    P.push('            if add: lines += ["# 웹에서 새로 생긴 변수"] + add');
+    P.push('            if add or upd:');
+    P.push('                _write_lines(f, lines)');
+    P.push('                if add: print("variables.txt 에 새 변수를 더했어요:", ", ".join(x.split("=", 1)[0] for x in add))');
+    P.push('                if upd: print("variables.txt 를 웹의 새 값으로 바꿨어요(PC에서 안 고친 것만):", ", ".join(upd))');
+    P.push('        if web and (side != side_old or not os.path.exists(sf)): _write_lines(sf, [k + "=" + v for k, v in side.items()])');
+    P.push("    except Exception as _e: print('[주의] variables.txt 를 만들거나 고치지 못했어요(메모장으로 열려 있으면 닫아 주세요):', _e)");
     P.push('    return f');
     P.push('def edit_vars():   # 변수 고치기: 파일을 만들고 메모장으로 열기');
     P.push('    f = ensure_vars_file()');
     P.push('    print("변수 파일:", f)');
     P.push('    try: os.startfile(f)');
     P.push('    except Exception as _e: print("열지 못했어요(직접 열어 고치세요):", _e)');
-    P.push('def _drag_box(prompt):   # 화면을 드래그해 네모 영역을 고름 (ESC = 건너뛰기). 실제 픽셀 기준');
+    P.push('def _drag_box(prompt):   # 화면(모니터 여러 대면 전체)을 드래그해 네모 영역을 고름 (ESC = 건너뛰기). 실제 픽셀 기준');
     P.push('    import tkinter as tk');
-    P.push('    root = tk.Tk(); root.attributes("-fullscreen", True); root.attributes("-topmost", True)');
+    P.push('    try:');
+    P.push('        import ctypes; u = ctypes.windll.user32');
+    P.push('        vx, vy, vw, vh, pw = u.GetSystemMetrics(76), u.GetSystemMetrics(77), u.GetSystemMetrics(78), u.GetSystemMetrics(79), u.GetSystemMetrics(0)');
+    P.push('    except Exception: vw = vh = 0');
+    P.push('    root = tk.Tk()');
+    P.push('    if vw <= 0 or vh <= 0: vx, vy, vw, vh = 0, 0, root.winfo_screenwidth(), root.winfo_screenheight(); pw = vw');
+    P.push('    root.overrideredirect(True); root.geometry("%dx%d%+d%+d" % (vw, vh, vx, vy)); root.attributes("-topmost", True)');
     P.push('    try: root.attributes("-alpha", 0.3)');
     P.push('    except Exception: pass');
     P.push('    root.configure(bg="gray10")');
     P.push('    cv = tk.Canvas(root, cursor="cross", bg="gray10", highlightthickness=0); cv.pack(fill="both", expand=True)');
-    P.push('    cv.create_text(root.winfo_screenwidth() // 2, 30, text=prompt, fill="white", font=("Malgun Gothic", 14))');
+    P.push('    cv.create_text(-vx + pw // 2, -vy + 30, text=prompt, fill="white", font=("Malgun Gothic", 14))   # 주 모니터 위쪽 가운데');
     P.push('    st = {"box": None, "rect": None, "sx": 0, "sy": 0}');
-    P.push('    ox, oy = root.winfo_rootx(), root.winfo_rooty()');
+    P.push('    ox, oy = vx, vy   # 창 왼쪽 위 = 전체 화면 왼쪽 위 (왼쪽 모니터면 음수)');
     P.push('    def _down(e): st["sx"], st["sy"] = e.x, e.y; st["rect"] = cv.create_rectangle(e.x, e.y, e.x, e.y, outline="red", width=2)');
     P.push('    def _move(e):');
     P.push('        if st["rect"] is not None: cv.coords(st["rect"], st["sx"], st["sy"], e.x, e.y)');
@@ -3545,25 +3605,41 @@ function genPY(l, opts = {}) {
     P.push('        st["box"] = (min(st["sx"], e.x) + ox, min(st["sy"], e.y) + oy, max(st["sx"], e.x) + ox, max(st["sy"], e.y) + oy); root.destroy()');
     P.push('    cv.bind("<Button-1>", _down); cv.bind("<B1-Motion>", _move); cv.bind("<ButtonRelease-1>", _up)');
     P.push('    root.bind("<Escape>", lambda e: root.destroy())');
+    P.push('    root.after(80, lambda: (root.focus_force(), cv.focus_set()))   # 테두리 없는 창도 Esc 를 받게');
     P.push('    root.mainloop()');
     P.push('    return st["box"]');
     P.push('def capture_images():   # 이미지 찍기: 이 매크로가 쓰는 이미지를 하나씩 드래그해서 저장');
     P.push('    if not IMG_NAMES: print("이 작업방은 이미지 찾기를 쓰지 않아요."); return');
     P.push('    try:');
     P.push('        import tkinter as tk');
+    P.push('        from tkinter import messagebox');
     P.push('        from PIL import ImageGrab');
     P.push('    except Exception as _e: print("이미지 찍기에 필요한 부품이 없어요(Pillow/tkinter):", _e); return');
     P.push('    os.makedirs(IMGDIRS[0], exist_ok=True)   # 새로 저장할 공용 폴더 보장');
-    P.push('    for _nm in IMG_NAMES:');
-    P.push('        box = _drag_box("찾을 \'" + str(_nm) + "\' 을(를) 마우스로 드래그  (ESC = 이 이미지 건너뛰기)")');
-    P.push('        if not box: print("건너뜀:", _nm); continue');
-    P.push('        x1, y1, x2, y2 = box');
-    P.push('        if x2 - x1 < 3 or y2 - y1 < 3: print("너무 작아서 건너뜀:", _nm); continue');
-    P.push('        try:');
-    P.push('            ImageGrab.grab(bbox=(x1, y1, x2, y2), all_screens=True).save(img_path(_nm))');
-    P.push('            print("저장:", img_path(_nm))');
-    P.push('        except Exception as _e: print("저장 실패:", _nm, _e)');
-    P.push('        time.sleep(0.3)');
+    P.push('    h = None');
+    P.push('    try:   # 검은 창은 작업 표시줄로 내려 찍을 화면을 가리지 않게');
+    P.push('        import ctypes; h = _con()');
+    P.push('        if h: ctypes.windll.user32.ShowWindow(ctypes.c_void_p(h), 6)');
+    P.push('    except Exception: h = None');
+    P.push('    try:');
+    P.push('        for _nm in IMG_NAMES:');
+    P.push('            r = tk.Tk(); r.withdraw(); r.attributes("-topmost", True)');
+    P.push('            ok = messagebox.askokcancel("이미지 찍기", "찍을 이미지: " + str(_nm) + "\\n\\n찾을 버튼·그림이 화면에 보이게 띄운 뒤 [확인]을 누르세요.\\n화면이 어두워지면 그 부분을 드래그하세요. (Esc = 이 이미지 건너뛰기)\\n\\n[취소] = 그만 찍기", parent=r)');
+    P.push('            r.destroy()');
+    P.push('            if not ok: print("그만 찍었어요."); break');
+    P.push('            box = _drag_box("찾을 \'" + str(_nm) + "\' 을(를) 마우스로 드래그  (ESC = 이 이미지 건너뛰기)")');
+    P.push('            if not box: print("건너뜀:", _nm); continue');
+    P.push('            x1, y1, x2, y2 = box');
+    P.push('            if x2 - x1 < 3 or y2 - y1 < 3: print("너무 작아서 건너뜀:", _nm); continue');
+    P.push('            time.sleep(0.2)   # 어두운 창이 사라진 뒤에 찍기');
+    P.push('            try:');
+    P.push('                ImageGrab.grab(bbox=(x1, y1, x2, y2), all_screens=True).save(img_path(_nm))');
+    P.push('                print("저장:", img_path(_nm))');
+    P.push('            except Exception as _e: print("저장 실패:", _nm, _e)');
+    P.push('    finally:');
+    P.push('        if h:');
+    P.push('            try: ctypes.windll.user32.ShowWindow(ctypes.c_void_p(h), 9)');
+    P.push('            except Exception: pass');
     P.push('    print("이미지 찍기 끝.")');
   }
   if (needsOcr(l.steps)) P.push(...pyOcrFuncs());
@@ -3620,7 +3696,7 @@ function genPY(l, opts = {}) {
     P.push("    elif _mode == '--capture':");
     P.push('        capture_images()');
     P.push('    else:');
-    P.push("        if _mode == '--step': _step[\"v\"] = True; print(\"한 단계씩 실행이에요. 동작마다 멈춰요 — Enter 로 하나씩 진행하세요.\")");
+    P.push("        if _mode == '--step': _step[\"v\"] = True; print(\"한 단계씩 실행이에요. 동작마다 멈춰요 — F8 로 하나씩 진행 (F7 = 끝까지, F9 = 종료)\")");
     P.push('        ensure_vars_file()   # 처음 실행 때 variables.txt 만들기');
     runBody.forEach(x => P.push('    ' + x));   // 한 단계 더 들여써서 else 안에
     P.push('    try: input("엔터를 누르면 창을 닫아요...")');
@@ -4378,6 +4454,10 @@ function genImageManager() {
     '# 쓰는 이미지 이름 모으기 (tools\\macros.json 의 작업방별 images)',
     '$use = @{}',
     "try { $pack = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $PSScriptRoot 'macros.json') | ConvertFrom-Json; foreach($m in @($pack.macros)){ foreach($im in @($m.images)){ $k = [string]$im; if($k){ if(-not $use.ContainsKey($k)){ $use[$k] = @() }; $use[$k] += [string]$m.name } } } } catch {}",
+    '# 이미지 폴더를 따로 정한 작업방은 자기 폴더를 먼저 찾음 → 그 폴더에 있는 복사본도 같이 다뤄야 다시 찍은 게 반영됨',
+    '$own = @{}',
+    "try { foreach($m in @($pack.macros)){ $id = [string]$m.imgDir; if($id -eq '' -or $id -eq 'images'){ continue }; $d = $id; if(-not [System.IO.Path]::IsPathRooted($d)){ $d = [System.IO.Path]::Combine($root, [string]$m.folder, $d) }; foreach($im in @($m.images)){ $k = [string]$im; if($k){ if(-not $own.ContainsKey($k)){ $own[$k] = @() }; if(-not ($own[$k] -contains $d)){ $own[$k] += $d } } } } } catch {}",
+    'function Copies($n){ return @(@($own[$n]) | Where-Object { $_ } | ForEach-Object { [System.IO.Path]::Combine($_, $n + ".png") } | Where-Object { [System.IO.File]::Exists($_) }) }   # 따로 정한 폴더에 있는 같은 이름 이미지',
     '$names = [System.Collections.ArrayList]@(@($use.Keys) | Sort-Object)',
     ...psSnipFn(),
     "function Clean($n){ return (([string]$n -replace '[\\\\/:*?\"<>|`]', '') -replace '\\.png$', '').Trim() }",
@@ -4397,6 +4477,7 @@ function genImageManager() {
     '  if(-not (Test-Path -LiteralPath $dir)){ New-Item -ItemType Directory -Path $dir -Force | Out-Null }',
     '  $out = Join-Path $dir ($name + ".png")',
     '  $bmp.Save($out, [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()',
+    '  foreach($c in (Copies $name)){ try { Copy-Item -LiteralPath $out -Destination $c -Force } catch {} }   # 따로 정한 폴더의 옛 복사본도 새 이미지로',
     '  return $true',
     '}',
     '$form = New-Object System.Windows.Forms.Form',
@@ -4409,7 +4490,7 @@ function genImageManager() {
     '$lb = New-Object System.Windows.Forms.ListBox; $lb.Dock = "Fill"; $lb.IntegralHeight = $false',
     '$lb.Font = New-Object System.Drawing.Font("Malgun Gothic", 11)',
     '$bar = New-Object System.Windows.Forms.FlowLayoutPanel; $bar.Dock = "Bottom"; $bar.Height = 96; $bar.Padding = New-Object System.Windows.Forms.Padding 6',
-    'function Status($n){ if(Test-Path -LiteralPath (Join-Path $dir ($n + ".png"))){ return "[있음]" } else { return "[없음]" } }',
+    'function Status($n){ if((Test-Path -LiteralPath (Join-Path $dir ($n + ".png"))) -or (Copies $n).Count -gt 0){ return "[있음]" } else { return "[없음]" } }',
     'function SelName(){ $i = $lb.SelectedIndex; if($i -lt 0 -or $i -ge $names.Count){ return $null }; return [string]$names[$i] }',
     'function Fill(){',
     '  $keep = $lb.SelectedIndex; $lb.BeginUpdate(); $lb.Items.Clear()',
@@ -4419,10 +4500,10 @@ function genImageManager() {
     '  if($names.Count -gt 0){ $lb.SelectedIndex = [Math]::Max(0, [Math]::Min($keep, $names.Count - 1)) }',
     '}',
     'function DoShoot($n){ $form.Hide(); $ok = $false; try { $ok = Shoot $n } finally { $form.Show() }; if($ok){ $mb::Show($form, "저장했어요.", "이미지 관리") | Out-Null }; Fill }',
-    'function Btn($text, $act){ $b = New-Object System.Windows.Forms.Button; $b.Text = $text; $b.AutoSize = $true; $b.MinimumSize = New-Object System.Drawing.Size 92, 34; $b.Add_Click({ param($s, $e) try { & $act } catch { $mb::Show($form, ("오류: " + $_.Exception.Message), "이미지 관리") | Out-Null } }); [void]$bar.Controls.Add($b); return $b }',
+    'function Btn($text, $act){ $b = New-Object System.Windows.Forms.Button; $b.Text = $text; $b.AutoSize = $true; $b.MinimumSize = New-Object System.Drawing.Size 92, 34; $b.Tag = $act; $b.Add_Click({ param($sender, $e) try { & $sender.Tag } catch { $mb::Show($form, ("오류: " + $_.Exception.Message), "이미지 관리") | Out-Null } }); [void]$bar.Controls.Add($b); return $b }   # 할 일은 단추 Tag 에 (눌릴 땐 Btn 함수가 이미 끝나 $act 가 사라져 있음)',
     '$null = Btn "찍기 / 다시 찍기" { $n = SelName; if(-not $n){ return }; if($mb::Show($form, ("\'" + $n + "\' 을(를) 찍어요.`n[확인]을 누르면 화면이 어두워져요. 찾을 부분을 마우스로 드래그해 긁으세요. (Esc = 취소)"), "이미지 관리", "OKCancel") -eq "OK"){ DoShoot $n } }',
     '$null = Btn "새 이름으로 찍기" { $nm = Clean ([Microsoft.VisualBasic.Interaction]::InputBox("저장할 이름 (웹 매크로의 \'이미지 이름\'과 똑같이):", "이미지 이름", "")); if($nm -eq ""){ return }; if(-not ($names -contains $nm)){ [void]$names.Add($nm) }; DoShoot $nm }',
-    '$null = Btn "삭제" { $n = SelName; if(-not $n){ return }; $p = Join-Path $dir ($n + ".png"); if(-not (Test-Path -LiteralPath $p)){ $mb::Show($form, "아직 안 찍은 이미지예요.", "이미지 관리") | Out-Null; return }; if($mb::Show($form, ("\'" + $n + "\' 이미지를 지울까요?"), "이미지 관리", "YesNo") -eq "Yes"){ Remove-Item -LiteralPath $p -Force; Fill } }',
+    '$null = Btn "삭제" { $n = SelName; if(-not $n){ return }; $p = Join-Path $dir ($n + ".png"); $cs = @(Copies $n); $all = @(@($p) | Where-Object { Test-Path -LiteralPath $_ }) + $cs; if($all.Count -eq 0){ $mb::Show($form, "아직 안 찍은 이미지예요.", "이미지 관리") | Out-Null; return }; $more = $(if($cs.Count){ "`n(작업방 폴더에 따로 둔 같은 이미지 " + $cs.Count + "개도 같이)" } else { "" }); if($mb::Show($form, ("\'" + $n + "\' 이미지를 지울까요?" + $more), "이미지 관리", "YesNo") -eq "Yes"){ foreach($x in $all){ Remove-Item -LiteralPath $x -Force }; Fill } }',
     '$null = Btn "폴더 열기" { Start-Process explorer.exe -ArgumentList (\'"\' + $dir + \'"\') }',
     '$bEnd = Btn "닫기" { $form.Close() }',
     '$form.CancelButton = $bEnd',
@@ -4552,7 +4633,11 @@ function genStartBat() {
 function genRunBat() {
   return ['@echo off', 'cd /d "%TEMP%" 2>nul',
     'if not exist "%~dp0macro.ps1" goto noext',
-    'powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0macro.ps1"',
+    'set "A="',   // START 메뉴가 넘기는 인자 → macro.ps1 스위치 (모르는 인자로 매크로 전체가 실행되지 않게)
+    'if /i "%~1"=="--capture" set "A=-Capture"',
+    'if /i "%~1"=="--editvars" set "A=-EditVars"',
+    'if /i "%~1"=="--step" (echo  [!] Step-by-step runs only in the Python pack. & echo. & pause & exit /b)',
+    'powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0macro.ps1" %A%',
     'if errorlevel 1 echo  [!] Error above? If it says the script was blocked by antivirus, see README.txt (macro-studio folder).',
     'echo.', 'pause', 'exit /b', ...NOEXT_BAT, ''].join('\r\n');
 }
@@ -4589,13 +4674,14 @@ function genMenu() {
     "$psExe = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'",
     "if(-not (Test-Path -LiteralPath $psExe)){ $psExe = 'powershell.exe' }",
     'function DirOf($m){ return [System.IO.Path]::Combine($root, [string]$m.folder) }',
-    "function IsPy($m){ return [System.IO.File]::Exists([System.IO.Path]::Combine((DirOf $m), 'macro.py')) }   # 파이썬 작업방인지 (파일로 판별)",
+    "function IsPy($m){ if([string]$m.lang -ne ''){ return ([string]$m.lang -eq 'py') }; return [System.IO.File]::Exists([System.IO.Path]::Combine((DirOf $m), 'macro.py')) }   # 파이썬 작업방인지: 같이 받은 macros.json 기준 (예전에 받은 macro.py 가 남아 있어도 헷갈리지 않게)",
     "function RunBat($m, $arg){ $bat = Join-Path (DirOf $m) 'RUN.bat'; if(-not (Test-Path -LiteralPath $bat)){ Say ('실행 파일이 없어요: ' + $bat); return }; Start-Process -FilePath $env:ComSpec -ArgumentList ('/c \"\"' + $bat + '\"\"' + $arg) -WorkingDirectory (DirOf $m) -ErrorAction Stop }",
     '# 이미지 개수 (없는 드라이브·이상한 경로여도 메뉴는 열리게: 못 세면 ?)',
     'function HaveImgs($m){',
     '  try {',
     '    $d = [string]$m.imgDir; if(-not [System.IO.Path]::IsPathRooted($d)){ $d = [System.IO.Path]::Combine((DirOf $m), $d) }',
-    '    return @(@($m.images) | Where-Object { [System.IO.File]::Exists([System.IO.Path]::Combine($d, [string]$_ + ".png")) }).Count',
+    "    $ds = @($d, [System.IO.Path]::Combine($root, 'images'))   # 공용 폴더도 같이 셈 (찍기·이미지 관리는 공용에 저장, 매크로도 두 곳을 다 찾음)",
+    '    return @(@($m.images) | Where-Object { $nm = [string]$_ + ".png"; @($ds | Where-Object { [System.IO.File]::Exists([System.IO.Path]::Combine($_, $nm)) }).Count -gt 0 }).Count',
     '  } catch { return "?" }',
     '}',
     'function LabelOf($m){',
@@ -4696,7 +4782,7 @@ function packReadme(list, built) {
     '[폴더 안]',
     '  START.bat         메뉴 (실행 · 한 단계씩 · 이미지 찍기 · 변수 고치기 · 이미지 관리 · 폴더 열기 · 좌표 찾기 · 영역 선택)',
     '                    [이미지 관리] = 공용 폴더의 이미지 목록·있음/없음, 이름 정해 미리 찍기·다시 찍기·삭제',
-    '                    [한 단계씩] = (파이썬 묶음) 동작을 하나씩 멈춰 가며 실행 — Enter 다음 / s 끝까지 / q 종료',
+    '                    [한 단계씩] = (파이썬 묶음) 동작을 하나씩 멈춰 가며 실행 — F8 다음 / F7 끝까지 / F9 종료',
     '  images\\           공용 이미지 폴더 — 모든 작업방이 함께 써요. 한 번 찍어 두면 여러 매크로가 같이 찾아요.',
     '  macro-N\\          작업방 하나에 폴더 하나 (아래 표). RUN.bat = 메뉴 없이 바로 실행',
     '     images\\           이 작업방만의 이미지(있으면). 없으면 위 공용 폴더에서 찾아요.',
