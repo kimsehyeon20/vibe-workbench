@@ -38,20 +38,22 @@
       <button class="mini" id="zoom-btn">크게 보기</button>
     </div>
     <p class="warn" id="notice" hidden></p>
-    <p class="warn" id="fit-warn" hidden>카드가 많아서 글씨가 작아졌어요. '구성'에서 몇 개를 끄거나 '꾸미기'에서 시작 높이를 올려 보세요.</p>
+    <p class="warn" id="fit-warn" hidden>카드가 많아서 글씨가 작아졌어요. '꾸미기'에서 카드 몇 개를 끄거나 시작 높이를 올려 보세요.</p>
   </section>
 
   <nav class="tabs" role="tablist">
     <button class="tab" role="tab" data-tab="tasks">할 일</button>
-    <button class="tab" role="tab" data-tab="events">일정</button>
-    <button class="tab" role="tab" data-tab="ddays">디데이</button>
+    <button class="tab" role="tab" data-tab="events">일정·디데이</button>
     <button class="tab" role="tab" data-tab="note">메모</button>
-    <button class="tab" role="tab" data-tab="layout">구성</button>
     <button class="tab" role="tab" data-tab="style">꾸미기</button>
   </nav>
 
   <!-- 할 일 -->
   <section class="panel" data-panel="tasks" hidden>
+    <div class="banner" id="sample-banner" hidden>
+      <span>지금 보이는 할 일·일정은 <b>예시</b>예요.</span>
+      <button class="mini" id="sample-clear">예시 지우기</button>
+    </div>
     <form class="add" id="task-form" autocomplete="off">
       <input class="input" id="task-input" type="text" placeholder="할 일을 적어주세요" enterkeyhint="done" maxlength="60">
       <button class="add-btn">추가</button>
@@ -63,44 +65,40 @@
     </div>
   </section>
 
-  <!-- 일정 -->
+  <!-- 일정·디데이 -->
   <section class="panel" data-panel="events" hidden>
     <form class="card form" id="event-form" autocomplete="off">
-      <input class="input" id="ev-title" type="text" placeholder="일정 이름 (예: 팀 회의)" maxlength="40">
-      <div class="two">
+      <div class="seg" id="ev-kind"><button type="button" data-v="event">일정</button><button type="button" data-v="dday">디데이</button></div>
+      <input class="input" id="ev-title" type="text" maxlength="40">
+      <div class="two" id="ev-when">
         <input class="input" id="ev-date" type="date" aria-label="날짜">
         <input class="input" id="ev-time" type="time" aria-label="시간">
       </div>
-      <p class="muted small">시간을 비워두면 '종일'로 보여요</p>
-      <button class="add-btn">일정 추가</button>
+      <p class="muted small" id="ev-hint"></p>
+      <button class="add-btn" id="ev-add"></button>
     </form>
+    <h3 class="sec">디데이</h3>
+    <ul class="list" id="dday-list"></ul>
+    <h3 class="sec">일정 <em>아이폰 캘린더와는 연결되지 않아요</em></h3>
     <ul class="list" id="event-list"></ul>
     <div class="foot">
-      <span class="muted small">아이폰 캘린더와는 연결되지 않아요</span>
+      <span></span>
       <button class="mini ghost" id="clear-past">지난 일정 지우기</button>
     </div>
-  </section>
-
-  <!-- 디데이 -->
-  <section class="panel" data-panel="ddays" hidden>
-    <form class="card form" id="dday-form" autocomplete="off">
-      <input class="input" id="dd-title" type="text" placeholder="예: 시험, 여행, 생일" maxlength="30">
-      <input class="input" id="dd-date" type="date" aria-label="날짜">
-      <button class="add-btn">디데이 추가</button>
-    </form>
-    <ul class="list" id="dday-list"></ul>
-    <p class="muted small foot-note">가장 가까운 디데이가 크게, 다음 두 개가 작게 보여요</p>
   </section>
 
   <!-- 메모 -->
   <section class="panel" data-panel="note" hidden>
     <textarea class="input" id="note" rows="6" maxlength="300" placeholder="잠금화면에 고정할 메모 (예: 오늘의 다짐)"></textarea>
-    <p class="muted small foot-note">'구성'에서 메모를 켜야 배경에 보여요. 최대 6줄까지 보여요.</p>
+    <p class="muted small foot-note">'꾸미기 → 보일 카드'에서 메모를 켜야 배경에 보여요. 최대 6줄까지 보여요.</p>
   </section>
 
-  <!-- 구성 -->
-  <section class="panel" data-panel="layout" hidden>
-    <p class="muted small lead">보일 카드를 켜고, 화살표로 순서를 바꿔요. 디데이와 올해 진행률이 붙어 있으면 나란히 놓여요.</p>
+  <!-- 꾸미기: 템플릿 → 보일 카드 → 모양 -->
+  <section class="panel" data-panel="style" hidden>
+    <h3 class="sec first">템플릿 <em>누르면 카드 구성과 모양이 한 번에 바뀌어요</em></h3>
+    <div class="presets" id="preset-list"></div>
+
+    <h3 class="sec">보일 카드 <em>켜고 끄고, 화살표로 순서 바꾸기</em></h3>
     <ul class="list" id="widget-list"></ul>
     <div class="card settings">
       <div class="set-row">
@@ -115,10 +113,8 @@
         <div class="seg narrow" data-key="weekStart"><button data-v="0">일요일</button><button data-v="1">월요일</button></div>
       </div>
     </div>
-  </section>
 
-  <!-- 꾸미기 -->
-  <section class="panel" data-panel="style" hidden>
+    <h3 class="sec">모양</h3>
     <div class="group">
       <span class="glabel">카드 모양</span>
       <div class="seg" data-key="card"><button data-v="glass">유리</button><button data-v="solid">단색</button><button data-v="none">없음</button></div>
@@ -193,6 +189,7 @@
 
 <div class="toast" id="toast" role="status" hidden></div>
 <input type="file" id="photo-input" accept="image/*" hidden>
+<input type="file" id="backup-input" accept="application/json,.json" hidden>
 
 <script src="wallpaper.js"></script>
 <script src="app.js"></script>
