@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>잠금화면 플래너</title>
+<meta name="description" content="할 일·일정·디데이·메모를 넣은 아이폰 잠금화면 배경을 만들어요">
+<meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111113" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gaegu:wght@400;700&family=Noto+Serif+KR:wght@400;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <a class="icon-btn" href="../../" aria-label="갤러리로">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+  </a>
+  <h1>잠금화면 플래너</h1>
+  <button class="icon-btn" id="help-btn" aria-label="도움말">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1 .9-1 1.7"/><path d="M12 17h.01"/></svg>
+  </button>
+</header>
+
+<main class="wrap">
+  <!-- 미리보기 -->
+  <section class="stage">
+    <button class="phone" id="phone" aria-label="크게 보기"><canvas id="preview"></canvas></button>
+    <div class="stage-bar">
+      <label class="check-label"><input type="checkbox" class="sw small" id="guide-toggle"> 시계 자리 보기</label>
+      <button class="mini" id="zoom-btn">크게 보기</button>
+    </div>
+    <p class="warn" id="fit-warn" hidden>카드가 많아서 글씨가 작아졌어요. '구성'에서 몇 개를 끄거나 '꾸미기'에서 시작 높이를 올려 보세요.</p>
+  </section>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-tab="tasks">할 일</button>
+    <button class="tab" role="tab" data-tab="events">일정</button>
+    <button class="tab" role="tab" data-tab="ddays">디데이</button>
+    <button class="tab" role="tab" data-tab="note">메모</button>
+    <button class="tab" role="tab" data-tab="layout">구성</button>
+    <button class="tab" role="tab" data-tab="style">꾸미기</button>
+  </nav>
+
+  <!-- 할 일 -->
+  <section class="panel" data-panel="tasks" hidden>
+    <form class="add" id="task-form" autocomplete="off">
+      <input class="input" id="task-input" type="text" placeholder="할 일을 적어주세요" enterkeyhint="done" maxlength="60">
+      <button class="add-btn">추가</button>
+    </form>
+    <ul class="list" id="task-list"></ul>
+    <div class="foot">
+      <span class="muted small">항목을 누르면 고칠 수 있어요</span>
+      <button class="mini ghost" id="clear-done">완료한 일 지우기</button>
+    </div>
+  </section>
+
+  <!-- 일정 -->
+  <section class="panel" data-panel="events" hidden>
+    <form class="card form" id="event-form" autocomplete="off">
+      <input class="input" id="ev-title" type="text" placeholder="일정 이름 (예: 팀 회의)" maxlength="40">
+      <div class="two">
+        <input class="input" id="ev-date" type="date" aria-label="날짜">
+        <input class="input" id="ev-time" type="time" aria-label="시간">
+      </div>
+      <p class="muted small">시간을 비워두면 '종일'로 보여요</p>
+      <button class="add-btn">일정 추가</button>
+    </form>
+    <ul class="list" id="event-list"></ul>
+    <div class="foot">
+      <span class="muted small">아이폰 캘린더와는 연결되지 않아요</span>
+      <button class="mini ghost" id="clear-past">지난 일정 지우기</button>
+    </div>
+  </section>
+
+  <!-- 디데이 -->
+  <section class="panel" data-panel="ddays" hidden>
+    <form class="card form" id="dday-form" autocomplete="off">
+      <input class="input" id="dd-title" type="text" placeholder="예: 시험, 여행, 생일" maxlength="30">
+      <input class="input" id="dd-date" type="date" aria-label="날짜">
+      <button class="add-btn">디데이 추가</button>
+    </form>
+    <ul class="list" id="dday-list"></ul>
+    <p class="muted small foot-note">가장 가까운 디데이가 크게, 다음 두 개가 작게 보여요</p>
+  </section>
+
+  <!-- 메모 -->
+  <section class="panel" data-panel="note" hidden>
+    <textarea class="input" id="note" rows="6" maxlength="300" placeholder="잠금화면에 고정할 메모 (예: 오늘의 다짐)"></textarea>
+    <p class="muted small foot-note">'구성'에서 메모를 켜야 배경에 보여요. 최대 6줄까지 보여요.</p>
+  </section>
+
+  <!-- 구성 -->
+  <section class="panel" data-panel="layout" hidden>
+    <p class="muted small lead">보일 카드를 켜고, 화살표로 순서를 바꿔요. 디데이와 올해 진행률이 붙어 있으면 나란히 놓여요.</p>
+    <ul class="list" id="widget-list"></ul>
+    <div class="card settings">
+      <div class="set-row">
+        <span>할 일 최대 개수</span>
+        <div class="stepper">
+          <button id="max-dec" aria-label="줄이기">−</button><b id="max-val">6</b><button id="max-inc" aria-label="늘리기">+</button>
+        </div>
+      </div>
+      <label class="set-row"><span>완료한 일 숨기기</span><input type="checkbox" class="sw" id="hide-done"></label>
+      <div class="set-row">
+        <span>한 주의 시작</span>
+        <div class="seg narrow" data-key="weekStart"><button data-v="0">일요일</button><button data-v="1">월요일</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 꾸미기 -->
+  <section class="panel" data-panel="style" hidden>
+    <div class="group">
+      <span class="glabel">카드 모양</span>
+      <div class="seg" data-key="card"><button data-v="glass">유리</button><button data-v="solid">단색</button><button data-v="none">없음</button></div>
+    </div>
+    <div class="group">
+      <span class="glabel">글씨 색</span>
+      <div class="seg" data-key="tone"><button data-v="dark">흰 글씨</button><button data-v="light">검은 글씨</button></div>
+    </div>
+    <div class="group">
+      <span class="glabel">글꼴</span>
+      <div class="seg" data-key="font"><button data-v="sans">기본</button><button data-v="serif">명조</button><button data-v="hand">손글씨</button></div>
+    </div>
+    <div class="group">
+      <span class="glabel">포인트 색</span>
+      <div class="swatches" id="accent-list"></div>
+    </div>
+    <div class="group">
+      <span class="glabel">배경</span>
+      <div class="seg" data-key="bg"><button data-v="photo">내 사진</button><button data-v="gradient">그라데이션</button><button data-v="color">단색</button></div>
+      <div class="bg-opt" data-bg="photo">
+        <button class="mini" id="photo-btn">앨범에서 사진 고르기</button>
+        <span class="muted small" id="photo-state"></span>
+      </div>
+      <div class="bg-opt" data-bg="gradient"><div class="swatches grad" id="grad-list"></div></div>
+      <div class="bg-opt" data-bg="color"><input type="color" id="bg-color" aria-label="배경 색"></div>
+    </div>
+    <div class="group">
+      <label class="range"><span>배경 덮개 <b id="dim-val"></b></span><input type="range" id="dim" min="0" max="70" step="5"></label>
+      <em class="hint">사진 위 글씨가 잘 안 보이면 올려요</em>
+    </div>
+    <div class="group">
+      <label class="range"><span>시작 높이 <b id="top-val"></b></span><input type="range" id="top" min="20" max="60" step="1"></label>
+      <em class="hint">시계나 잠금화면 위젯과 겹치면 올려요</em>
+    </div>
+    <div class="group">
+      <label class="range"><span>크기 <b id="size-val"></b></span><input type="range" id="size" min="80" max="125" step="5"></label>
+      <em class="hint">내용이 많으면 화면에 맞게 자동으로 작아져요</em>
+    </div>
+    <div class="group">
+      <span class="glabel">화면 크기</span>
+      <select class="input" id="device"></select>
+    </div>
+  </section>
+</main>
+
+<div class="bottom">
+  <button class="btn" id="save-btn">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/></svg>
+    잠금화면 배경 저장
+  </button>
+</div>
+
+<!-- 아래에서 올라오는 창 -->
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-bg" data-close></div>
+  <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <div class="sheet-head">
+      <h3 id="sheet-title"></h3>
+      <button class="icon-btn" data-close aria-label="닫기">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="sheet-body" id="sheet-body"></div>
+  </div>
+</div>
+
+<!-- 크게 보기 -->
+<div class="viewer" id="viewer" hidden>
+  <canvas id="full"></canvas>
+  <button class="viewer-close" id="viewer-close">닫기</button>
+</div>
+
+<div class="toast" id="toast" role="status" hidden></div>
+<input type="file" id="photo-input" accept="image/*" hidden>
+
+<script src="wallpaper.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

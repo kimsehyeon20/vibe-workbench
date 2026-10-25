@@ -1,3 +1,4 @@
 [
-  { "id": "macro-studio", "name": "매크로 설계소", "emoji": "⚙️", "description": "클릭·키보드 동작 순서를 짜서 PC용 매크로 파일로 내보내요", "created": "2026-10-07" }
+  { "id": "macro-studio", "name": "매크로 설계소", "emoji": "⚙️", "description": "클릭·키보드 동작 순서를 짜서 PC용 매크로 파일로 내보내요", "created": "2026-10-07" },
+  { "id": "lock-planner", "name": "잠금화면 플래너", "emoji": "🔒", "description": "할 일·일정·디데이를 넣은 잠금화면 배경을 만들어요", "created": "2026-10-25" }
 ]
