@@ -92,6 +92,34 @@ select.input { -webkit-appearance: none; appearance: none; padding-right: 36px;
 .form { display: grid; gap: 8px; margin-bottom: 14px; }
 .form .muted { margin: 0 2px; }
 .two { display: grid; grid-template-columns: 1.3fr 1fr; gap: 8px; }
+.two.one { grid-template-columns: 1fr; }
+.two-btn { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+/* 구역 제목 */
+.sec { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; margin: 22px 2px 10px; font-size: 15px; font-weight: 800; }
+.sec.first { margin-top: 4px; }
+.sec em { font-style: normal; font-size: 12.5px; font-weight: 500; color: var(--text-3); }
+
+/* 예시 안내 */
+.banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px;
+  padding: 10px 10px 10px 14px; border-radius: 14px; background: var(--tint); font-size: 14px;
+}
+
+/* 템플릿 */
+.presets { display: flex; gap: 10px; overflow-x: auto; margin: 0 -16px; padding: 2px 16px 6px; scrollbar-width: none; }
+.presets::-webkit-scrollbar { display: none; }
+.preset { flex: none; display: grid; gap: 6px; justify-items: center; font-size: 13px; font-weight: 650; color: var(--text-2); }
+.preset canvas { display: block; width: 84px; height: auto; border-radius: 12px; box-shadow: 0 0 0 1px var(--line-2); background: #000; }
+.preset:active canvas { transform: scale(.96); }
+
+/* 저장 방법 */
+.way { display: grid; gap: 4px; padding: 12px 14px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); font-size: 14.5px; }
+.way p { margin: 0; color: var(--text-2); }
+.way.rec { border-color: var(--accent); }
+.way details { margin-top: 4px; }
+.way summary { cursor: pointer; color: var(--accent); font-weight: 700; font-size: 14px; padding: 6px 0; }
+.way details .steps { margin-top: 4px; }
 
 /* 목록 */
 .list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }

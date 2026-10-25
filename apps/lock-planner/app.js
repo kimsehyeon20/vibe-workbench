@@ -71,23 +71,35 @@ const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
 const UP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>';
 const DOWN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
 
-// 처음 열었을 때 보여줄 예시
+// 템플릿: 보일 카드(순서대로)와 카드 모양·글꼴만 바꾸고, 배경·색은 그대로 둔다
+const PRESETS = [
+  { name: '기본', widgets: ['week', 'tasks', 'today', 'dday', 'year'], card: 'glass', font: 'sans' },
+  { name: '할 일만', widgets: ['tasks', 'note'], card: 'glass', font: 'sans' },
+  { name: '달력', widgets: ['month', 'today', 'upcoming'], card: 'glass', font: 'sans' },
+  { name: '디데이', widgets: ['dday', 'year', 'week'], card: 'none', font: 'sans' },
+  { name: '우선순위', widgets: ['matrix', 'today'], card: 'solid', font: 'sans' },
+  { name: '손글씨', widgets: ['week', 'tasks', 'note'], card: 'none', font: 'hand' },
+  { name: '명조', widgets: ['today', 'tasks', 'dday', 'year'], card: 'solid', font: 'serif' },
+];
+
+// 처음 열었을 때 보여줄 예시 (sample 표시가 붙은 것만 '예시 지우기'로 지운다)
+const SAMPLE_NOTE = '오늘도 한 걸음씩!';
 function sampleData() {
   const t = today();
   return {
     tasks: [
-      { id: uid(), text: '보고서 마무리하기', done: false, quad: 0 },
-      { id: uid(), text: '물 2리터 마시기', daily: true, doneOn: null, quad: null },
-      { id: uid(), text: '운동 30분', daily: true, doneOn: t, quad: 1 },
-      { id: uid(), text: '택배 반품 신청', done: false, quad: 2 },
+      { id: uid(), text: '보고서 마무리하기', done: false, quad: 0, sample: true },
+      { id: uid(), text: '물 2리터 마시기', daily: true, doneOn: null, quad: null, sample: true },
+      { id: uid(), text: '운동 30분', daily: true, doneOn: t, quad: 1, sample: true },
+      { id: uid(), text: '택배 반품 신청', done: false, quad: 2, sample: true },
     ],
     events: [
-      { id: uid(), title: '팀 회의', date: t, time: '14:00' },
-      { id: uid(), title: '친구랑 저녁', date: t, time: '19:30' },
-      { id: uid(), title: '치과 예약', date: WP.addDays(t, 3), time: '10:30' },
+      { id: uid(), title: '팀 회의', date: t, time: '14:00', sample: true },
+      { id: uid(), title: '친구랑 저녁', date: t, time: '19:30', sample: true },
+      { id: uid(), title: '치과 예약', date: WP.addDays(t, 3), time: '10:30', sample: true },
     ],
-    ddays: [{ id: uid(), title: '여행 가는 날', date: WP.addDays(t, 30) }],
-    note: '오늘도 한 걸음씩!',
+    ddays: [{ id: uid(), title: '여행 가는 날', date: WP.addDays(t, 30), sample: true }],
+    note: SAMPLE_NOTE,
     widgets: DEFAULT_ORDER.map(id => ({ id, on: DEFAULT_ON.includes(id) })),
     style: { ...DEFAULT_STYLE },
   };
@@ -128,6 +140,7 @@ function commit(...renders) {
   persist();
   store.set('editedAt', Date.now());
   renders.forEach(f => f());
+  renderSample();
   scheduleRender();
   updateNotice();
 }
@@ -206,6 +219,7 @@ function paintPreview() {
   const pw = Math.round((box.clientWidth || 200) * dpr);
   const { scale } = WP.render($('#preview'), data, { W: pw, H: Math.round(pw * eh / ew), photo, guide: showGuide });
   $('#fit-warn').hidden = scale >= 0.75;
+  if (!$('.panel[data-panel="style"]').hidden) paintPresets();
 }
 
 async function drawPreview() {
@@ -249,6 +263,7 @@ function showTab(id) {
   $$('.tab').forEach(b => { const on = b.dataset.tab === id; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); });
   $$('.panel').forEach(p => { p.hidden = p.dataset.panel !== id; });
   store.set('tab', id);
+  if (id === 'style') scheduleRender(); // 템플릿 미리보기 그리기
 }
 $('.tabs').addEventListener('click', e => {
   const b = e.target.closest('.tab');
@@ -296,6 +311,19 @@ $('#task-list').addEventListener('click', e => {
   else editTask(t);
 });
 
+// 처음 보이는 예시를 한 번에 지운다 (내가 고친 것은 남김)
+function renderSample() {
+  $('#sample-banner').hidden = ![...data.tasks, ...data.events, ...data.ddays].some(x => x.sample);
+}
+$('#sample-clear').addEventListener('click', () => {
+  data.tasks = data.tasks.filter(t => !t.sample);
+  data.events = data.events.filter(ev => !ev.sample);
+  data.ddays = data.ddays.filter(d => !d.sample);
+  if (data.note === SAMPLE_NOTE) data.note = '';
+  commit(renderAll);
+  toast('예시를 지웠어요. 이제 내 할 일을 적어보세요');
+});
+
 $('#clear-done').addEventListener('click', () => {
   const n = data.tasks.filter(t => !t.daily && t.done).length;
   if (!n) { toast('지울 완료한 일이 없어요'); return; }
@@ -311,7 +339,7 @@ function editTask(t) {
     <input class="input" id="e-text" type="text" maxlength="60" value="${esc(t.text)}">
     <label class="set-row plain"><span>매일 반복<em>날마다 체크가 다시 풀려요</em></span><input type="checkbox" class="sw" id="e-daily" ${t.daily ? 'checked' : ''}></label>
     <div>
-      <span class="glabel">우선순위 칸 <em>'구성'에서 '우선순위 4칸'을 켜면 보여요</em></span>
+      <span class="glabel">우선순위 칸 <em>'꾸미기 → 보일 카드'에서 '우선순위 4칸'을 켜면 보여요</em></span>
       <div class="seg grid3" id="e-quad">${quads.map((n, i) => `<button type="button" data-v="${i - 1}" class="${quad === i - 1 ? 'on' : ''}">${n}</button>`).join('')}</div>
     </div>
     <div class="sheet-actions">
@@ -332,6 +360,7 @@ function editTask(t) {
     const daily = $('#e-daily', body).checked;
     t.text = text;
     t.quad = quad >= 0 ? quad : null;
+    delete t.sample; // 고쳐 쓰면 내 할 일로 본다
     if (daily !== !!t.daily) {
       t.daily = daily;
       if (daily) t.doneOn = wasDone ? today() : null; else t.done = wasDone;
@@ -376,14 +405,37 @@ function renderEvents() {
   el.innerHTML = html;
 }
 
+// 한 입력 칸으로 일정과 디데이를 둘 다 추가한다 (디데이는 시간 칸이 없음)
+let evKind = 'event';
+function setEvKind(kind) {
+  evKind = kind;
+  const dday = kind === 'dday';
+  $$('#ev-kind button').forEach(b => b.classList.toggle('on', b.dataset.v === kind));
+  $('#ev-title').placeholder = dday ? '예: 시험, 여행, 생일' : '일정 이름 (예: 팀 회의)';
+  $('#ev-time').hidden = dday;
+  $('#ev-when').classList.toggle('one', dday);
+  $('#ev-hint').textContent = dday ? '가장 가까운 디데이가 크게, 다음 두 개가 작게 보여요' : "시간을 비워두면 '종일'로 보여요";
+  $('#ev-add').textContent = dday ? '디데이 추가' : '일정 추가';
+}
+$('#ev-kind').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (b) setEvKind(b.dataset.v);
+});
+
 $('#ev-date').value = today();
 $('#event-form').addEventListener('submit', e => {
   e.preventDefault();
   const title = $('#ev-title').value.trim(), date = $('#ev-date').value;
   if (!title) { $('#ev-title').focus(); return; }
   if (!date) { toast('날짜를 골라주세요'); return; }
-  data.events.push({ id: uid(), title, date, time: $('#ev-time').value || '' });
   $('#ev-title').value = '';
+  if (evKind === 'dday') {
+    data.ddays.push({ id: uid(), title, date });
+    commit(renderDdays);
+    toast('디데이를 추가했어요');
+    return;
+  }
+  data.events.push({ id: uid(), title, date, time: $('#ev-time').value || '' });
   $('#ev-time').value = '';
   commit(renderEvents);
   toast('일정을 추가했어요');
@@ -421,6 +473,7 @@ function editEvent(ev) {
     if (!title) { $('#e-title', body).focus(); return; }
     if (!date) { toast('날짜를 골라주세요'); return; }
     Object.assign(ev, { title, date, time: $('#e-time', body).value || '' });
+    delete ev.sample;
     closeSheet(); commit(renderEvents);
   };
   $('#e-del', body).onclick = () => {
@@ -432,7 +485,7 @@ function editEvent(ev) {
 // ── 디데이 ──
 function renderDdays() {
   const el = $('#dday-list'), t0 = today();
-  if (!data.ddays.length) { el.innerHTML = '<li class="empty">아직 디데이가 없어요.</li>'; return; }
+  if (!data.ddays.length) { el.innerHTML = "<li class=\"empty\">아직 디데이가 없어요. 위에서 '디데이'를 골라 추가해요.</li>"; return; }
   const list = data.ddays.map(d => ({ d, n: WP.diffDays(t0, d.date) }))
     .sort((a, b) => (a.n < 0) - (b.n < 0) || (a.n < 0 ? b.n - a.n : a.n - b.n));
   el.innerHTML = list.map(({ d, n }) => `<li class="item${n < 0 ? ' past' : ''}" data-id="${d.id}">
@@ -440,18 +493,6 @@ function renderDdays() {
     <span class="dlabel">${WP.ddayLabel(n)}</span>
   </li>`).join('');
 }
-
-$('#dd-date').value = WP.addDays(today(), 7);
-$('#dday-form').addEventListener('submit', e => {
-  e.preventDefault();
-  const title = $('#dd-title').value.trim(), date = $('#dd-date').value;
-  if (!title) { $('#dd-title').focus(); return; }
-  if (!date) { toast('날짜를 골라주세요'); return; }
-  data.ddays.push({ id: uid(), title, date });
-  $('#dd-title').value = '';
-  commit(renderDdays);
-  toast('디데이를 추가했어요');
-});
 
 $('#dday-list').addEventListener('click', e => {
   const btn = e.target.closest('[data-act]');
@@ -469,6 +510,7 @@ $('#dday-list').addEventListener('click', e => {
     if (!title) { $('#e-title', body).focus(); return; }
     if (!date) { toast('날짜를 골라주세요'); return; }
     Object.assign(d, { title, date });
+    delete d.sample;
     closeSheet(); commit(renderDdays);
   };
   $('#e-del', body).onclick = () => {
@@ -653,15 +695,27 @@ $('#save-btn').addEventListener('click', async () => {
   body.innerHTML = `
     <img class="save-img" src="${url}" alt="만든 잠금화면 배경">
     <p class="muted small center">${w}×${h} 픽셀</p>
-    ${canShare ? '<button class="btn" id="share-btn">사진에 저장하기</button>' : ''}
-    <a class="mini wide center" id="dl-link" href="${url}" download="${name}">파일로 내려받기</a>
-    <ol class="steps">
-      <li>${canShare ? "'사진에 저장하기' → 공유 창에서 <b>이미지 저장</b>" : '위 그림을 길게 눌러 <b>사진 앱에 저장</b>'}</li>
-      <li>사진 앱에서 그 그림 열기 → <b>공유</b> → <b>배경화면으로 사용</b></li>
-      <li>할 일·일정이 바뀌면 다시 저장해서 바꿔주세요</li>
-    </ol>
-    <p class="muted small">공유 창이 안 뜨면 위 그림을 길게 눌러 저장해도 돼요.</p>
-    <button class="mini wide" id="auto-open">매일 자동으로 바꾸기 (단축어) →</button>`;
+    ${canShare ? '<button class="btn" id="share-btn">공유 창 열기</button>' : ''}
+    <div class="way rec">
+      <b>한 번에 바꾸기 (추천)</b>
+      <p>${canShare ? "공유 창에서 <b>잠금화면으로</b> 단축어를 누르면 바로 바뀌어요." : '이 브라우저는 공유 창을 못 열어요. 아이폰 사파리에서 열어주세요.'}</p>
+      <details>
+        <summary>'잠금화면으로' 단축어 만들기 (처음 한 번, 1분)</summary>
+        <ol class="steps">
+          <li>단축어 앱 → 오른쪽 위 <b>+</b></li>
+          <li>위쪽 이름 옆 <b>⌄</b>(또는 ⓘ) → <b>공유 시트에서 보기</b> 켜기</li>
+          <li><b>배경화면</b>을 검색해 <b>배경화면 설정</b> 동작 추가</li>
+          <li>그림 자리에 <b>단축어 입력</b>, <b>잠금 화면</b>만 고르고 <b>미리보기 보기</b> 끄기</li>
+          <li>이름을 <b>잠금화면으로</b> 바꾸고 완료</li>
+        </ol>
+      </details>
+    </div>
+    <div class="way">
+      <b>사진으로 바꾸기</b>
+      <p>${canShare ? '공유 창에서 <b>이미지 저장</b>' : '위 그림을 길게 눌러 <b>사진 앱에 저장</b>'} → 사진 앱에서 그림 열기 → 공유 → <b>배경화면으로 사용</b></p>
+    </div>
+    <button class="mini wide" id="auto-open">매일 자정에 자동으로 바꾸기 →</button>
+    <a class="mini ghost wide" id="dl-link" href="${url}" download="${name}">파일로 내려받기</a>`;
   const share = $('#share-btn', body);
   if (share) share.onclick = () => shareFiles([file]);
   $('#dl-link', body).addEventListener('click', markSaved);
@@ -669,16 +723,14 @@ $('#save-btn').addEventListener('click', async () => {
   $('#auto-open', body).onclick = openAutoSheet;
 });
 
-// ── 매일 자동으로 바꾸기 (단축어) ──
+// ── 매일 자정에 자동으로 바꾸기 (단축어 자동화) ──
 // 앞으로 며칠치 그림을 날짜 이름(lock-2026-10-26.jpg)으로 저장해 두면,
-// 단축어 자동화가 매일 그날 파일을 골라 잠금화면으로 지정한다.
-const SHORTCUT_NAME = '잠금화면 바꾸기';
-
+// 자동화가 매일 그날 파일을 골라 잠금화면으로 지정한다. 날짜·이번 주·디데이 숫자가 날마다 맞게 바뀐다.
 function openAutoSheet() {
   let days = store.get('autoDays', 7);
-  const body = openSheet('매일 자동으로 바꾸기', `
+  const body = openSheet('매일 자정에 자동으로 바꾸기', `
     <div class="auto">
-      <p>단축어를 한 번 만들어 두면 <b>매일 자정에 그날 그림으로 잠금화면이 바뀌어요.</b> 날짜·이번 주·디데이 숫자가 날마다 맞게 바뀌어요.</p>
+      <p>미리 만든 그림 중 <b>그날 그림으로 매일 자정에 잠금화면이 바뀌어요.</b> 날짜·이번 주·디데이 숫자가 날마다 맞게 바뀌어요.</p>
       <section class="stepbox">
         <h4><span class="num">1</span>그림 미리 만들기</h4>
         <div class="seg" id="auto-days"><button data-v="7">7일치</button><button data-v="14">14일치</button></div>
@@ -687,30 +739,19 @@ function openAutoSheet() {
         <p class="muted small">공유 창 → <b>파일에 저장</b> → <b>iCloud Drive › 단축어</b> 폴더 → 저장. 같은 이름이 있다고 나오면 <b>대치</b>를 골라요.</p>
       </section>
       <section class="stepbox">
-        <h4><span class="num">2</span>단축어 만들기 <em>처음 한 번</em></h4>
+        <h4><span class="num">2</span>자동화 만들기 <em>처음 한 번</em></h4>
         <ol class="steps">
-          <li>단축어 앱 → <b>+</b> → 이름을 <b>${SHORTCUT_NAME}</b>로</li>
+          <li>단축어 앱 → <b>자동화</b> → <b>+</b> → <b>특정 시간</b></li>
+          <li><b>오전 12:01</b> · <b>매일</b> · <b>즉시 실행</b> → 다음 → <b>새로운 빈 자동화</b></li>
           <li>동작 <b>파일 가져오기</b> 추가 → <b>문서 선택기 보기</b> 끄기</li>
           <li>파일 경로에 <code>lock-</code> 입력 → 변수 <b>현재 날짜</b> 넣기 → <code>.jpg</code> 입력</li>
           <li><b>현재 날짜</b>를 눌러 날짜 형식 <b>사용자 지정</b> → <code>yyyy-MM-dd</code> <button class="mini inline" id="copy-fmt">복사</button></li>
-          <li>동작 <b>배경화면 설정</b> 추가 → <b>잠금 화면</b>만 고르고 <b>미리보기 보기</b> 끄기</li>
+          <li>동작 <b>배경화면 설정</b> 추가 → 그림 자리에 <b>파일</b>, <b>잠금 화면</b>만 고르고 <b>미리보기 보기</b> 끄기</li>
         </ol>
-      </section>
-      <section class="stepbox">
-        <h4><span class="num">3</span>매일 자동 실행 <em>처음 한 번</em></h4>
-        <ol class="steps">
-          <li>단축어 앱 → <b>자동화</b> → <b>+</b> → <b>특정 시간</b></li>
-          <li><b>오전 12:01</b> · <b>매일</b> · <b>즉시 실행</b> → 다음</li>
-          <li><b>${SHORTCUT_NAME}</b> 단축어 고르기</li>
-        </ol>
-      </section>
-      <section class="stepbox">
-        <h4>지금 바로 바꾸기</h4>
-        <a class="btn" href="shortcuts://run-shortcut?name=${encodeURIComponent(SHORTCUT_NAME)}">단축어 실행</a>
-        <p class="muted small">할 일을 바꾼 뒤에는 1번(만들기·저장)을 다시 하고 이 버튼을 눌러요.</p>
       </section>
       <ul class="steps dots muted small">
-        <li>지금 잠금화면이 <b>사진</b> 배경이어야 해요(사진 셔플 X). 처음엔 '사진에 저장하기'로 한 번 지정해 두세요.</li>
+        <li>할 일을 바꾸면 1번을 다시 해요. 오늘 그림은 저장 화면의 <b>잠금화면으로</b>로 바로 바꿀 수 있어요.</li>
+        <li>지금 잠금화면이 <b>사진</b> 배경이어야 해요(사진 셔플 X).</li>
         <li>만든 날수가 지나면 바뀌지 않아요. 그 전에 앱 위쪽에 알림이 떠요.</li>
         <li>메뉴 이름은 iOS 버전에 따라 조금 다를 수 있어요.</li>
       </ul>
@@ -762,6 +803,72 @@ function openAutoSheet() {
   };
 }
 
+// ── 백업 (홈 화면 앱 ↔ 사파리, 폰 바꿀 때 옮기기용) ──
+async function saveBackup() {
+  const json = JSON.stringify({ app: KEY, version: 1, savedAt: new Date().toISOString(), data });
+  const name = `lock-planner-backup-${today()}.json`;
+  const file = new File([json], name, { type: 'application/json' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); } catch (err) { if (err.name !== 'AbortError') toast('공유 창을 열지 못했어요'); }
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(file);
+  a.download = name;
+  a.click();
+}
+
+$('#backup-input').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  let parsed;
+  try { parsed = JSON.parse(await file.text()); } catch { parsed = null; }
+  if (!parsed || parsed.app !== KEY || !parsed.data) { toast('잠금화면 플래너 백업 파일이 아니에요'); return; }
+  if (!confirm('백업 내용으로 바꿀까요? 지금 적힌 내용은 사라져요.')) return;
+  data = normalize(parsed.data);
+  closeSheet();
+  commit(renderAll);
+  toast('백업을 불러왔어요');
+});
+
+// ── 템플릿 ──
+function presetData(p) {
+  const on = new Set(p.widgets);
+  return {
+    ...data,
+    widgets: [...p.widgets.map(id => ({ id, on: true })), ...DEFAULT_ORDER.filter(id => !on.has(id)).map(id => ({ id, on: false }))],
+    style: { ...data.style, card: p.card, font: p.font },
+  };
+}
+
+// 내 내용으로 각 템플릿의 작은 미리보기를 그린다 ('꾸미기' 탭이 열려 있을 때만)
+let presetFontsAsked = false;
+function paintPresets() {
+  const el = $('#preset-list');
+  if (!el.children.length) {
+    el.innerHTML = PRESETS.map((p, i) => `<button class="preset" data-i="${i}"><canvas></canvas><span>${p.name}</span></button>`).join('');
+  }
+  const [ew, eh] = exportSize();
+  const w = 168, h = Math.round(w * eh / ew);
+  $$('.preset', el).forEach(b => WP.render($('canvas', b), presetData(PRESETS[b.dataset.i]), { W: w, H: h, photo }));
+  if (!presetFontsAsked) {
+    presetFontsAsked = true;
+    Promise.all(['serif', 'hand'].map(font => WP.loadFonts({ ...data, style: { ...data.style, font } }))).then(scheduleRender);
+  }
+}
+
+$('#preset-list').addEventListener('click', e => {
+  const b = e.target.closest('.preset');
+  if (!b) return;
+  const p = PRESETS[b.dataset.i];
+  data.widgets = presetData(p).widgets;
+  data.style.card = p.card;
+  data.style.font = p.font;
+  commit(renderWidgets, renderStyle);
+  toast(`'${p.name}' 템플릿을 적용했어요`);
+});
+
 // ── 도움말 ──
 $('#help-btn').addEventListener('click', () => {
   const body = openSheet('도움말', `
@@ -769,20 +876,28 @@ $('#help-btn').addEventListener('click', () => {
       <p>할 일·일정·디데이·메모를 그려 넣은 <b>잠금화면 배경 그림</b>을 만드는 앱이에요.</p>
       <h4>쓰는 법</h4>
       <ol class="steps">
-        <li>위 탭에서 할 일·일정·디데이·메모를 넣어요</li>
-        <li>'구성'에서 보일 카드와 순서를, '꾸미기'에서 모양을 골라요</li>
-        <li>아래 <b>잠금화면 배경 저장</b> → 사진에 저장 → 배경화면으로 지정</li>
+        <li>탭에서 할 일·일정·디데이·메모를 넣어요</li>
+        <li>'꾸미기'에서 템플릿을 고르거나 카드·모양을 바꿔요</li>
+        <li>아래 <b>잠금화면 배경 저장</b> → 공유 창에서 <b>잠금화면으로</b>(단축어) 또는 <b>이미지 저장</b></li>
       </ol>
       <h4>알아둘 점</h4>
       <ul class="steps dots">
-        <li>내용이 바뀌면 다시 저장해서 배경으로 지정해야 해요. 매일 저절로 바뀌게 하려면 <button class="link" id="help-auto">매일 자동으로 바꾸기</button>(단축어 한 번 설정)를 써요.</li>
+        <li>내용이 바뀌면 다시 저장해야 잠금화면에 반영돼요. 날짜만 매일 바뀌게 하려면 <button class="link" id="help-auto">매일 자정에 자동으로 바꾸기</button>를 써요.</li>
         <li>아이폰 캘린더·미리 알림과는 연결되지 않아요. 일정은 직접 넣어요.</li>
-        <li>적은 내용은 이 폰의 브라우저 안에만 저장돼요. 사파리 방문 기록·웹사이트 데이터를 지우면 함께 지워져요.</li>
-        <li>사파리 공유 버튼 → <b>홈 화면에 추가</b>를 하면 앱처럼 열 수 있어요.</li>
+        <li>적은 내용은 이 브라우저 안에만 저장돼요. 사파리 방문 기록·웹사이트 데이터를 지우면 함께 지워져요.</li>
+        <li>사파리 공유 → <b>홈 화면에 추가</b>를 하면 앱처럼 열려요. 단, <b>홈 화면 앱과 사파리는 저장 공간이 따로</b>예요. 옮길 때는 아래 백업 파일로 옮겨요.</li>
       </ul>
+      <h4>백업</h4>
+      <div class="two-btn">
+        <button class="mini" id="backup-save">백업 파일 저장</button>
+        <button class="mini" id="backup-load">백업 불러오기</button>
+      </div>
+      <p class="muted small">할 일·일정·디데이·메모·꾸미기가 들어가요. 배경 사진은 빠져요.</p>
       <button class="mini danger wide" id="reset-btn">할 일·일정·디데이·메모 모두 지우기</button>
     </div>`);
   $('#help-auto', body).onclick = openAutoSheet;
+  $('#backup-save', body).onclick = saveBackup;
+  $('#backup-load', body).onclick = () => $('#backup-input').click();
   $('#reset-btn', body).onclick = () => {
     if (!confirm('할 일·일정·디데이·메모를 모두 지울까요? (꾸미기 설정은 남아요)')) return;
     Object.assign(data, { tasks: [], events: [], ddays: [], note: '' });
@@ -801,11 +916,13 @@ function renderAll() {
   renderWidgets();
   renderSettings();
   renderStyle();
+  renderSample();
   persist();
   scheduleRender();
   updateNotice();
 }
 
+setEvKind('event');
 showTab(store.get('tab', 'tasks'));
 renderAll();
 idb.get('photo').then(async blob => {
