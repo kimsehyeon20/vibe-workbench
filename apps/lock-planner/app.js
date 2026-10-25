@@ -119,11 +119,32 @@ let data = normalize(store.get('data', null));
 let photo = null;          // 배경 사진 (Image)
 let showGuide = store.get('guide', true);
 
-function commit(...renders) {
+function persist() {
   if (!store.set('data', data)) toast('저장 공간이 부족해서 저장하지 못했어요');
+}
+
+// 내용을 바꿀 때마다 부른다: 저장 → 화면 다시 그리기
+function commit(...renders) {
+  persist();
+  store.set('editedAt', Date.now());
   renders.forEach(f => f());
   scheduleRender();
+  updateNotice();
 }
+
+// 잠금화면에 아직 반영 안 된 변경, 자동 바꾸기용 그림이 곧 떨어짐 → 미리보기 아래에 알려준다
+function updateNotice() {
+  const t0 = today();
+  const until = store.get('autoUntil', null);
+  const savedAt = store.get('savedAt', 0), editedAt = store.get('editedAt', 0);
+  let msg = '';
+  if (until && until < t0) msg = "자동 바꾸기용 그림이 다 떨어졌어요. '잠금화면 배경 저장' → '매일 자동으로 바꾸기'에서 다시 만들어 주세요.";
+  else if (until && WP.diffDays(t0, until) <= 1) msg = `자동 바꾸기용 그림이 ${WP.shortDate(until)}까지만 있어요. 미리 다시 만들어 주세요.`;
+  else if (savedAt && editedAt > savedAt) msg = "바뀐 내용이 있어요. '잠금화면 배경 저장'을 다시 해야 잠금화면에 반영돼요.";
+  $('#notice').textContent = msg;
+  $('#notice').hidden = !msg;
+}
+const markSaved = () => { store.set('savedAt', Date.now()); updateNotice(); };
 
 // ── 알림 ──
 let toastTimer;
@@ -141,6 +162,7 @@ function openSheet(title, html) {
   const body = $('#sheet-body');
   body.innerHTML = html;
   $('#sheet').hidden = false;
+  $('.sheet-panel').scrollTop = 0;
   return body;
 }
 function closeSheet() {
@@ -604,15 +626,26 @@ $('#photo-input').addEventListener('change', async e => {
 });
 
 // ── 저장 ──
+async function renderBlob(now, type) {
+  const [w, h] = exportSize();
+  const cv = document.createElement('canvas');
+  WP.render(cv, data, { W: w, H: h, photo, guide: false, now });
+  return new Promise(r => cv.toBlob(r, type, 0.92));
+}
+
+async function shareFiles(files) {
+  try { await navigator.share({ files }); markSaved(); }
+  catch (err) { if (err.name !== 'AbortError') toast('공유 창을 열지 못했어요. 다시 눌러 주세요'); }
+}
+
 $('#save-btn').addEventListener('click', async () => {
   const body = openSheet('잠금화면 배경 저장', '<p class="muted center">그림을 만드는 중…</p>');
-  const [w, h] = exportSize();
+  const marker = body.firstElementChild;
   await WP.loadFonts(data);
-  const cv = document.createElement('canvas');
-  WP.render(cv, data, { W: w, H: h, photo, guide: false });
-  const blob = await new Promise(r => cv.toBlob(r, 'image/png'));
-  if ($('#sheet').hidden || body !== $('#sheet-body')) return;
+  const blob = await renderBlob(new Date(), 'image/png');
+  if (!marker.isConnected) return; // 그사이 창을 닫았음
   if (!blob) { body.innerHTML = '<p class="muted center">그림을 만들지 못했어요. 다시 시도해 주세요.</p>'; return; }
+  const [w, h] = exportSize();
   const name = `lockscreen-${today()}.png`;
   const file = new File([blob], name, { type: 'image/png' });
   const url = URL.createObjectURL(blob);
@@ -627,13 +660,107 @@ $('#save-btn').addEventListener('click', async () => {
       <li>사진 앱에서 그 그림 열기 → <b>공유</b> → <b>배경화면으로 사용</b></li>
       <li>할 일·일정이 바뀌면 다시 저장해서 바꿔주세요</li>
     </ol>
-    <p class="muted small">공유 창이 안 뜨면 위 그림을 길게 눌러 저장해도 돼요.</p>`;
+    <p class="muted small">공유 창이 안 뜨면 위 그림을 길게 눌러 저장해도 돼요.</p>
+    <button class="mini wide" id="auto-open">매일 자동으로 바꾸기 (단축어) →</button>`;
   const share = $('#share-btn', body);
-  if (share) share.onclick = async () => {
-    try { await navigator.share({ files: [file] }); }
-    catch (err) { if (err.name !== 'AbortError') toast('공유 창을 열지 못했어요. 그림을 길게 눌러 저장해 주세요'); }
-  };
+  if (share) share.onclick = () => shareFiles([file]);
+  $('#dl-link', body).addEventListener('click', markSaved);
+  $('.save-img', body).addEventListener('contextmenu', markSaved);
+  $('#auto-open', body).onclick = openAutoSheet;
 });
+
+// ── 매일 자동으로 바꾸기 (단축어) ──
+// 앞으로 며칠치 그림을 날짜 이름(lock-2026-10-26.jpg)으로 저장해 두면,
+// 단축어 자동화가 매일 그날 파일을 골라 잠금화면으로 지정한다.
+const SHORTCUT_NAME = '잠금화면 바꾸기';
+
+function openAutoSheet() {
+  let days = store.get('autoDays', 7);
+  const body = openSheet('매일 자동으로 바꾸기', `
+    <div class="auto">
+      <p>단축어를 한 번 만들어 두면 <b>매일 자정에 그날 그림으로 잠금화면이 바뀌어요.</b> 날짜·이번 주·디데이 숫자가 날마다 맞게 바뀌어요.</p>
+      <section class="stepbox">
+        <h4><span class="num">1</span>그림 미리 만들기</h4>
+        <div class="seg" id="auto-days"><button data-v="7">7일치</button><button data-v="14">14일치</button></div>
+        <button class="btn" id="auto-make"></button>
+        <div class="auto-out" id="auto-out"></div>
+        <p class="muted small">공유 창 → <b>파일에 저장</b> → <b>iCloud Drive › 단축어</b> 폴더 → 저장. 같은 이름이 있다고 나오면 <b>대치</b>를 골라요.</p>
+      </section>
+      <section class="stepbox">
+        <h4><span class="num">2</span>단축어 만들기 <em>처음 한 번</em></h4>
+        <ol class="steps">
+          <li>단축어 앱 → <b>+</b> → 이름을 <b>${SHORTCUT_NAME}</b>로</li>
+          <li>동작 <b>파일 가져오기</b> 추가 → <b>문서 선택기 보기</b> 끄기</li>
+          <li>파일 경로에 <code>lock-</code> 입력 → 변수 <b>현재 날짜</b> 넣기 → <code>.jpg</code> 입력</li>
+          <li><b>현재 날짜</b>를 눌러 날짜 형식 <b>사용자 지정</b> → <code>yyyy-MM-dd</code> <button class="mini inline" id="copy-fmt">복사</button></li>
+          <li>동작 <b>배경화면 설정</b> 추가 → <b>잠금 화면</b>만 고르고 <b>미리보기 보기</b> 끄기</li>
+        </ol>
+      </section>
+      <section class="stepbox">
+        <h4><span class="num">3</span>매일 자동 실행 <em>처음 한 번</em></h4>
+        <ol class="steps">
+          <li>단축어 앱 → <b>자동화</b> → <b>+</b> → <b>특정 시간</b></li>
+          <li><b>오전 12:01</b> · <b>매일</b> · <b>즉시 실행</b> → 다음</li>
+          <li><b>${SHORTCUT_NAME}</b> 단축어 고르기</li>
+        </ol>
+      </section>
+      <section class="stepbox">
+        <h4>지금 바로 바꾸기</h4>
+        <a class="btn" href="shortcuts://run-shortcut?name=${encodeURIComponent(SHORTCUT_NAME)}">단축어 실행</a>
+        <p class="muted small">할 일을 바꾼 뒤에는 1번(만들기·저장)을 다시 하고 이 버튼을 눌러요.</p>
+      </section>
+      <ul class="steps dots muted small">
+        <li>지금 잠금화면이 <b>사진</b> 배경이어야 해요(사진 셔플 X). 처음엔 '사진에 저장하기'로 한 번 지정해 두세요.</li>
+        <li>만든 날수가 지나면 바뀌지 않아요. 그 전에 앱 위쪽에 알림이 떠요.</li>
+        <li>메뉴 이름은 iOS 버전에 따라 조금 다를 수 있어요.</li>
+      </ul>
+    </div>`);
+  const make = $('#auto-make', body), out = $('#auto-out', body);
+  const syncDays = () => {
+    $$('#auto-days button', body).forEach(b => b.classList.toggle('on', Number(b.dataset.v) === days));
+    make.textContent = `${days}일치 그림 만들기`;
+  };
+  syncDays();
+  $('#auto-days', body).addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b || make.disabled) return;
+    days = Number(b.dataset.v);
+    store.set('autoDays', days);
+    syncDays();
+    out.innerHTML = '';
+  });
+  $('#copy-fmt', body).onclick = async () => {
+    try { await navigator.clipboard.writeText('yyyy-MM-dd'); toast('복사했어요. 날짜 형식 칸에 붙여넣어요'); }
+    catch { toast('복사하지 못했어요. yyyy-MM-dd 를 직접 적어주세요'); }
+  };
+  make.onclick = async () => {
+    make.disabled = true;
+    out.innerHTML = '';
+    await WP.loadFonts(data);
+    const start = today(), files = [];
+    for (let i = 0; i < days; i++) {
+      const ds = WP.addDays(start, i);
+      make.textContent = `만드는 중… ${i + 1}/${days}`;
+      const blob = await renderBlob(WP.parse(ds), 'image/jpeg');
+      if (!make.isConnected) return; // 그사이 창을 닫았음
+      if (!blob) { toast('그림을 만들지 못했어요. 다시 시도해 주세요'); make.disabled = false; syncDays(); return; }
+      files.push(new File([blob], `lock-${ds}.jpg`, { type: 'image/jpeg' }));
+    }
+    make.disabled = false;
+    syncDays();
+    const until = WP.addDays(start, days - 1);
+    store.set('autoUntil', until);
+    updateNotice();
+    if (navigator.canShare && navigator.canShare({ files })) {
+      out.innerHTML = `<button class="btn" id="auto-share">파일에 저장하기 (${files.length}개)</button>`;
+      $('#auto-share', out).onclick = () => shareFiles(files);
+    } else {
+      out.innerHTML = files.map(f => `<a class="mini wide" href="${URL.createObjectURL(f)}" download="${f.name}">${f.name}</a>`).join('');
+      out.addEventListener('click', e => { if (e.target.closest('a')) markSaved(); });
+    }
+    out.insertAdjacentHTML('beforeend', `<p class="muted small center">${WP.shortDate(start)} ~ ${WP.shortDate(until)} 그림 ${files.length}장 준비됐어요</p>`);
+  };
+}
 
 // ── 도움말 ──
 $('#help-btn').addEventListener('click', () => {
@@ -648,18 +775,19 @@ $('#help-btn').addEventListener('click', () => {
       </ol>
       <h4>알아둘 점</h4>
       <ul class="steps dots">
-        <li>웹앱이라 잠금화면을 <b>자동으로 바꾸지 못해요</b>. 내용이 바뀌면 다시 저장해서 배경으로 지정해야 해요.</li>
+        <li>내용이 바뀌면 다시 저장해서 배경으로 지정해야 해요. 매일 저절로 바뀌게 하려면 <button class="link" id="help-auto">매일 자동으로 바꾸기</button>(단축어 한 번 설정)를 써요.</li>
         <li>아이폰 캘린더·미리 알림과는 연결되지 않아요. 일정은 직접 넣어요.</li>
         <li>적은 내용은 이 폰의 브라우저 안에만 저장돼요. 사파리 방문 기록·웹사이트 데이터를 지우면 함께 지워져요.</li>
         <li>사파리 공유 버튼 → <b>홈 화면에 추가</b>를 하면 앱처럼 열 수 있어요.</li>
       </ul>
       <button class="mini danger wide" id="reset-btn">할 일·일정·디데이·메모 모두 지우기</button>
     </div>`);
+  $('#help-auto', body).onclick = openAutoSheet;
   $('#reset-btn', body).onclick = () => {
     if (!confirm('할 일·일정·디데이·메모를 모두 지울까요? (꾸미기 설정은 남아요)')) return;
     Object.assign(data, { tasks: [], events: [], ddays: [], note: '' });
     closeSheet();
-    renderAll();
+    commit(renderAll);
     toast('모두 지웠어요');
   };
 });
@@ -673,7 +801,9 @@ function renderAll() {
   renderWidgets();
   renderSettings();
   renderStyle();
-  commit();
+  persist();
+  scheduleRender();
+  updateNotice();
 }
 
 showTab(store.get('tab', 'tasks'));
